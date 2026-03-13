@@ -56,30 +56,30 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SKAF-01 | — | Pending |
-| SKAF-02 | — | Pending |
-| SKAF-03 | — | Pending |
-| SKAF-04 | — | Pending |
-| SETUP-01 | — | Pending |
-| SETUP-02 | — | Pending |
-| SETUP-03 | — | Pending |
-| SETUP-04 | — | Pending |
-| SETUP-05 | — | Pending |
-| SETUP-06 | — | Pending |
-| SETUP-07 | — | Pending |
-| SETUP-08 | — | Pending |
-| GUARD-01 | — | Pending |
-| GUARD-02 | — | Pending |
-| GUARD-03 | — | Pending |
-| GUARD-04 | — | Pending |
-| GUARD-05 | — | Pending |
-| GUARD-06 | — | Pending |
+| SKAF-01 | Phase 1 | Pending |
+| SKAF-02 | Phase 1 | Pending |
+| SKAF-03 | Phase 1 | Pending |
+| SKAF-04 | Phase 1 | Pending |
+| SETUP-01 | Phase 2 | Pending |
+| SETUP-02 | Phase 2 | Pending |
+| SETUP-03 | Phase 2 | Pending |
+| SETUP-04 | Phase 2 | Pending |
+| SETUP-05 | Phase 2 | Pending |
+| SETUP-06 | Phase 2 | Pending |
+| SETUP-07 | Phase 2 | Pending |
+| SETUP-08 | Phase 2 | Pending |
+| GUARD-01 | Phase 3 | Pending |
+| GUARD-02 | Phase 3 | Pending |
+| GUARD-03 | Phase 3 | Pending |
+| GUARD-04 | Phase 3 | Pending |
+| GUARD-05 | Phase 3 | Pending |
+| GUARD-06 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 18 total
-- Mapped to phases: 0
-- Unmapped: 18 ⚠️
+- Mapped to phases: 18
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-13*
-*Last updated: 2026-03-13 after initial definition*
+*Last updated: 2026-03-13 after roadmap creation*
