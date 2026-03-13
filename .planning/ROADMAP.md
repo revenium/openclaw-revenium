@@ -27,7 +27,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The skill does not appear in `openclaw skills list` when `revenium` is removed from PATH
   3. SKILL.md YAML frontmatter parses without error (no silent drop due to colon-space or multi-line metadata)
   4. The skill directory exists at `~/.openclaw/skills/revenium/SKILL.md`
-**Plans**: TBD
+**Plans:** 1 plan
+
+Plans:
+- [ ] 01-01-PLAN.md — Author SKILL.md with valid frontmatter and body skeleton, install to OpenClaw, verify binary gating
 
 ### Phase 2: Setup Flow
 **Goal**: An agent following the skill instructions can configure the Revenium API key, create a budget alert, and persist the anomaly ID — with idempotent re-run behavior
@@ -59,6 +62,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Skill Scaffolding | 0/TBD | Not started | - |
+| 1. Skill Scaffolding | 0/1 | Not started | - |
 | 2. Setup Flow | 0/TBD | Not started | - |
 | 3. Operation Guard | 0/TBD | Not started | - |
