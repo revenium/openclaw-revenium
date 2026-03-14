@@ -23,23 +23,24 @@ cp SKILL.md ~/.openclaw/skills/revenium/SKILL.md
 
 OpenClaw agents run in a sandbox that cannot read `~/.openclaw/skills/` by default. Without this step, the agent will ask for Exec approval every time it tries to read the skill file.
 
-Add a read-only bind mount to `~/.openclaw/openclaw.json` (the main OpenClaw config file). Open it in your editor:
+Add a read-only bind mount to the `agents.defaults.sandbox.docker.binds` array in `~/.openclaw/openclaw.json`:
 
 ```bash
 nano ~/.openclaw/openclaw.json
 ```
 
-Add this line (create the file if it doesn't exist):
+Find the `binds` array inside `agents.defaults.sandbox.docker` and add the skills mount:
 
 ```json
-{
-  "agents.defaults.sandbox.docker.binds": ["/Users/<you>/.openclaw/skills:/workspace/skills:ro"]
+"docker": {
+  "binds": [
+    "/home/you/.openclaw/skills:/workspace/skills:ro",
+    ...existing binds...
+  ]
 }
 ```
 
-Replace `/Users/<you>` with your home directory path (e.g., `/Users/johndemic`).
-
-If `openclaw.json` already has other settings, add the key alongside them.
+Replace `/home/you` with your home directory path.
 
 After saving, restart the OpenClaw gateway for the change to take effect.
 
