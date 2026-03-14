@@ -21,9 +21,13 @@ At the start of any operation, check: does `{baseDir}/config.json` exist?
 
 Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`. Do NOT proceed with operations.
 
-1. **Prompt for API key.** Ask the user: "Please provide your Revenium API key." Wait for the user's response. Call this value `API_KEY`.
+1. **Check for existing API key.** Run:
+   ```
+   revenium config show
+   ```
+   If the output shows an API Key is already set (not empty), skip to step 3. The key is already configured.
 
-2. **Configure the CLI.** Run:
+2. **If no API key is configured:** Ask the user: "Please provide your Revenium API key." Wait for the user's response. Call this value `API_KEY`. Then run:
    ```
    revenium config set key API_KEY
    ```
