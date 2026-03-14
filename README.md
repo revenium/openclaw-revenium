@@ -21,13 +21,27 @@ cp SKILL.md ~/.openclaw/skills/revenium/SKILL.md
 
 ### 2. Configure sandbox access
 
-OpenClaw agents run in a sandbox that cannot read `~/.openclaw/skills/` by default. Add a read-only bind mount to your OpenClaw config so the agent can access the skill without repeated Exec approvals:
+OpenClaw agents run in a sandbox that cannot read `~/.openclaw/skills/` by default. Without this step, the agent will ask for Exec approval every time it tries to read the skill file.
 
-```yaml
-agents.defaults.sandbox.docker.binds: ["/Users/<you>/.openclaw/skills:/workspace/skills:ro"]
+Add a read-only bind mount to `~/.openclaw/openclaw.json` (the main OpenClaw config file). Open it in your editor:
+
+```bash
+nano ~/.openclaw/openclaw.json
 ```
 
-Replace `/Users/<you>` with your home directory path.
+Add this line (create the file if it doesn't exist):
+
+```json
+{
+  "agents.defaults.sandbox.docker.binds": ["/Users/<you>/.openclaw/skills:/workspace/skills:ro"]
+}
+```
+
+Replace `/Users/<you>` with your home directory path (e.g., `/Users/johndemic`).
+
+If `openclaw.json` already has other settings, add the key alongside them.
+
+After saving, restart the OpenClaw gateway for the change to take effect.
 
 ### 3. Verify
 
