@@ -12,17 +12,101 @@ BEFORE executing any tool call, you MUST check the Revenium budget.
 
 ## Setup
 
-When no configuration exists at `{baseDir}/config.json`, you MUST run the setup flow before any operation.
+At the start of any operation, check: does `{baseDir}/config.json` exist?
 
-[Phase 2 will fill this section with API key configuration, budget alert creation, and anomaly ID persistence.]
+- **If YES** and the user has NOT requested reconfiguration: setup is complete. Proceed to the Operation Guard section. Do NOT re-run setup.
+- **If NO**: you MUST run the Setup Flow below before proceeding. Do NOT execute any operations until setup is complete.
+
+### Setup Flow
+
+Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`. Do NOT proceed with operations.
+
+1. **Prompt for API key.** Ask the user: "Please provide your Revenium API key." Wait for the user's response. Call this value `API_KEY`.
+
+2. **Configure the CLI.** Run:
+   ```
+   revenium config set key API_KEY
+   ```
+   If the exit code is non-zero: tell the user what went wrong, tell them to run `/revenium` when ready, and STOP. Do NOT write `config.json`.
+
+3. **Prompt for budget amount.** Ask the user: "What budget threshold would you like to set? (numeric amount, e.g., 5.00)" Wait for the user's response. Call this value `AMOUNT`.
+
+4. **Prompt for budget period.** Ask the user: "Which budget period would you like?" and present these four options:
+   - DAILY
+   - WEEKLY
+   - MONTHLY
+   - QUARTERLY
+
+   Wait for the user's selection. Call this value `PERIOD`.
+
+5. **Generate the alert name.** Set `ALERT_NAME` to `"OpenClaw {Period} Budget"` where `{Period}` is the title-cased version of the selected period:
+   - DAILY -> "OpenClaw Daily Budget"
+   - WEEKLY -> "OpenClaw Weekly Budget"
+   - MONTHLY -> "OpenClaw Monthly Budget"
+   - QUARTERLY -> "OpenClaw Quarterly Budget"
+
+   Do NOT ask the user for a name. This is automatic.
+
+6. **Create the budget alert.** Run:
+   ```
+   revenium alerts budget create --name "ALERT_NAME" --threshold AMOUNT --period PERIOD --json
+   ```
+   If the exit code is non-zero: tell the user what went wrong, tell them to run `/revenium` when ready, and STOP. Do NOT write `config.json`.
+
+7. **Extract the alert ID.** From the JSON response, extract the `"id"` field. This is a short alphanumeric string (e.g., `"75BjG5"`). Call this value `ALERT_ID`.
+
+   **CRITICAL:** Do NOT use `anomalyId` from `budget get` responses — that is an integer and will cause HTTP 400 errors when passed to `budget get`. The correct value is the string `"id"` from the `budget create` response.
+
+   To extract reliably, pipe the create output through:
+   ```
+   python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])"
+   ```
+
+8. **Write config.json.** This MUST be the FINAL step — only write after ALL previous steps have succeeded. Write `{baseDir}/config.json` with pretty-printed JSON containing the alert ID:
+   ```
+   python3 -c "import json; print(json.dumps({'alertId': 'ALERT_ID'}, indent=2))" > {baseDir}/config.json
+   ```
+   Replace `ALERT_ID` with the actual extracted value.
+
+9. **Confirm to the user.** Tell the user setup is complete. Show: the alert name, the threshold amount, and the period.
+
+### Error Handling
+
+On ANY failure during the Setup Flow: report what went wrong, tell the user to run `/revenium` when they are ready to try again, and STOP. Do NOT retry. Do NOT write a partial `config.json`. The absence of `config.json` is the signal that setup has not completed.
 
 ## `/revenium` Command
 
 When the user invokes `/revenium`:
-- If setup is complete: show current budget status, then offer to reconfigure
-- If setup is not complete: run setup flow
 
-[Phase 2 will fill this section with the full slash command behavior.]
+### If Setup Is Complete (config.json exists)
+
+1. **Show budget status.** Read `alertId` from `{baseDir}/config.json`, then run:
+   ```
+   revenium alerts budget get ALERT_ID --json
+   ```
+   Display the current spend versus threshold to the user (current value, threshold, percent used, remaining).
+
+2. **Offer reconfiguration.** Ask the user: "Would you like to update your budget configuration?" If the user declines, STOP — no further action.
+
+### If Setup Is NOT Complete (no config.json)
+
+Run the Setup Flow from the Setup section above.
+
+### Reconfiguration Flow
+
+When the user requests reconfiguration:
+
+1. **Read existing alert ID.** Read `alertId` from `{baseDir}/config.json`. Call this value `OLD_ALERT_ID`.
+
+2. **Delete the old alert.** Run:
+   ```
+   revenium alerts budget delete OLD_ALERT_ID --yes
+   ```
+   If this fails (e.g., alert already deleted or not found): log a warning but continue. The goal is to prevent orphaned alerts.
+
+3. **Delete config.json.** Remove `{baseDir}/config.json`.
+
+4. **Run the full Setup Flow** from the Setup section above. This collects fresh API key, budget amount, period, and creates a new alert from scratch.
 
 ## Troubleshooting
 
