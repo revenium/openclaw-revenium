@@ -7,10 +7,10 @@
 
 ### Skill Scaffolding
 
-- [ ] **SKAF-01**: Skill directory exists at `~/.openclaw/skills/revenium/` with a valid `SKILL.md`
-- [ ] **SKAF-02**: SKILL.md YAML frontmatter includes `requires.bins: ["revenium"]` to gate on binary availability
-- [ ] **SKAF-03**: SKILL.md metadata uses single-line JSON to avoid silent parse failures
-- [ ] **SKAF-04**: Skill appears in `openclaw skills list` when `revenium` is on PATH
+- [x] **SKAF-01**: Skill directory exists at `~/.openclaw/skills/revenium/` with a valid `SKILL.md`
+- [x] **SKAF-02**: SKILL.md YAML frontmatter includes `requires.bins: ["revenium"]` to gate on binary availability
+- [x] **SKAF-03**: SKILL.md metadata uses single-line JSON to avoid silent parse failures
+- [x] **SKAF-04**: Skill appears in `openclaw skills list` when `revenium` is on PATH
 
 ### Setup Flow
 
@@ -56,10 +56,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SKAF-01 | Phase 1 | Pending |
-| SKAF-02 | Phase 1 | Pending |
-| SKAF-03 | Phase 1 | Pending |
-| SKAF-04 | Phase 1 | Pending |
+| SKAF-01 | Phase 1 | Complete |
+| SKAF-02 | Phase 1 | Complete |
+| SKAF-03 | Phase 1 | Complete |
+| SKAF-04 | Phase 1 | Complete |
 | SETUP-01 | Phase 2 | Pending |
 | SETUP-02 | Phase 2 | Pending |
 | SETUP-03 | Phase 2 | Pending |

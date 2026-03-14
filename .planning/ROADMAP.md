@@ -12,7 +12,7 @@ Build a single SKILL.md file that turns every OpenClaw agent on the machine into
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Skill Scaffolding** - Valid SKILL.md that loads in OpenClaw and gates on revenium binary
+- [x] **Phase 1: Skill Scaffolding** - Valid SKILL.md that loads in OpenClaw and gates on revenium binary (completed 2026-03-14)
 - [ ] **Phase 2: Setup Flow** - Agent-guided first-time config of API key, budget, and anomaly ID persistence
 - [ ] **Phase 3: Operation Guard** - Pre-operation budget check with warn-and-ask and configurable behavior
 
@@ -27,7 +27,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The skill does not appear in `openclaw skills list` when `revenium` is removed from PATH
   3. SKILL.md YAML frontmatter parses without error (no silent drop due to colon-space or multi-line metadata)
   4. The skill directory exists at `~/.openclaw/skills/revenium/SKILL.md`
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
 - [ ] 01-01-PLAN.md — Author SKILL.md with valid frontmatter and body skeleton, install to OpenClaw, verify binary gating
@@ -62,6 +62,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Skill Scaffolding | 0/1 | Not started | - |
+| 1. Skill Scaffolding | 1/1 | Complete   | 2026-03-14 |
 | 2. Setup Flow | 0/TBD | Not started | - |
 | 3. Operation Guard | 0/TBD | Not started | - |
