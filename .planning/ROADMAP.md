@@ -30,7 +30,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 01-01-PLAN.md — Author SKILL.md with valid frontmatter and body skeleton, install to OpenClaw, verify binary gating
+- [x] 01-01-PLAN.md — Author SKILL.md with valid frontmatter and body skeleton, install to OpenClaw, verify binary gating
 
 ### Phase 2: Setup Flow
 **Goal**: An agent following the skill instructions can configure the Revenium API key, create a budget alert, and persist the anomaly ID — with idempotent re-run behavior
@@ -42,7 +42,10 @@ Plans:
   3. The anomaly ID returned from alert creation is written to `{baseDir}/config.json`
   4. Re-running setup with an existing `config.json` skips budget creation instead of creating a duplicate alert
   5. User can explicitly request re-configuration and the agent re-runs setup from scratch
-**Plans**: TBD
+**Plans:** 1 plan
+
+Plans:
+- [ ] 02-01-PLAN.md — Author Setup and /revenium Command sections with complete agent instructions for configuration, idempotency, and reconfiguration
 
 ### Phase 3: Operation Guard
 **Goal**: The agent checks budget status before every operation, routes to warn-and-ask or silent pass-through based on budget state, and respects user-configured grace mode behavior
@@ -63,5 +66,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Skill Scaffolding | 1/1 | Complete    | 2026-03-14 |
-| 2. Setup Flow | 0/TBD | Not started | - |
+| 2. Setup Flow | 0/1 | Planning complete | - |
 | 3. Operation Guard | 0/TBD | Not started | - |
