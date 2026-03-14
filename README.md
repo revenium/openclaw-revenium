@@ -10,6 +10,8 @@ Budget enforcement for OpenClaw agents using the [Revenium](https://docs.reveniu
 
 ## Installation
 
+### 1. Install the skill
+
 Copy the skill to your OpenClaw managed skills directory:
 
 ```bash
@@ -17,7 +19,17 @@ mkdir -p ~/.openclaw/skills/revenium
 cp SKILL.md ~/.openclaw/skills/revenium/SKILL.md
 ```
 
-Verify the skill is loaded:
+### 2. Configure sandbox access
+
+OpenClaw agents run in a sandbox that cannot read `~/.openclaw/skills/` by default. Add a read-only bind mount to your OpenClaw config so the agent can access the skill without repeated Exec approvals:
+
+```yaml
+agents.defaults.sandbox.docker.binds: ["/Users/<you>/.openclaw/skills:/workspace/skills:ro"]
+```
+
+Replace `/Users/<you>` with your home directory path.
+
+### 3. Verify
 
 ```bash
 openclaw skills list
