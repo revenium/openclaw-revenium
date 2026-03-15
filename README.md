@@ -6,7 +6,18 @@ Budget enforcement for OpenClaw agents using the [Revenium](https://docs.reveniu
 
 - [OpenClaw](https://docs.openclaw.ai) installed and running
 - `revenium` CLI on your system PATH ([install guide](https://docs.revenium.io/for-ai-agents))
+- `jq` installed on the host (used by the metering cron to parse session files)
 - A Revenium API key
+
+Install `jq` if missing:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install -y jq
+
+# macOS
+brew install jq
+```
 
 ## Installation
 
