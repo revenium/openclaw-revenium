@@ -55,7 +55,7 @@ You should see `revenium` in the list. If not, confirm `revenium` is on your PAT
 
 ### 4. Install the metering cron
 
-A background cron job reads OpenClaw session JSONL files every 15 minutes and ships token usage to Revenium via `revenium meter completion`. This runs on the host, outside the sandbox.
+A background cron job reads OpenClaw session JSONL files every minute and ships token usage to Revenium via `revenium meter completion`. This runs on the host, outside the sandbox.
 
 ```bash
 bash ~/.openclaw/skills/revenium/scripts/install-cron.sh

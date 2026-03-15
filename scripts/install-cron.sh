@@ -8,7 +8,7 @@ set -euo pipefail
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CRON_SCRIPT="${SKILL_DIR}/scripts/cron.sh"
 CRON_COMMENT="# revenium-metering"
-CRON_SCHEDULE="*/15 * * * *"
+CRON_SCHEDULE="* * * * *"
 CRON_LINE="${CRON_SCHEDULE} bash ${CRON_SCRIPT} >> ${HOME}/.openclaw/revenium-metering.log 2>&1 ${CRON_COMMENT}"
 
 chmod +x "${SKILL_DIR}/scripts/report.sh"
@@ -24,7 +24,7 @@ fi
 # Add to crontab
 ( crontab -l 2>/dev/null || true; echo "${CRON_LINE}" ) | crontab -
 
-echo "✅ Revenium metering cron installed (every 15 minutes)"
+echo "✅ Revenium metering cron installed (every minute)"
 echo "   Log: ${HOME}/.openclaw/revenium-metering.log"
 echo ""
 echo "To view logs:    tail -f ~/.openclaw/revenium-metering.log"
