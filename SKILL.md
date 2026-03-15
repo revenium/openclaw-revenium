@@ -12,37 +12,33 @@ BEFORE performing ANY action that incurs AI cost — including responding to the
 
 ### Budget Check Procedure
 
-1. **Read the alert ID.** Read `alertId` from `{baseDir}/config.json`. If config.json does not exist, STOP and run the Setup Flow instead.
+The budget status is maintained by a background cron job that checks Revenium every minute and writes the result to `{baseDir}/budget-status.json`. You read this local file — do NOT call the Revenium API directly.
 
-2. **Check budget status.** Run:
-   ```
-   revenium alerts budget get ALERT_ID --json
-   ```
-   Replace `ALERT_ID` with the value from config.json.
+1. **Read budget status.** Read the file `{baseDir}/budget-status.json`. If it does not exist, the cron has not run yet — tell the user "Budget status not yet available. The metering cron may not be installed. Run `bash ~/.openclaw/skills/revenium/scripts/install-cron.sh` to set it up." Then proceed with the operation.
 
-3. **Parse the response.** Extract these fields from the JSON output:
+2. **Parse the status.** Extract these fields from the JSON:
    - `currentValue` — current spend in the budget period
    - `threshold` — the budget limit
    - `percentUsed` — percentage of budget consumed
    - `exceeded` — boolean, whether the budget has been exceeded
+   - `lastChecked` — when the cron last updated this file
 
-4. **Evaluate the result:**
+3. **Evaluate the result:**
 
-   **If `exceeded` is false (budget OK):** Proceed with the operation silently. Do NOT mention the budget to the user.
+   **If `exceeded` is false (budget OK):** Proceed silently. Do NOT mention the budget to the user.
 
-   **If `exceeded` is true (budget blown):** You MUST STOP. Do NOT execute the operation. Tell the user:
+   **If `exceeded` is true (budget blown):** You MUST STOP. Do NOT execute any operation, do NOT generate a response. Tell the user:
 
-   > "Your Revenium budget has been exceeded. You have spent $CURRENT_VALUE of your $THRESHOLD budget (PERCENT_USED%). Would you like to continue anyway?"
+   > "Your Revenium budget has been exceeded. You have spent $CURRENT_VALUE of your $THRESHOLD budget (PERCENT_USED%). Last checked: LAST_CHECKED. Would you like to continue anyway?"
 
-   Replace the values with the actual numbers from the response.
+   Replace the values with the actual numbers from the file.
 
    - **If the user says yes / continue / approved:** Proceed with the operation.
    - **If the user says no / stop / cancel:** STOP. Do NOT execute the operation. Tell the user: "Operation cancelled. Run `/revenium` to adjust your budget."
 
-### If the budget check fails
+### If budget-status.json is missing or unreadable
 
-If `revenium alerts budget get` returns a non-zero exit code (network error, invalid ID, etc.):
-- Tell the user: "Unable to check budget status. Proceeding with caution."
+- Tell the user: "Budget status unavailable. Proceeding with caution."
 - Proceed with the operation — fail open, do not block the user.
 
 ## Setup

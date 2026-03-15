@@ -203,6 +203,54 @@ process_session() {
 }
 
 # ---------------------------------------------------------------------------
+# Check budget and write status to local file
+# ---------------------------------------------------------------------------
+SKILL_DIR="${HOME}/.openclaw/skills/revenium"
+BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
+CONFIG_FILE="${SKILL_DIR}/config.json"
+
+check_and_write_budget_status() {
+  if [[ ! -f "${CONFIG_FILE}" ]]; then
+    info "No config.json — skipping budget check"
+    return 0
+  fi
+
+  local alert_id
+  alert_id=$(python3 -c "import json; print(json.load(open('${CONFIG_FILE}'))['alertId'])" 2>/dev/null || true)
+
+  if [[ -z "${alert_id}" ]]; then
+    warn "No alertId in config.json — skipping budget check"
+    return 0
+  fi
+
+  local budget_json
+  budget_json=$(revenium alerts budget get "${alert_id}" --json 2>/dev/null || true)
+
+  if [[ -z "${budget_json}" ]]; then
+    warn "Failed to fetch budget status from Revenium"
+    return 0
+  fi
+
+  # Write the full budget response plus a timestamp to the status file
+  python3 -c "
+import json, sys
+from datetime import datetime, timezone
+data = json.loads('''${budget_json}''')
+data['lastChecked'] = datetime.now(timezone.utc).isoformat()
+with open('${BUDGET_STATUS_FILE}', 'w') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null
+
+  if [[ $? -eq 0 ]]; then
+    local exceeded
+    exceeded=$(python3 -c "import json; print(json.load(open('${BUDGET_STATUS_FILE}')).get('exceeded', False))" 2>/dev/null || echo "unknown")
+    info "Budget status written: exceeded=${exceeded}"
+  else
+    warn "Failed to write budget status file"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -224,6 +272,9 @@ main() {
     ((total_files++)) || true
     process_session "${session_file}"
   done < <(find "${SESSIONS_DIR}" -name "*.jsonl" -print0 2>/dev/null)
+
+  # Check budget and write status for the agent to read
+  check_and_write_budget_status
 
   info "=== Done. Processed ${total_files} session file(s). ==="
 }
