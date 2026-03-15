@@ -52,11 +52,27 @@ openclaw skills list
 
 You should see `revenium` in the list. If not, confirm `revenium` is on your PATH — the skill requires it via binary gating.
 
+### 4. Install the metering cron
+
+A background cron job reads OpenClaw session files every 15 minutes and ships token usage to Revenium via `revenium meter completion`. This runs outside the sandbox on the host.
+
+```bash
+bash scripts/install-cron.sh
+```
+
+To verify it's working:
+```bash
+bash scripts/cron.sh            # run manually
+tail -f ~/.openclaw/revenium-metering.log  # watch logs
+```
+
+To uninstall: `bash scripts/uninstall-cron.sh`
+
 ## Setup
 
 Setup happens automatically the first time the agent tries to perform an operation. The agent will:
 
-1. Ask for your **Revenium API key**
+1. Ask for your **Revenium API key**, **Team ID**, **Tenant ID**, and **User ID**
 2. Ask for a **budget threshold** (e.g., `5.00`)
 3. Ask for a **budget period** (DAILY, WEEKLY, MONTHLY, or QUARTERLY)
 4. Create a budget alert in Revenium and save the alert ID to `~/.openclaw/skills/revenium/config.json`
@@ -98,6 +114,7 @@ Your API key is stored separately by the `revenium` CLI (via `revenium config se
 ## Uninstalling
 
 ```bash
+bash scripts/uninstall-cron.sh
 rm -rf ~/.openclaw/skills/revenium
 ```
 

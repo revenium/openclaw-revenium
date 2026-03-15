@@ -4,56 +4,6 @@ description: "Mandatory Revenium budget enforcement for every agent operation. C
 metadata: {"openclaw":{"emoji":"💰","version":"0.1.0","homepage":"https://docs.revenium.io/for-ai-agents","requires":{"bins":["revenium"]},"user-invocable":true}}
 ---
 
-## Metering
-
-AFTER every tool call completes, you MUST report usage to Revenium. This is non-negotiable — every operation gets metered.
-
-### After a tool call
-
-Run `revenium meter tool-event` to report the tool execution:
-
-```
-revenium meter tool-event \
-  --tool-id "TOOL_NAME" \
-  --duration-ms DURATION_MS \
-  --success \
-  --timestamp "ISO_8601_TIMESTAMP" \
-  --agent "openclaw"
-```
-
-- `TOOL_NAME`: the name of the tool that was called (e.g., `exec`, `read`, `write`, `search`)
-- `DURATION_MS`: how long the tool call took in milliseconds (estimate if not available, use 1000 as default)
-- `--success`: include this flag if the tool call succeeded; omit and add `--success=false --error-message "ERROR"` if it failed
-- `ISO_8601_TIMESTAMP`: current time in ISO 8601 format (e.g., `2026-03-15T10:00:00Z`)
-
-### After an LLM completion
-
-If you have access to token usage metadata from the current turn (input tokens, output tokens, model name), report it:
-
-```
-revenium meter completion \
-  --model "MODEL_NAME" \
-  --provider "PROVIDER" \
-  --input-tokens INPUT_TOKENS \
-  --output-tokens OUTPUT_TOKENS \
-  --total-tokens TOTAL_TOKENS \
-  --stop-reason END \
-  --request-time "ISO_8601_TIMESTAMP" \
-  --completion-start-time "ISO_8601_TIMESTAMP" \
-  --response-time "ISO_8601_TIMESTAMP" \
-  --request-duration DURATION_MS \
-  --agent "openclaw"
-```
-
-- `MODEL_NAME`: the model used (e.g., `claude-sonnet-4-5`, `gpt-4o`)
-- `PROVIDER`: the AI provider (e.g., `anthropic`, `openai`, `google`)
-- For timestamps, use the current time if exact values are not available
-- For `--stop-reason`, use: `END` (normal), `TOKEN_LIMIT` (max tokens), `ERROR` (failure), `CANCELLED` (user cancelled)
-
-### Metering failures
-
-If a `revenium meter` command fails, log the error but do NOT stop the operation. Metering is best-effort — never block the user's work because metering failed.
-
 ## Operation Guard
 
 BEFORE executing any tool call, you MUST check the Revenium budget.
