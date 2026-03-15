@@ -27,11 +27,21 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
    ```
    If the output shows an API Key is already set (not empty), skip to step 3. The key is already configured.
 
-2. **If no API key is configured:** Ask the user: "Please provide your Revenium API key." Wait for the user's response. Call this value `API_KEY`. Then run:
+2. **If no API key is configured:** Collect the following from the user. Ask for each value and wait for their response:
+
+   - **API Key**: "Please provide your Revenium API key."
+   - **Team ID**: "Please provide your Revenium Team ID."
+   - **Tenant ID**: "Please provide your Revenium Tenant ID."
+   - **User ID**: "Please provide your Revenium User ID."
+
+   Then configure the CLI by running each command in order:
    ```
    revenium config set key API_KEY
+   revenium config set team-id TEAM_ID
+   revenium config set tenant-id TENANT_ID
+   revenium config set user-id USER_ID
    ```
-   If the exit code is non-zero: tell the user what went wrong, tell them to run `/revenium` when ready, and STOP. Do NOT write `config.json`.
+   Replace the placeholder values with the user's actual responses. If any command returns a non-zero exit code: tell the user what went wrong, tell them to run `/revenium` when ready, and STOP. Do NOT write `config.json`.
 
 3. **Prompt for budget amount.** Ask the user: "What budget threshold would you like to set? (numeric amount, e.g., 5.00)" Wait for the user's response. Call this value `AMOUNT`.
 
