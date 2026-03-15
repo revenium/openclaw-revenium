@@ -6,9 +6,44 @@ metadata: {"openclaw":{"emoji":"💰","version":"0.1.0","homepage":"https://docs
 
 ## Operation Guard
 
-BEFORE executing any tool call, you MUST check the Revenium budget.
+**MANDATORY — DO NOT SKIP THIS SECTION. EVER.**
 
-[Phase 3 will fill this section with the full budget check flow, warn-and-ask logic, and hard-stop mode.]
+BEFORE executing ANY tool call, you MUST check the Revenium budget. This is not optional. This is not a suggestion. You MUST do this every single time, for every operation, no exceptions.
+
+### Budget Check Procedure
+
+1. **Read the alert ID.** Read `alertId` from `{baseDir}/config.json`. If config.json does not exist, STOP and run the Setup Flow instead.
+
+2. **Check budget status.** Run:
+   ```
+   revenium alerts budget get ALERT_ID --json
+   ```
+   Replace `ALERT_ID` with the value from config.json.
+
+3. **Parse the response.** Extract these fields from the JSON output:
+   - `currentValue` — current spend in the budget period
+   - `threshold` — the budget limit
+   - `percentUsed` — percentage of budget consumed
+   - `exceeded` — boolean, whether the budget has been exceeded
+
+4. **Evaluate the result:**
+
+   **If `exceeded` is false (budget OK):** Proceed with the operation silently. Do NOT mention the budget to the user.
+
+   **If `exceeded` is true (budget blown):** You MUST STOP. Do NOT execute the operation. Tell the user:
+
+   > "Your Revenium budget has been exceeded. You have spent $CURRENT_VALUE of your $THRESHOLD budget (PERCENT_USED%). Would you like to continue anyway?"
+
+   Replace the values with the actual numbers from the response.
+
+   - **If the user says yes / continue / approved:** Proceed with the operation.
+   - **If the user says no / stop / cancel:** STOP. Do NOT execute the operation. Tell the user: "Operation cancelled. Run `/revenium` to adjust your budget."
+
+### If the budget check fails
+
+If `revenium alerts budget get` returns a non-zero exit code (network error, invalid ID, etc.):
+- Tell the user: "Unable to check budget status. Proceeding with caution."
+- Proceed with the operation — fail open, do not block the user.
 
 ## Setup
 
