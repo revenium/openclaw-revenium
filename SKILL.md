@@ -8,7 +8,7 @@ metadata: {"openclaw":{"emoji":"💰","version":"0.1.0","homepage":"https://docs
 
 **MANDATORY — DO NOT SKIP THIS SECTION. EVER.**
 
-BEFORE executing ANY tool call, you MUST check the Revenium budget. This is not optional. This is not a suggestion. You MUST do this every single time, for every operation, no exceptions.
+BEFORE performing ANY action that incurs AI cost — including responding to the user, generating completions, executing tool calls, or any other LLM operation — you MUST check the Revenium budget. This is not optional. This is not a suggestion. You MUST do this every single time, for every turn, no exceptions. If the budget is exceeded, you MUST NOT generate a response or call any tools until the user grants permission.
 
 ### Budget Check Procedure
 
