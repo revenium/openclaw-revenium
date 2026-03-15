@@ -10,13 +10,14 @@ Budget enforcement for OpenClaw agents using the [Revenium](https://docs.reveniu
 
 ## Installation
 
-### 1. Install the skill
-
-Copy the skill to your OpenClaw managed skills directory:
+### 1. Clone and install the skill
 
 ```bash
+git clone <this-repo> revenium-openclaw
+cd revenium-openclaw
 mkdir -p ~/.openclaw/skills/revenium
 cp SKILL.md ~/.openclaw/skills/revenium/SKILL.md
+cp -r scripts ~/.openclaw/skills/revenium/scripts
 ```
 
 ### 2. Configure sandbox access
@@ -54,19 +55,27 @@ You should see `revenium` in the list. If not, confirm `revenium` is on your PAT
 
 ### 4. Install the metering cron
 
-A background cron job reads OpenClaw session files every 15 minutes and ships token usage to Revenium via `revenium meter completion`. This runs outside the sandbox on the host.
+A background cron job reads OpenClaw session JSONL files every 15 minutes and ships token usage to Revenium via `revenium meter completion`. This runs on the host, outside the sandbox.
 
 ```bash
-bash scripts/install-cron.sh
+bash ~/.openclaw/skills/revenium/scripts/install-cron.sh
 ```
 
 To verify it's working:
+
 ```bash
-bash scripts/cron.sh            # run manually
-tail -f ~/.openclaw/revenium-metering.log  # watch logs
+# Run the reporter manually
+bash ~/.openclaw/skills/revenium/scripts/cron.sh
+
+# Watch the log
+tail -f ~/.openclaw/revenium-metering.log
 ```
 
-To uninstall: `bash scripts/uninstall-cron.sh`
+To uninstall the cron:
+
+```bash
+bash ~/.openclaw/skills/revenium/scripts/uninstall-cron.sh
+```
 
 ## Setup
 
