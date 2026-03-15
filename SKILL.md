@@ -21,17 +21,17 @@ At the start of any operation, check: does `{baseDir}/config.json` exist?
 
 Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`. Do NOT proceed with operations.
 
-1. **Check for existing API key.** Run:
+1. **Check for API key.** Run:
    ```
    revenium config show
    ```
-   If the output shows an API Key is already set (not empty), skip to step 3. The key is already configured.
+   If the output shows an API Key is already set (not empty), skip to step 3. The key is available via environment variable or config file.
 
-2. **If no API key is configured:** Ask the user: "Please provide your Revenium API key." Wait for the user's response. Call this value `API_KEY`. Then run:
+2. **If no API key is configured:** Ask the user: "Please provide your Revenium API key." Wait for the user's response. Call this value `API_KEY`. Then set the environment variable for all subsequent commands in this session:
    ```
-   revenium config set key API_KEY
+   export REVENIUM_API_KEY=API_KEY
    ```
-   If the exit code is non-zero: tell the user what went wrong, tell them to run `/revenium` when ready, and STOP. Do NOT write `config.json`.
+   The `REVENIUM_API_KEY` environment variable takes precedence over the config file and works reliably in sandboxed environments.
 
 3. **Prompt for budget amount.** Ask the user: "What budget threshold would you like to set? (numeric amount, e.g., 5.00)" Wait for the user's response. Call this value `AMOUNT`.
 
