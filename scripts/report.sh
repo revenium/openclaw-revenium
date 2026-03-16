@@ -121,6 +121,7 @@ post_to_revenium() {
   local transaction_id="$9"
   local model_source="${10}"
   local is_streamed="${11}"
+  local system_prompt="${12:-}"
 
   local total_tokens=$((input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens))
 
@@ -159,6 +160,11 @@ post_to_revenium() {
     cmd+=(--organization-name "${ORG_NAME}")
   fi
 
+  # Add system prompt if available (first user message in the session)
+  if [[ -n "${system_prompt}" ]]; then
+    cmd+=(--system-prompt "${system_prompt}")
+  fi
+
   if "${cmd[@]}" 2>/dev/null; then
     info "Reported: model=${model} in=${input_tokens} out=${output_tokens} cache_read=${cache_read_tokens} cache_write=${cache_creation_tokens}"
     return 0
@@ -179,6 +185,15 @@ process_session() {
   # Skip if already fully reported
   if grep -q "^DONE:${session_id}$" "${LEDGER_FILE}" 2>/dev/null; then
     return 0
+  fi
+
+  # Extract system prompt from the first user message in the session
+  # This is typically the /new greeting instruction or the first user turn
+  local system_prompt=""
+  system_prompt=$(jq -r 'select(.type=="message") | .message | select(.role=="user") | .content[] | select(.type=="text") | .text' "${session_file}" 2>/dev/null | head -1 || true)
+  # Truncate to 500 chars to avoid overly long CLI args
+  if [[ ${#system_prompt} -gt 500 ]]; then
+    system_prompt="${system_prompt:0:500}..."
   fi
 
   local reported_count=0
@@ -241,7 +256,8 @@ process_session() {
         "${cache_read}" "${cache_create}" \
         "${timestamp:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
         "${stop_reason}" "${tx_id}" \
-        "${model_source}" "${is_streamed}"; then
+        "${model_source}" "${is_streamed}" \
+        "${system_prompt}"; then
       echo "TX:${tx_id}" >> "${LEDGER_FILE}"
       ((reported_count++)) || true
     else
