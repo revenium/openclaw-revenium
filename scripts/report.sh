@@ -123,6 +123,7 @@ post_to_revenium() {
   local is_streamed="${11}"
   local system_prompt="${12:-}"
   local input_messages="${13:-}"
+  local output_response="${14:-}"
 
   local total_tokens=$((input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens))
 
@@ -169,6 +170,11 @@ post_to_revenium() {
   # Add input messages (the user message that triggered this completion)
   if [[ -n "${input_messages}" ]]; then
     cmd+=(--input-messages "${input_messages}")
+  fi
+
+  # Add output response (the assistant's reply content)
+  if [[ -n "${output_response}" ]]; then
+    cmd+=(--output-response "${output_response}")
   fi
 
   if "${cmd[@]}" 2>/dev/null; then
@@ -271,6 +277,14 @@ print(json.dumps([{'role': 'user', 'content': text}]))
 " <<< "${user_messages[${parent_id}]}" 2>/dev/null || true)
     fi
 
+    # Extract the assistant's response text content
+    local output_resp=""
+    output_resp=$(echo "${line}" | jq -r '[.message.content[] | select(.type=="text") | .text] | join("\n")' 2>/dev/null || true)
+    # Truncate to 1000 chars
+    if [[ ${#output_resp} -gt 1000 ]]; then
+      output_resp="${output_resp:0:1000}..."
+    fi
+
     # Skip zero-usage lines
     local total=$((input_tokens + output_tokens))
     if [[ "${total}" -eq 0 ]]; then
@@ -289,7 +303,7 @@ print(json.dumps([{'role': 'user', 'content': text}]))
         "${timestamp:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
         "${stop_reason}" "${tx_id}" \
         "${model_source}" "${is_streamed}" \
-        "${system_prompt}" "${input_msgs_json}"; then
+        "${system_prompt}" "${input_msgs_json}" "${output_resp}"; then
       echo "TX:${tx_id}" >> "${LEDGER_FILE}"
       ((reported_count++)) || true
     else
