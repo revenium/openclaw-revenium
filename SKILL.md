@@ -94,13 +94,23 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
 
    Do NOT ask the user for a name. This is automatic.
 
-7. **Create the budget alert.** Run:
+7. **Delete any existing budget alerts.** Before creating a new alert, you MUST check for and remove pre-existing OpenClaw budget alerts to prevent duplicates. Run:
+   ```
+   revenium alerts budget list --json
+   ```
+   Parse the JSON output and look for any alerts whose name starts with `"OpenClaw "`. For EACH matching alert, delete it:
+   ```
+   revenium alerts budget delete EXISTING_ALERT_ID --yes
+   ```
+   If the list command fails or returns no results, that is fine — proceed to the next step. If a delete fails, log a warning but continue.
+
+8. **Create the budget alert.** Run:
    ```
    revenium alerts budget create --name "ALERT_NAME" --threshold AMOUNT --period PERIOD --json
    ```
    If the exit code is non-zero: tell the user what went wrong, tell them to run `/revenium` when ready, and STOP. Do NOT write `config.json`.
 
-8. **Extract the alert ID.** From the JSON response, extract the `"id"` field. This is a short alphanumeric string (e.g., `"75BjG5"`). Call this value `ALERT_ID`.
+9. **Extract the alert ID.** From the JSON response, extract the `"id"` field. This is a short alphanumeric string (e.g., `"75BjG5"`). Call this value `ALERT_ID`.
 
    **CRITICAL:** Do NOT use `anomalyId` from `budget get` responses — that is an integer and will cause HTTP 400 errors when passed to `budget get`. The correct value is the string `"id"` from the `budget create` response.
 
@@ -109,7 +119,7 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
    python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])"
    ```
 
-9. **Write config.json.** This MUST be the FINAL step — only write after ALL previous steps have succeeded. Write `{baseDir}/config.json` with pretty-printed JSON containing the alert ID and optional organization name:
+10. **Write config.json.** This MUST be the FINAL step — only write after ALL previous steps have succeeded. Write `{baseDir}/config.json` with pretty-printed JSON containing the alert ID and optional organization name:
    ```
    python3 -c "
    import json
@@ -122,13 +132,13 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
    ```
    Replace `ALERT_ID` and `ORG_NAME` with the actual values. If the user skipped the organization name, omit it from config.json.
 
-10. **Install the metering cron.** Run:
+11. **Install the metering cron.** Run:
    ```
    bash {baseDir}/scripts/install-cron.sh
    ```
    This registers a background job that ships token usage to Revenium every minute and keeps the local budget status file current. If the cron is already installed, this is a no-op.
 
-11. **Confirm to the user.** Tell the user setup is complete. Show: the alert name, the threshold amount, the period, and the organization name (if provided).
+12. **Confirm to the user.** Tell the user setup is complete. Show: the alert name, the threshold amount, the period, and the organization name (if provided).
 
 ### Error Handling
 
