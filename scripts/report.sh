@@ -122,6 +122,7 @@ post_to_revenium() {
   local model_source="${10}"
   local is_streamed="${11}"
   local system_prompt="${12:-}"
+  local input_messages="${13:-}"
 
   local total_tokens=$((input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens))
 
@@ -165,6 +166,11 @@ post_to_revenium() {
     cmd+=(--system-prompt "${system_prompt}")
   fi
 
+  # Add input messages (the user message that triggered this completion)
+  if [[ -n "${input_messages}" ]]; then
+    cmd+=(--input-messages "${input_messages}")
+  fi
+
   if "${cmd[@]}" 2>/dev/null; then
     info "Reported: model=${model} in=${input_tokens} out=${output_tokens} cache_read=${cache_read_tokens} cache_write=${cache_creation_tokens}"
     return 0
@@ -188,13 +194,24 @@ process_session() {
   fi
 
   # Extract system prompt from the first user message in the session
-  # This is typically the /new greeting instruction or the first user turn
   local system_prompt=""
   system_prompt=$(jq -r 'select(.type=="message") | .message | select(.role=="user") | .content[] | select(.type=="text") | .text' "${session_file}" 2>/dev/null | head -1 || true)
   # Truncate to 500 chars to avoid overly long CLI args
   if [[ ${#system_prompt} -gt 500 ]]; then
     system_prompt="${system_prompt:0:500}..."
   fi
+
+  # Build a lookup of message ID -> user text content for input-messages
+  # Each assistant message has a parentId pointing to the user message that triggered it
+  declare -A user_messages
+  while IFS= read -r uline; do
+    local uid ucontent
+    uid=$(echo "${uline}" | jq -r '.id // empty' 2>/dev/null || true)
+    ucontent=$(echo "${uline}" | jq -r '[.message.content[] | select(.type=="text") | .text] | join("\n")' 2>/dev/null || true)
+    if [[ -n "${uid}" && -n "${ucontent}" ]]; then
+      user_messages["${uid}"]="${ucontent}"
+    fi
+  done < <(jq -c 'select(.type=="message") | select(.message.role=="user")' "${session_file}" 2>/dev/null)
 
   local reported_count=0
   local failed_count=0
@@ -239,6 +256,21 @@ process_session() {
     tx_id=$(echo "${line}" | jq -r '.id // empty' 2>/dev/null || echo "${session_id}-$(date +%s%N)")
     stop_reason=$(map_stop_reason "$(echo "${line}" | jq -r '.message.stopReason // "stop"')")
 
+    # Look up the user message that triggered this completion via parentId
+    local parent_id input_msgs_json=""
+    parent_id=$(echo "${line}" | jq -r '.parentId // empty' 2>/dev/null || true)
+    if [[ -n "${parent_id}" && -n "${user_messages[${parent_id}]+x}" ]]; then
+      # Format as JSON array with single message object
+      input_msgs_json=$(python3 -c "
+import json, sys
+text = sys.stdin.read()
+# Truncate to 1000 chars
+if len(text) > 1000:
+    text = text[:1000] + '...'
+print(json.dumps([{'role': 'user', 'content': text}]))
+" <<< "${user_messages[${parent_id}]}" 2>/dev/null || true)
+    fi
+
     # Skip zero-usage lines
     local total=$((input_tokens + output_tokens))
     if [[ "${total}" -eq 0 ]]; then
@@ -257,7 +289,7 @@ process_session() {
         "${timestamp:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
         "${stop_reason}" "${tx_id}" \
         "${model_source}" "${is_streamed}" \
-        "${system_prompt}"; then
+        "${system_prompt}" "${input_msgs_json}"; then
       echo "TX:${tx_id}" >> "${LEDGER_FILE}"
       ((reported_count++)) || true
     else
