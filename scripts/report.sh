@@ -14,6 +14,9 @@ OPENCLAW_HOME="${HOME}/.openclaw"
 SESSIONS_DIR="${OPENCLAW_HOME}/agents/main/sessions"
 LEDGER_FILE="${OPENCLAW_HOME}/revenium-reported.ledger"
 LOG_FILE="${OPENCLAW_HOME}/revenium-metering.log"
+SKILL_DIR="${HOME}/.openclaw/skills/revenium"
+CONFIG_FILE="${SKILL_DIR}/config.json"
+BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -28,58 +31,78 @@ warn()  { log "WARN " "$@"; }
 error() { log "ERROR" "$@"; }
 
 # ---------------------------------------------------------------------------
-# Guard: require revenium CLI
+# Guards
 # ---------------------------------------------------------------------------
 if ! command -v revenium &>/dev/null; then
   warn "revenium CLI not found on PATH — skipping metering."
   exit 0
 fi
 
-# Guard: require jq for JSONL parsing
 if ! command -v jq &>/dev/null; then
   warn "jq not found — skipping metering."
   exit 0
 fi
 
-# Guard: require revenium config
 if ! revenium config show &>/dev/null; then
   warn "revenium not configured — run /revenium in OpenClaw to set up."
   exit 0
 fi
 
-# ---------------------------------------------------------------------------
-# Ensure ledger exists
-# ---------------------------------------------------------------------------
 touch "${LEDGER_FILE}"
 
 # ---------------------------------------------------------------------------
-# Map provider name from model string
+# Read optional organization name from config.json
+# ---------------------------------------------------------------------------
+ORG_NAME=""
+if [[ -f "${CONFIG_FILE}" ]]; then
+  ORG_NAME=$(python3 -c "import json; print(json.load(open('${CONFIG_FILE}')).get('organizationName', ''))" 2>/dev/null || true)
+fi
+
+# ---------------------------------------------------------------------------
+# Map provider from model string
+# OpenClaw JSONL has .message.provider = "bedrock" (the API route),
+# but Revenium wants the actual AI provider.
 # ---------------------------------------------------------------------------
 get_provider() {
   local model="$1"
   case "${model}" in
-    claude-*|anthropic*)  echo "anthropic" ;;
-    gpt-*|o1-*|o3-*)     echo "openai" ;;
-    gemini-*)             echo "google" ;;
-    deepseek-*)           echo "deepseek" ;;
-    llama-*|mistral-*)    echo "meta" ;;
-    *)                    echo "unknown" ;;
+    *claude*|*anthropic*)  echo "anthropic" ;;
+    *gpt-*|*o1-*|*o3-*)   echo "openai" ;;
+    *gemini-*)             echo "google" ;;
+    *deepseek-*)           echo "deepseek" ;;
+    *llama-*|*mistral-*)   echo "meta" ;;
+    *)                     echo "unknown" ;;
   esac
 }
 
 # ---------------------------------------------------------------------------
-# Map Anthropic stop_reason to Revenium stopReason enum
+# Clean model name — strip routing prefixes like "global."
+# "global.anthropic.claude-sonnet-4-6" → "claude-sonnet-4-6"
+# ---------------------------------------------------------------------------
+clean_model_name() {
+  local model="$1"
+  # Strip known prefixes
+  model="${model#global.}"
+  model="${model#anthropic.}"
+  model="${model#openai.}"
+  model="${model#google.}"
+  echo "${model}"
+}
+
+# ---------------------------------------------------------------------------
+# Map stop reason to Revenium enum
+# OpenClaw uses: stop, toolUse, end_turn, max_tokens, etc.
 # ---------------------------------------------------------------------------
 map_stop_reason() {
   case "${1}" in
-    end_turn|endTurn)   echo "END" ;;
-    stop_sequence)      echo "END_SEQUENCE" ;;
-    max_tokens)         echo "TOKEN_LIMIT" ;;
-    timeout)            echo "TIMEOUT" ;;
-    error)              echo "ERROR" ;;
-    toolUse|tool_use)   echo "END" ;;
-    cancelled|canceled) echo "CANCELLED" ;;
-    *)                  echo "END" ;;
+    stop|end_turn|endTurn) echo "END" ;;
+    stop_sequence)         echo "END_SEQUENCE" ;;
+    max_tokens)            echo "TOKEN_LIMIT" ;;
+    timeout)               echo "TIMEOUT" ;;
+    error)                 echo "ERROR" ;;
+    toolUse|tool_use)      echo "END" ;;
+    cancelled|canceled)    echo "CANCELLED" ;;
+    *)                     echo "END" ;;
   esac
 }
 
@@ -96,6 +119,8 @@ post_to_revenium() {
   local timestamp="$7"
   local stop_reason="$8"
   local transaction_id="$9"
+  local model_source="${10}"
+  local is_streamed="${11}"
 
   local total_tokens=$((input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens))
 
@@ -106,20 +131,36 @@ post_to_revenium() {
     --input-tokens "${input_tokens}"
     --output-tokens "${output_tokens}"
     --total-tokens "${total_tokens}"
+    --cache-read-tokens "${cache_read_tokens}"
+    --cache-creation-tokens "${cache_creation_tokens}"
     --stop-reason "${stop_reason}"
     --request-time "${timestamp}"
     --completion-start-time "${timestamp}"
     --response-time "${timestamp}"
     --request-duration 0
-    --agent "openclaw"
-    --cache-read-tokens "${cache_read_tokens}"
-    --cache-creation-tokens "${cache_creation_tokens}"
+    --agent "OpenClaw"
     --transaction-id "${transaction_id}"
+    --operation-type "CHAT"
     --quiet
   )
 
+  # Add model source (e.g., "bedrock") if available
+  if [[ -n "${model_source}" ]]; then
+    cmd+=(--model-source "${model_source}")
+  fi
+
+  # Add streaming flag if the API was a stream type
+  if [[ "${is_streamed}" == "true" ]]; then
+    cmd+=(--is-streamed)
+  fi
+
+  # Add organization name if configured
+  if [[ -n "${ORG_NAME}" ]]; then
+    cmd+=(--organization-name "${ORG_NAME}")
+  fi
+
   if "${cmd[@]}" 2>/dev/null; then
-    info "Reported: model=${model} in=${input_tokens} out=${output_tokens} cache_read=${cache_read_tokens}"
+    info "Reported: model=${model} in=${input_tokens} out=${output_tokens} cache_read=${cache_read_tokens} cache_write=${cache_creation_tokens}"
     return 0
   else
     warn "Failed to report: model=${model} txId=${transaction_id}"
@@ -149,16 +190,39 @@ process_session() {
       continue
     fi
 
-    local model input_tokens output_tokens cache_read cache_create timestamp tx_id stop_reason
+    # Extract all fields from the JSONL structure:
+    # .message.model = "global.anthropic.claude-sonnet-4-6"
+    # .message.provider = "bedrock" (API route, not AI provider)
+    # .message.api = "bedrock-converse-stream" (tells us if streaming)
+    # .message.usage.input = input tokens
+    # .message.usage.output = output tokens
+    # .message.usage.cacheRead = cache read tokens
+    # .message.usage.cacheWrite = cache write/creation tokens
+    # .message.usage.totalTokens = total
+    # .message.stopReason = "stop" | "toolUse" | etc.
+    # .id = unique message ID (transaction ID)
+    # .timestamp = ISO 8601 timestamp
 
-    model=$(echo "${line}" | jq -r '.message.model // "unknown"')
-    input_tokens=$(echo "${line}" | jq -r '.message.usage.input // .message.usage.input_tokens // 0')
-    output_tokens=$(echo "${line}" | jq -r '.message.usage.output // .message.usage.output_tokens // 0')
-    cache_read=$(echo "${line}" | jq -r '.message.usage.cacheRead // .message.usage.cache_read_input_tokens // 0')
-    cache_create=$(echo "${line}" | jq -r '.message.usage.cacheWrite // .message.usage.cache_creation_input_tokens // 0')
+    local raw_model model provider model_source is_streamed
+    local input_tokens output_tokens cache_read cache_create
+    local timestamp tx_id stop_reason
+
+    raw_model=$(echo "${line}" | jq -r '.message.model // "unknown"')
+    model=$(clean_model_name "${raw_model}")
+    provider=$(get_provider "${raw_model}")
+    model_source=$(echo "${line}" | jq -r '.message.provider // ""')
+    local api_type
+    api_type=$(echo "${line}" | jq -r '.message.api // ""')
+    is_streamed="false"
+    [[ "${api_type}" == *"stream"* ]] && is_streamed="true"
+
+    input_tokens=$(echo "${line}" | jq -r '.message.usage.input // 0')
+    output_tokens=$(echo "${line}" | jq -r '.message.usage.output // 0')
+    cache_read=$(echo "${line}" | jq -r '.message.usage.cacheRead // 0')
+    cache_create=$(echo "${line}" | jq -r '.message.usage.cacheWrite // 0')
     timestamp=$(echo "${line}" | jq -r '.timestamp // empty' 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
     tx_id=$(echo "${line}" | jq -r '.id // empty' 2>/dev/null || echo "${session_id}-$(date +%s%N)")
-    stop_reason=$(map_stop_reason "$(echo "${line}" | jq -r '.message.stopReason // .message.stop_reason // "end_turn"')")
+    stop_reason=$(map_stop_reason "$(echo "${line}" | jq -r '.message.stopReason // "stop"')")
 
     # Skip zero-usage lines
     local total=$((input_tokens + output_tokens))
@@ -171,15 +235,13 @@ process_session() {
       continue
     fi
 
-    local provider
-    provider=$(get_provider "${model}")
-
     if post_to_revenium \
         "${model}" "${provider}" \
         "${input_tokens}" "${output_tokens}" \
         "${cache_read}" "${cache_create}" \
         "${timestamp:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
-        "${stop_reason}" "${tx_id}"; then
+        "${stop_reason}" "${tx_id}" \
+        "${model_source}" "${is_streamed}"; then
       echo "TX:${tx_id}" >> "${LEDGER_FILE}"
       ((reported_count++)) || true
     else
@@ -205,10 +267,6 @@ process_session() {
 # ---------------------------------------------------------------------------
 # Check budget and write status to local file
 # ---------------------------------------------------------------------------
-SKILL_DIR="${HOME}/.openclaw/skills/revenium"
-BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
-CONFIG_FILE="${SKILL_DIR}/config.json"
-
 check_and_write_budget_status() {
   if [[ ! -f "${CONFIG_FILE}" ]]; then
     info "No config.json — skipping budget check"
@@ -231,7 +289,6 @@ check_and_write_budget_status() {
     return 0
   fi
 
-  # Write the full budget response plus a timestamp to the status file
   python3 -c "
 import json, sys
 from datetime import datetime, timezone
@@ -257,7 +314,6 @@ main() {
   info "=== Revenium Metering Reporter starting ==="
 
   if [[ ! -d "${SESSIONS_DIR}" ]]; then
-    # Try to find sessions directory
     SESSIONS_DIR=$(find "${OPENCLAW_HOME}" -name "*.jsonl" -path "*/sessions/*" \
       -exec dirname {} \; 2>/dev/null | sort -u | head -1 || true)
     if [[ -z "${SESSIONS_DIR}" ]]; then
@@ -273,7 +329,6 @@ main() {
     process_session "${session_file}"
   done < <(find "${SESSIONS_DIR}" -name "*.jsonl" -print0 2>/dev/null)
 
-  # Check budget and write status for the agent to read
   check_and_write_budget_status
 
   info "=== Done. Processed ${total_files} session file(s). ==="

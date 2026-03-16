@@ -74,9 +74,11 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
    ```
    Replace the placeholder values with the user's actual responses. If any command returns a non-zero exit code: tell the user what went wrong, tell them to run `/revenium` when ready, and STOP. Do NOT write `config.json`.
 
-3. **Prompt for budget amount.** Ask the user: "What budget threshold would you like to set? (numeric amount, e.g., 5.00)" Wait for the user's response. Call this value `AMOUNT`.
+3. **Prompt for organization name (optional).** Ask the user: "What is your organization name for Revenium reporting? (optional — press Enter to skip)" If the user provides a value, call it `ORG_NAME`. If they skip, leave it empty.
 
-4. **Prompt for budget period.** Ask the user: "Which budget period would you like?" and present these four options:
+4. **Prompt for budget amount.** Ask the user: "What budget threshold would you like to set? (numeric amount, e.g., 5.00)" Wait for the user's response. Call this value `AMOUNT`.
+
+5. **Prompt for budget period.** Ask the user: "Which budget period would you like?" and present these four options:
    - DAILY
    - WEEKLY
    - MONTHLY
@@ -84,7 +86,7 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
 
    Wait for the user's selection. Call this value `PERIOD`.
 
-5. **Generate the alert name.** Set `ALERT_NAME` to `"OpenClaw {Period} Budget"` where `{Period}` is the title-cased version of the selected period:
+6. **Generate the alert name.** Set `ALERT_NAME` to `"OpenClaw {Period} Budget"` where `{Period}` is the title-cased version of the selected period:
    - DAILY -> "OpenClaw Daily Budget"
    - WEEKLY -> "OpenClaw Weekly Budget"
    - MONTHLY -> "OpenClaw Monthly Budget"
@@ -92,13 +94,13 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
 
    Do NOT ask the user for a name. This is automatic.
 
-6. **Create the budget alert.** Run:
+7. **Create the budget alert.** Run:
    ```
    revenium alerts budget create --name "ALERT_NAME" --threshold AMOUNT --period PERIOD --json
    ```
    If the exit code is non-zero: tell the user what went wrong, tell them to run `/revenium` when ready, and STOP. Do NOT write `config.json`.
 
-7. **Extract the alert ID.** From the JSON response, extract the `"id"` field. This is a short alphanumeric string (e.g., `"75BjG5"`). Call this value `ALERT_ID`.
+8. **Extract the alert ID.** From the JSON response, extract the `"id"` field. This is a short alphanumeric string (e.g., `"75BjG5"`). Call this value `ALERT_ID`.
 
    **CRITICAL:** Do NOT use `anomalyId` from `budget get` responses — that is an integer and will cause HTTP 400 errors when passed to `budget get`. The correct value is the string `"id"` from the `budget create` response.
 
@@ -107,13 +109,20 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
    python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])"
    ```
 
-8. **Write config.json.** This MUST be the FINAL step — only write after ALL previous steps have succeeded. Write `{baseDir}/config.json` with pretty-printed JSON containing the alert ID:
+9. **Write config.json.** This MUST be the FINAL step — only write after ALL previous steps have succeeded. Write `{baseDir}/config.json` with pretty-printed JSON containing the alert ID and optional organization name:
    ```
-   python3 -c "import json; print(json.dumps({'alertId': 'ALERT_ID'}, indent=2))" > {baseDir}/config.json
+   python3 -c "
+   import json
+   config = {'alertId': 'ALERT_ID'}
+   org = 'ORG_NAME'
+   if org:
+       config['organizationName'] = org
+   print(json.dumps(config, indent=2))
+   " > {baseDir}/config.json
    ```
-   Replace `ALERT_ID` with the actual extracted value.
+   Replace `ALERT_ID` and `ORG_NAME` with the actual values. If the user skipped the organization name, omit it from config.json.
 
-9. **Confirm to the user.** Tell the user setup is complete. Show: the alert name, the threshold amount, and the period.
+10. **Confirm to the user.** Tell the user setup is complete. Show: the alert name, the threshold amount, the period, and the organization name (if provided).
 
 ### Error Handling
 
