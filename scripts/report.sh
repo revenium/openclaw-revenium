@@ -177,11 +177,16 @@ post_to_revenium() {
     cmd+=(--output-response "${output_response}")
   fi
 
-  if "${cmd[@]}" 2>/dev/null; then
+  local cmd_output cmd_exit
+  cmd_output=$("${cmd[@]}" 2>&1) && cmd_exit=0 || cmd_exit=$?
+
+  if [[ "${cmd_exit}" -eq 0 ]]; then
     info "Reported: model=${model} in=${input_tokens} out=${output_tokens} cache_read=${cache_read_tokens} cache_write=${cache_creation_tokens}"
     return 0
   else
-    warn "Failed to report: model=${model} txId=${transaction_id}"
+    warn "Failed to report: model=${model} txId=${transaction_id} exit=${cmd_exit}"
+    warn "Command: ${cmd[*]}"
+    warn "Output: ${cmd_output}"
     return 1
   fi
 }
