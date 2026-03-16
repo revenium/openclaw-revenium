@@ -5,75 +5,41 @@ Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) a
 ## Prerequisites
 
 - [OpenClaw](https://docs.openclaw.ai) installed and running
-- `revenium` CLI on your system PATH
-- `jq` installed on the host (used by the metering cron to parse session files)
 - A Revenium API key, Team ID, Tenant ID, and User ID
-
-Install the `revenium` CLI:
-
-```bash
-# macOS / Linux (Homebrew)
-brew install revenium/tap/revenium
-
-# or download from https://docs.revenium.io/for-ai-agents
-```
-
-Install `jq` if missing:
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install -y jq
-
-# macOS
-brew install jq
-```
 
 ## Installation
 
-### 1. Install the skill
-
-**From ClawHub (recommended):**
+### 1. Install the skill from ClawHub
 
 ```bash
-clawhub install revenium
+clawhub install --force --dir ~/.openclaw/skills revenium
 ```
 
-**Or manually from this repo:**
+> **About the VirusTotal warning:** ClawHub may display a warning that this skill is "flagged as suspicious by VirusTotal Code Insight." This is a false positive — the skill calls the Revenium API via the `revenium` CLI and handles API keys during setup, which triggers VirusTotal's heuristic detection for "external APIs" and "crypto keys." The skill is open source and safe to install. The `--force` flag bypasses this warning.
+
+### 2. Run post-install setup
+
+ClawHub does not run post-install scripts, so run the setup script to install any missing prerequisites and configure OpenClaw sandbox access:
 
 ```bash
-git clone <this-repo> revenium-openclaw
-cd revenium-openclaw
-mkdir -p ~/.openclaw/skills/revenium
-cp SKILL.md ~/.openclaw/skills/revenium/SKILL.md
-cp -r scripts ~/.openclaw/skills/revenium/scripts
+bash ~/.openclaw/skills/revenium/scripts/post-install.sh
 ```
 
-### 2. Configure sandbox access
+This will:
 
-OpenClaw agents run in a sandbox that cannot read `~/.openclaw/skills/` by default. Without this step, the agent will ask for Exec approval every time it tries to read the skill file.
+1. Check for and install the `revenium` CLI and `jq` via Homebrew (if missing)
+2. Verify `python3` is available
+3. Mark the skill's scripts as executable
+4. Add a read-only bind mount to `~/.openclaw/openclaw.json` so the agent can access the skill inside the sandbox
+5. Verify the installation
 
-Add a read-only bind mount to the `agents.defaults.sandbox.docker.binds` array in `~/.openclaw/openclaw.json`:
+> **Already have prerequisites installed?** Pass `--skip-prereqs` to skip Homebrew installs and fail immediately if anything is missing.
 
-```bash
-nano ~/.openclaw/openclaw.json
-```
+### 3. Restart the OpenClaw gateway
 
-Find the `binds` array inside `agents.defaults.sandbox.docker` and add the skills mount:
+Restart the gateway for sandbox changes to take effect.
 
-```json
-"docker": {
-  "binds": [
-    "/home/you/.openclaw/skills:/workspace/skills:ro",
-    ...existing binds...
-  ]
-}
-```
-
-Replace `/home/you` with your home directory path.
-
-After saving, restart the OpenClaw gateway for the change to take effect.
-
-### 3. Verify
+### 4. Verify
 
 ```bash
 openclaw skills list
@@ -81,9 +47,9 @@ openclaw skills list
 
 You should see `revenium` in the list. If not, confirm `revenium` is on your PATH — the skill requires it via binary gating.
 
-### 4. First-time setup (automatic)
+### First-time setup (automatic)
 
-The metering cron and budget alert are installed automatically when you first interact with the agent after installing the skill. The agent will walk you through providing your Revenium credentials and configuring your budget — no manual script execution needed.
+The metering cron and budget alert are configured automatically when you first interact with the agent after installing the skill. The agent will walk you through providing your Revenium credentials and configuring your budget — no manual script execution needed.
 
 To verify the cron is running after setup:
 
