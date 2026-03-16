@@ -30,7 +30,15 @@ brew install jq
 
 ## Installation
 
-### 1. Clone and install the skill
+### 1. Install the skill
+
+**From ClawHub (recommended):**
+
+```bash
+clawhub install revenium
+```
+
+**Or manually from this repo:**
 
 ```bash
 git clone <this-repo> revenium-openclaw
@@ -73,27 +81,23 @@ openclaw skills list
 
 You should see `revenium` in the list. If not, confirm `revenium` is on your PATH — the skill requires it via binary gating.
 
-### 4. Install the metering cron
+### 4. First-time setup (automatic)
 
-A background cron job reads OpenClaw session JSONL files every minute, ships token usage to Revenium via `revenium meter completion`, and updates the local budget status file. This runs on the host, outside the sandbox.
+The metering cron and budget alert are installed automatically when you first interact with the agent after installing the skill. The agent will walk you through providing your Revenium credentials and configuring your budget — no manual script execution needed.
 
-```bash
-bash ~/.openclaw/skills/revenium/scripts/install-cron.sh
-```
-
-To verify it's working:
+To verify the cron is running after setup:
 
 ```bash
-# Run the reporter manually
-bash ~/.openclaw/skills/revenium/scripts/cron.sh
-
-# Watch the log
 tail -f ~/.openclaw/revenium-metering.log
 ```
 
-To uninstall the cron:
+To manually manage the cron:
 
 ```bash
+# Reinstall
+bash ~/.openclaw/skills/revenium/scripts/install-cron.sh
+
+# Uninstall
 bash ~/.openclaw/skills/revenium/scripts/uninstall-cron.sh
 ```
 
@@ -106,6 +110,7 @@ Setup happens automatically the first time the agent tries to perform an operati
 3. Ask for a **budget threshold** (e.g., `5.00`)
 4. Ask for a **budget period** (DAILY, WEEKLY, MONTHLY, or QUARTERLY)
 5. Create a budget alert in Revenium and save the alert ID to `~/.openclaw/skills/revenium/config.json`
+6. Install the background metering cron (runs every minute)
 
 Setup is atomic — if any step fails, no partial config is written.
 

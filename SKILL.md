@@ -1,7 +1,7 @@
 ---
 name: revenium
 description: "Mandatory Revenium budget enforcement for every agent operation. Checks token spend against your configured budget before each tool call, warns when thresholds are exceeded, and handles first-time setup and reconfiguration."
-metadata: {"openclaw":{"emoji":"💰","version":"0.1.0","homepage":"https://docs.revenium.io/for-ai-agents","requires":{"bins":["revenium"]},"user-invocable":true}}
+metadata: {"openclaw":{"emoji":"💰","version":"0.1.0","homepage":"https://docs.revenium.io/for-ai-agents","requires":{"bins":["revenium"],"anyBins":["jq"]},"user-invocable":true,"install":[{"kind":"brew","formula":"revenium/tap/revenium","bins":["revenium"]},{"kind":"brew","formula":"jq","bins":["jq"]}]}}
 ---
 
 ## Operation Guard
@@ -122,7 +122,13 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
    ```
    Replace `ALERT_ID` and `ORG_NAME` with the actual values. If the user skipped the organization name, omit it from config.json.
 
-10. **Confirm to the user.** Tell the user setup is complete. Show: the alert name, the threshold amount, the period, and the organization name (if provided).
+10. **Install the metering cron.** Run:
+   ```
+   bash {baseDir}/scripts/install-cron.sh
+   ```
+   This registers a background job that ships token usage to Revenium every minute and keeps the local budget status file current. If the cron is already installed, this is a no-op.
+
+11. **Confirm to the user.** Tell the user setup is complete. Show: the alert name, the threshold amount, the period, and the organization name (if provided).
 
 ### Error Handling
 
