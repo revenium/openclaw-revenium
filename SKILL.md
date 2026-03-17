@@ -27,7 +27,11 @@ The budget status is maintained by a background cron job that checks Revenium ev
 
    **If `exceeded` is false (budget OK):** Proceed silently. Do NOT mention the budget to the user.
 
-   **If `exceeded` is true (budget blown):** You MUST STOP. Do NOT execute any operation, do NOT generate a response. Tell the user:
+   **If `exceeded` is true (budget blown):** Read `autonomousMode` from `{baseDir}/config.json`.
+
+   **If `autonomousMode` is `false` or absent (default — interactive mode):**
+
+   You MUST STOP. Do NOT execute any operation, do NOT generate a response. Tell the user:
 
    > "Your Revenium budget has been exceeded. You have spent $CURRENT_VALUE of your $THRESHOLD budget (PERCENT_USED%). Last checked: LAST_CHECKED. Would you like to continue anyway?"
 
@@ -35,6 +39,18 @@ The budget status is maintained by a background cron job that checks Revenium ev
 
    - **If the user says yes / continue / approved:** Proceed with the operation.
    - **If the user says no / stop / cancel:** STOP. Do NOT execute the operation. Tell the user: "Operation cancelled. Run `/revenium` to adjust your budget."
+
+   **If `autonomousMode` is `true`:**
+
+   Check the `halted` field in `{baseDir}/budget-status.json`.
+
+   - **If `halted` is `true`:** You MUST STOP immediately. Do NOT execute any operation, do NOT generate any response beyond this message:
+
+     > "Budget enforcement halt is active. $CURRENT_VALUE of $THRESHOLD budget used (PERCENT_USED%). A notification has been sent to your configured channel. To resume, run: `bash ~/.openclaw/skills/revenium/scripts/clear-halt.sh`"
+
+     Replace the values with the actual numbers from the file. Do NOT proceed under any circumstances until `halted` is `false`.
+
+   - **If `halted` is `false` but `exceeded` is `true`:** The user has explicitly cleared the halt — this is an approval to proceed. Continue with the operation.
 
 ### If budget-status.json is missing or unreadable
 
@@ -86,7 +102,22 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
 
    Wait for the user's selection. Call this value `PERIOD`.
 
-6. **Generate the alert name.** Set `ALERT_NAME` to `"OpenClaw {Period} Budget"` where `{Period}` is the title-cased version of the selected period:
+6. **Prompt for autonomous mode.** Ask the user: "Will this agent run autonomously (without a user present)? If yes, budget exceedance will halt all operations and notify you. (yes/no, default: no)"
+
+   - **If yes:** Set `AUTONOMOUS_MODE` to `true`. Then:
+     - Ask: "Which OpenClaw channel should receive budget alerts?" Present supported types: `slack`, `discord`, `telegram`, `whatsapp`, `signal`, `googlechat`, `msteams`, `mattermost`, `imessage`
+     - Wait for the user's selection. Call this value `NOTIFY_CHANNEL`.
+     - Ask: "What is the notification target on that channel?" Explain that the format varies by channel:
+       - Slack: `user:<id>` or `channel:<id>`
+       - Discord: `user:<id>` or `channel:<id>`
+       - Telegram: chat id or `@username`
+       - WhatsApp: E.164 phone number
+       - Signal: `+E.164` or `group:<id>`
+       - Teams: conversation id
+     - Wait for the user's response. Call this value `NOTIFY_TARGET`.
+   - **If no (default):** Set `AUTONOMOUS_MODE` to `false`. Skip notification channel prompts.
+
+7. **Generate the alert name.** Set `ALERT_NAME` to `"OpenClaw {Period} Budget"` where `{Period}` is the title-cased version of the selected period:
    - DAILY -> "OpenClaw Daily Budget"
    - WEEKLY -> "OpenClaw Weekly Budget"
    - MONTHLY -> "OpenClaw Monthly Budget"
@@ -94,7 +125,7 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
 
    Do NOT ask the user for a name. This is automatic.
 
-7. **Delete any existing budget alerts.** Before creating a new alert, you MUST check for and remove pre-existing OpenClaw budget alerts to prevent duplicates. Run:
+9. **Delete any existing budget alerts.** Before creating a new alert, you MUST check for and remove pre-existing OpenClaw budget alerts to prevent duplicates. Run:
    ```
    revenium alerts budget list --json
    ```
@@ -104,13 +135,13 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
    ```
    If the list command fails or returns no results, that is fine — proceed to the next step. If a delete fails, log a warning but continue.
 
-8. **Create the budget alert.** Run:
+10. **Create the budget alert.** Run:
    ```
    revenium alerts budget create --name "ALERT_NAME" --threshold AMOUNT --period PERIOD --json
    ```
    If the exit code is non-zero: tell the user what went wrong, tell them to run `/revenium` when ready, and STOP. Do NOT write `config.json`.
 
-9. **Extract the alert ID.** From the JSON response, extract the `"id"` field. This is a short alphanumeric string (e.g., `"75BjG5"`). Call this value `ALERT_ID`.
+11. **Extract the alert ID.** From the JSON response, extract the `"id"` field. This is a short alphanumeric string (e.g., `"75BjG5"`). Call this value `ALERT_ID`.
 
    **CRITICAL:** Do NOT use `anomalyId` from `budget get` responses — that is an integer and will cause HTTP 400 errors when passed to `budget get`. The correct value is the string `"id"` from the `budget create` response.
 
@@ -119,7 +150,7 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
    python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])"
    ```
 
-10. **Write config.json.** This MUST be the FINAL step — only write after ALL previous steps have succeeded. Write `{baseDir}/config.json` with pretty-printed JSON containing the alert ID and optional organization name:
+12. **Write config.json.** This MUST be the FINAL step — only write after ALL previous steps have succeeded. Write `{baseDir}/config.json` with pretty-printed JSON containing the alert ID, optional organization name, and autonomous mode settings:
    ```
    python3 -c "
    import json
@@ -127,18 +158,23 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
    org = 'ORG_NAME'
    if org:
        config['organizationName'] = org
+   autonomous = AUTONOMOUS_MODE  # True or False
+   config['autonomousMode'] = autonomous
+   if autonomous:
+       config['notifyChannel'] = 'NOTIFY_CHANNEL'
+       config['notifyTarget'] = 'NOTIFY_TARGET'
    print(json.dumps(config, indent=2))
    " > {baseDir}/config.json
    ```
-   Replace `ALERT_ID` and `ORG_NAME` with the actual values. If the user skipped the organization name, omit it from config.json.
+   Replace `ALERT_ID`, `ORG_NAME`, `AUTONOMOUS_MODE`, `NOTIFY_CHANNEL`, and `NOTIFY_TARGET` with the actual values. If the user skipped the organization name, omit it. If autonomous mode is false, omit `notifyChannel` and `notifyTarget`.
 
-11. **Install the metering cron.** Run:
+13. **Install the metering cron.** Run:
    ```
    bash {baseDir}/scripts/install-cron.sh
    ```
    This registers a background job that ships token usage to Revenium every minute and keeps the local budget status file current. If the cron is already installed, this is a no-op.
 
-12. **Confirm to the user.** Tell the user setup is complete. Show: the alert name, the threshold amount, the period, and the organization name (if provided).
+14. **Confirm to the user.** Tell the user setup is complete. Show: the alert name, the threshold amount, the period, the organization name (if provided), and autonomous mode status (including notification channel and target if configured).
 
 ### Error Handling
 
@@ -156,7 +192,13 @@ When the user invokes `/revenium`:
    ```
    Display the current spend versus threshold to the user (current value, threshold, percent used, remaining).
 
-2. **Offer reconfiguration.** Ask the user: "Would you like to update your budget configuration?" If the user declines, STOP — no further action.
+2. **Show autonomous mode status.** Read `{baseDir}/config.json` and display:
+   - **Autonomous mode:** enabled or disabled
+   - **Notification channel:** the configured channel type and target (if autonomous mode is enabled), or "not configured"
+   - **Halt status:** Read `{baseDir}/budget-status.json` and check the `halted` field. Display "ACTIVE (since HALTED_AT)" if `halted` is `true`, or "inactive" if `halted` is `false` or absent.
+   - If halt is active, also show: "To resume operations, run: `bash ~/.openclaw/skills/revenium/scripts/clear-halt.sh`"
+
+3. **Offer reconfiguration.** Ask the user: "Would you like to update your budget configuration?" If the user declines, STOP — no further action.
 
 ### If Setup Is NOT Complete (no config.json)
 
