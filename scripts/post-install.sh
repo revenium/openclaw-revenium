@@ -111,7 +111,7 @@ fi
 info "SKILL.md present"
 
 # Ensure scripts are executable
-for script in cron.sh report.sh install-cron.sh uninstall-cron.sh post-install.sh; do
+for script in cron.sh report.sh install-cron.sh uninstall-cron.sh clear-halt.sh post-install.sh; do
   if [[ -f "${SKILL_DIR}/scripts/${script}" ]]; then
     chmod +x "${SKILL_DIR}/scripts/${script}"
   fi
@@ -178,7 +178,32 @@ PYEOF
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Verify
+# 4. Pre-approve skill executables in OpenClaw exec allowlist
+# ---------------------------------------------------------------------------
+step "Configuring OpenClaw exec approvals for skill executables"
+
+if command_exists openclaw; then
+  # All executables the skill invokes during agent sessions
+  SKILL_EXECUTABLES=(revenium python3 jq bash)
+
+  for exe in "${SKILL_EXECUTABLES[@]}"; do
+    EXE_PATH="$(command -v "${exe}" || true)"
+    if [[ -n "${EXE_PATH}" ]]; then
+      if openclaw approvals allowlist add "${EXE_PATH}" 2>/dev/null; then
+        info "Added ${exe} (${EXE_PATH}) to OpenClaw exec allowlist"
+      else
+        warn "Could not add ${exe} to allowlist — you may be prompted for approval on first use"
+      fi
+    else
+      warn "${exe} not found — skipping allowlist entry"
+    fi
+  done
+else
+  warn "openclaw CLI not available — skipping allowlist setup"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Verify
 # ---------------------------------------------------------------------------
 step "Verifying installation"
 
