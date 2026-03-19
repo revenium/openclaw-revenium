@@ -221,13 +221,10 @@ for entry in bind_entries:
 
 # Inject PATH into the container environment so mounted binaries are found
 if extra_path_dirs:
-    env = docker.setdefault("env", [])
+    env = docker.setdefault("env", {})
     # Build a PATH that prepends our dirs to the standard container PATH
     default_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    path_value = f"PATH={extra_path_dirs}:{default_path}"
-    # Replace any existing PATH entry or add a new one
-    docker["env"] = [e for e in env if not e.startswith("PATH=")]
-    docker["env"].append(path_value)
+    env["PATH"] = f"{extra_path_dirs}:{default_path}"
 
 with open(config_path, "w") as f:
     json.dump(config, f, indent=2)
