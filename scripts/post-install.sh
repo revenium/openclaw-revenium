@@ -226,8 +226,8 @@ if extra_path_dirs:
     default_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     path_value = f"PATH={extra_path_dirs}:{default_path}"
     # Replace any existing PATH entry or add a new one
-    env[:] = [e for e in env if not e.startswith("PATH=")]
-    env.append(path_value)
+    docker["env"] = [e for e in env if not e.startswith("PATH=")]
+    docker["env"].append(path_value)
 
 with open(config_path, "w") as f:
     json.dump(config, f, indent=2)
