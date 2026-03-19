@@ -227,6 +227,9 @@ if extra_path_dirs:
     default_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     docker["env"]["PATH"] = f"{extra_path_dirs}:{default_path}"
 
+# Allow outbound network access so the revenium CLI can reach api.revenium.ai
+docker["network"] = "host"
+
 with open(config_path, "w") as f:
     json.dump(config, f, indent=2)
     f.write("\n")
