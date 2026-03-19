@@ -1,7 +1,7 @@
 ---
 name: revenium
 description: "Mandatory Revenium budget enforcement for every agent operation. Checks token spend against your configured budget before each tool call, warns when thresholds are exceeded, and handles first-time setup and reconfiguration."
-metadata: {"openclaw":{"emoji":"💰","version":"0.1.0","homepage":"https://docs.revenium.io/for-ai-agents","requires":{"bins":["revenium","python3","bash","cat","grep","find","date","stat","sort","head","tee","rm","touch","crontab"],"anyBins":["jq"]},"user-invocable":true,"install":[{"kind":"brew","formula":"revenium/tap/revenium","bins":["revenium"]},{"kind":"brew","formula":"jq","bins":["jq"]}]}}
+metadata: {"openclaw":{"emoji":"💰","version":"0.1.0","homepage":"https://docs.revenium.io/for-ai-agents","requires":{"bins":["revenium"],"anyBins":["jq"]},"user-invocable":true,"install":[{"kind":"brew","formula":"revenium/tap/revenium","bins":["revenium"]},{"kind":"brew","formula":"jq","bins":["jq"]}]}}
 ---
 
 ## Path Resolution
