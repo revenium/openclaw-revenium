@@ -202,11 +202,6 @@ mkdir -p "${REVENIUM_CONFIG_DIR}"
 BIND_ENTRIES+=("${REVENIUM_CONFIG_DIR}:${REVENIUM_CONFIG_DIR}:ro")
 info "Will bind-mount revenium config at ${REVENIUM_CONFIG_DIR}"
 
-# Bind-mount /etc/resolv.conf so the container can resolve hostnames
-if [[ -e /etc/resolv.conf ]]; then
-  BIND_ENTRIES+=("/etc/resolv.conf:/etc/resolv.conf:ro")
-fi
-
 # Generate a CA certificate bundle for sandboxed environments.
 # Minimal Docker containers often lack /etc/ssl/certs/ca-certificates.crt,
 # which causes Go/TLS binaries like revenium to fail HTTPS connections.
