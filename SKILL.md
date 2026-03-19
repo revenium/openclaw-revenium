@@ -4,6 +4,10 @@ description: "Mandatory Revenium budget enforcement for every agent operation. C
 metadata: {"openclaw":{"emoji":"💰","version":"0.1.0","homepage":"https://docs.revenium.io/for-ai-agents","requires":{"bins":["revenium","python3","bash","cat","grep","find","date","stat","sort","head","tee","rm","touch","crontab"],"anyBins":["jq"]},"user-invocable":true,"install":[{"kind":"brew","formula":"revenium/tap/revenium","bins":["revenium"]},{"kind":"brew","formula":"jq","bins":["jq"]}]}}
 ---
 
+## Path Resolution
+
+All file paths in this skill use `~/.openclaw/skills/revenium/` as the skill directory. When using file tools (read, write, edit), pass paths with `~/` — the tool resolves `~` to `$HOME` automatically. When running shell commands via exec/bash, use the explicit `$HOME/.openclaw/skills/revenium/` form so the shell expands `$HOME` correctly.
+
 ## Operation Guard
 
 **MANDATORY — DO NOT SKIP THIS SECTION. EVER.**
@@ -12,9 +16,9 @@ BEFORE performing ANY action that incurs AI cost — including responding to the
 
 ### Budget Check Procedure
 
-The budget status is maintained by a background cron job that checks Revenium every minute and writes the result to `{baseDir}/budget-status.json`. You read this local file — do NOT call the Revenium API directly.
+The budget status is maintained by a background cron job that checks Revenium every minute and writes the result to `~/.openclaw/skills/revenium/budget-status.json`. You read this local file — do NOT call the Revenium API directly.
 
-1. **Read budget status.** Read the file `{baseDir}/budget-status.json`. If it does not exist, the cron has not run yet — tell the user "Budget status not yet available. The metering cron may not be installed. Run `bash ~/.openclaw/skills/revenium/scripts/install-cron.sh` to set it up." Then proceed with the operation.
+1. **Read budget status.** Read the file `~/.openclaw/skills/revenium/budget-status.json`. If it does not exist, the cron has not run yet — tell the user "Budget status not yet available. The metering cron may not be installed. Run `bash ~/.openclaw/skills/revenium/scripts/install-cron.sh` to set it up." Then proceed with the operation.
 
 2. **Parse the status.** Extract these fields from the JSON:
    - `currentValue` — current spend in the budget period
@@ -27,7 +31,7 @@ The budget status is maintained by a background cron job that checks Revenium ev
 
    **If `exceeded` is false (budget OK):** Proceed silently. Do NOT mention the budget to the user.
 
-   **If `exceeded` is true (budget blown):** Read `autonomousMode` from `{baseDir}/config.json`.
+   **If `exceeded` is true (budget blown):** Read `autonomousMode` from `~/.openclaw/skills/revenium/config.json`.
 
    **If `autonomousMode` is `false` or absent (default — interactive mode):**
 
@@ -42,7 +46,7 @@ The budget status is maintained by a background cron job that checks Revenium ev
 
    **If `autonomousMode` is `true`:**
 
-   Check the `halted` field in `{baseDir}/budget-status.json`.
+   Check the `halted` field in `~/.openclaw/skills/revenium/budget-status.json`.
 
    - **If `halted` is `true`:** You MUST STOP immediately. Do NOT execute any operation, do NOT generate any response beyond this message:
 
@@ -59,7 +63,7 @@ The budget status is maintained by a background cron job that checks Revenium ev
 
 ## Setup
 
-At the start of any operation, check: does `{baseDir}/config.json` exist?
+At the start of any operation, check: does `~/.openclaw/skills/revenium/config.json` exist?
 
 - **If YES** and the user has NOT requested reconfiguration: setup is complete. Proceed to the Operation Guard section. Do NOT re-run setup.
 - **If NO**: you MUST run the Setup Flow below before proceeding. Do NOT execute any operations until setup is complete.
@@ -150,7 +154,7 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
    python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])"
    ```
 
-12. **Write config.json.** This MUST be the FINAL step — only write after ALL previous steps have succeeded. Write `{baseDir}/config.json` with pretty-printed JSON containing the alert ID, optional organization name, and autonomous mode settings:
+12. **Write config.json.** This MUST be the FINAL step — only write after ALL previous steps have succeeded. Write `~/.openclaw/skills/revenium/config.json` with pretty-printed JSON containing the alert ID, optional organization name, and autonomous mode settings:
    ```
    python3 -c "
    import json
@@ -164,13 +168,13 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
        config['notifyChannel'] = 'NOTIFY_CHANNEL'
        config['notifyTarget'] = 'NOTIFY_TARGET'
    print(json.dumps(config, indent=2))
-   " > {baseDir}/config.json
+   " > ~/.openclaw/skills/revenium/config.json
    ```
    Replace `ALERT_ID`, `ORG_NAME`, `AUTONOMOUS_MODE`, `NOTIFY_CHANNEL`, and `NOTIFY_TARGET` with the actual values. If the user skipped the organization name, omit it. If autonomous mode is false, omit `notifyChannel` and `notifyTarget`.
 
 13. **Install the metering cron.** Run:
    ```
-   bash {baseDir}/scripts/install-cron.sh
+   bash ~/.openclaw/skills/revenium/scripts/install-cron.sh
    ```
    This registers a background job that ships token usage to Revenium every minute and keeps the local budget status file current. If the cron is already installed, this is a no-op.
 
@@ -186,16 +190,16 @@ When the user invokes `/revenium`:
 
 ### If Setup Is Complete (config.json exists)
 
-1. **Show budget status.** Read `alertId` from `{baseDir}/config.json`, then run:
+1. **Show budget status.** Read `alertId` from `~/.openclaw/skills/revenium/config.json`, then run:
    ```
    revenium alerts budget get ALERT_ID --json
    ```
    Display the current spend versus threshold to the user (current value, threshold, percent used, remaining).
 
-2. **Show autonomous mode status.** Read `{baseDir}/config.json` and display:
+2. **Show autonomous mode status.** Read `~/.openclaw/skills/revenium/config.json` and display:
    - **Autonomous mode:** enabled or disabled
    - **Notification channel:** the configured channel type and target (if autonomous mode is enabled), or "not configured"
-   - **Halt status:** Read `{baseDir}/budget-status.json` and check the `halted` field. Display "ACTIVE (since HALTED_AT)" if `halted` is `true`, or "inactive" if `halted` is `false` or absent.
+   - **Halt status:** Read `~/.openclaw/skills/revenium/budget-status.json` and check the `halted` field. Display "ACTIVE (since HALTED_AT)" if `halted` is `true`, or "inactive" if `halted` is `false` or absent.
    - If halt is active, also show: "To resume operations, run: `bash ~/.openclaw/skills/revenium/scripts/clear-halt.sh`"
 
 3. **Offer reconfiguration.** Ask the user: "Would you like to update your budget configuration?" If the user declines, STOP — no further action.
@@ -208,7 +212,7 @@ Run the Setup Flow from the Setup section above.
 
 When the user requests reconfiguration:
 
-1. **Read existing alert ID.** Read `alertId` from `{baseDir}/config.json`. Call this value `OLD_ALERT_ID`.
+1. **Read existing alert ID.** Read `alertId` from `~/.openclaw/skills/revenium/config.json`. Call this value `OLD_ALERT_ID`.
 
 2. **Delete the old alert.** Run:
    ```
@@ -216,7 +220,7 @@ When the user requests reconfiguration:
    ```
    If this fails (e.g., alert already deleted or not found): log a warning but continue. The goal is to prevent orphaned alerts.
 
-3. **Delete config.json.** Remove `{baseDir}/config.json`.
+3. **Delete config.json.** Remove `~/.openclaw/skills/revenium/config.json`.
 
 4. **Run the full Setup Flow** from the Setup section above. This collects fresh API key, budget amount, period, and creates a new alert from scratch.
 

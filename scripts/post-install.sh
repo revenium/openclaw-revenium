@@ -130,10 +130,11 @@ step "Configuring OpenClaw sandbox access"
 BIND_ENTRIES=()
 BIND_ENTRIES+=("${OPENCLAW_HOME}:${OPENCLAW_HOME}")
 
-# Collect unique bin directories that need to be mounted.
-# We mount the *directory* (not just the binary) so PATH resolution works
-# and any shared library dependencies next to the binary are available.
+# Collect unique directories that need to be mounted.
+# We mount bin *directories* (not individual binaries) so PATH resolution works,
+# and also mount sibling lib directories so shared libraries are available.
 BIN_DIRS_SEEN=()
+LIB_DIRS_SEEN=()
 
 add_bin_dir() {
   local exe_path="$1"
@@ -153,6 +154,23 @@ add_bin_dir() {
   BIN_DIRS_SEEN+=("${bin_dir}")
   BIND_ENTRIES+=("${bin_dir}:${bin_dir}:ro")
   info "Will bind-mount ${bin_dir} (contains $(basename "${exe_path}"))"
+
+  # Also mount the sibling lib directory if it exists — Homebrew Cellar
+  # binaries (e.g. jq) have shared lib deps (libjq.so, libonig.so) in
+  # ../lib relative to the bin dir.
+  local lib_dir="${bin_dir}/../lib"
+  if [[ -d "${lib_dir}" ]]; then
+    lib_dir="$(cd "${lib_dir}" && pwd)"
+    local already=false
+    for seen in "${LIB_DIRS_SEEN[@]+"${LIB_DIRS_SEEN[@]}"}"; do
+      [[ "${seen}" == "${lib_dir}" ]] && already=true && break
+    done
+    if [[ "${already}" == false ]]; then
+      LIB_DIRS_SEEN+=("${lib_dir}")
+      BIND_ENTRIES+=("${lib_dir}:${lib_dir}:ro")
+      info "Will bind-mount ${lib_dir} (shared libs)"
+    fi
+  fi
 }
 
 # Bind-mount the directory containing the revenium binary
@@ -236,12 +254,24 @@ for d in "${BIN_DIRS_SEEN[@]+"${BIN_DIRS_SEEN[@]}"}"; do
   fi
 done
 
+# Build LD_LIBRARY_PATH for mounted shared libraries (e.g. libjq, libonig)
+EXTRA_LIB_DIRS=""
+for d in "${LIB_DIRS_SEEN[@]+"${LIB_DIRS_SEEN[@]}"}"; do
+  if [[ -z "${EXTRA_LIB_DIRS}" ]]; then
+    EXTRA_LIB_DIRS="${d}"
+  else
+    EXTRA_LIB_DIRS="${d}:${EXTRA_LIB_DIRS}"
+  fi
+done
+
 python3 <<PYEOF
 import json, os
 
 config_path = "${OPENCLAW_CONFIG}"
 bind_entries = $(printf '%s\n' "${BIND_ENTRIES[@]}" | python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
 extra_path_dirs = "${EXTRA_PATH_DIRS}"
+extra_lib_dirs = "${EXTRA_LIB_DIRS}"
+host_home = "${HOME}"
 
 if os.path.exists(config_path):
     with open(config_path, "r") as f:
@@ -268,11 +298,22 @@ if extra_path_dirs:
     default_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     docker["env"]["PATH"] = f"{extra_path_dirs}:{default_path}"
 
+# Ensure env is a dict
+if not isinstance(docker.get("env"), dict):
+    docker["env"] = {}
+
+# Set HOME to the host user's home so scripts find ~/.openclaw correctly
+# (the sandbox default HOME is /workspace which breaks all path resolution)
+docker["env"]["HOME"] = host_home
+
+# Set LD_LIBRARY_PATH so Homebrew binaries (jq) can find their shared libs
+# (libjq.so, libonig.so live in Cellar lib dirs, not in standard /usr/lib)
+if extra_lib_dirs:
+    docker["env"]["LD_LIBRARY_PATH"] = extra_lib_dirs
+
 # Point revenium at our CA bundle inside the container
 ssl_cert_file = "${SSL_CERT_FILE}"
 if ssl_cert_file:
-    if not isinstance(docker.get("env"), dict):
-        docker["env"] = {}
     docker["env"]["SSL_CERT_FILE"] = ssl_cert_file
 
 # Allow outbound network access so the revenium CLI can reach api.revenium.ai

@@ -10,11 +10,23 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-OPENCLAW_HOME="${HOME}/.openclaw"
+# Allow OPENCLAW_HOME override via env (e.g. sandbox where $HOME != host home).
+# Probe common locations to find the real OpenClaw directory.
+OPENCLAW_HOME="${OPENCLAW_HOME:-}"
+if [[ -z "${OPENCLAW_HOME}" ]]; then
+  for candidate in "${HOME}/.openclaw" "/home/ubuntu/.openclaw"; do
+    if [[ -d "${candidate}/agents" ]]; then
+      OPENCLAW_HOME="${candidate}"
+      break
+    fi
+  done
+  OPENCLAW_HOME="${OPENCLAW_HOME:-${HOME}/.openclaw}"
+fi
+
 SESSIONS_DIR="${OPENCLAW_HOME}/agents/main/sessions"
 LEDGER_FILE="${OPENCLAW_HOME}/revenium-reported.ledger"
 LOG_FILE="${OPENCLAW_HOME}/revenium-metering.log"
-SKILL_DIR="${HOME}/.openclaw/skills/revenium"
+SKILL_DIR="${OPENCLAW_HOME}/skills/revenium"
 CONFIG_FILE="${SKILL_DIR}/config.json"
 BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
 

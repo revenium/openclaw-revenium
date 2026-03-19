@@ -7,7 +7,18 @@
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OPENCLAW_HOME="${HOME}/.openclaw"
+
+# Allow OPENCLAW_HOME override via env (e.g. sandbox where $HOME != host home).
+OPENCLAW_HOME="${OPENCLAW_HOME:-}"
+if [[ -z "${OPENCLAW_HOME}" ]]; then
+  for candidate in "${HOME}/.openclaw" "/home/ubuntu/.openclaw"; do
+    if [[ -d "${candidate}/agents" ]]; then
+      OPENCLAW_HOME="${candidate}"
+      break
+    fi
+  done
+  OPENCLAW_HOME="${OPENCLAW_HOME:-${HOME}/.openclaw}"
+fi
 
 # Source environment from revenium.env if it exists
 ENV_FILE="${OPENCLAW_HOME}/revenium.env"
