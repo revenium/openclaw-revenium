@@ -125,32 +125,55 @@ step "Configuring OpenClaw sandbox access"
 
 # Build the list of bind mounts the agent needs inside the Docker sandbox:
 #   - ~/.openclaw (rw) — skills, sessions, logs, ledger, budget-status, config
-#   - revenium binary (ro) — so the agent can call the CLI
+#   - bin directories containing revenium/jq (ro) — so the agent can invoke CLIs
 #   - ~/.config/revenium (ro) — CLI credentials (API key, team/tenant/user IDs)
 BIND_ENTRIES=()
 BIND_ENTRIES+=("${OPENCLAW_HOME}:${OPENCLAW_HOME}")
 
-# Bind-mount the revenium binary so the sandbox can invoke it
+# Collect unique bin directories that need to be mounted.
+# We mount the *directory* (not just the binary) so PATH resolution works
+# and any shared library dependencies next to the binary are available.
+BIN_DIRS_SEEN=()
+
+add_bin_dir() {
+  local exe_path="$1"
+  local bin_dir
+  bin_dir="$(dirname "${exe_path}")"
+
+  # Skip standard dirs that are already in most container images
+  case "${bin_dir}" in
+    /usr/bin|/bin) return ;;
+  esac
+
+  # Deduplicate
+  for seen in "${BIN_DIRS_SEEN[@]+"${BIN_DIRS_SEEN[@]}"}"; do
+    [[ "${seen}" == "${bin_dir}" ]] && return
+  done
+
+  BIN_DIRS_SEEN+=("${bin_dir}")
+  BIND_ENTRIES+=("${bin_dir}:${bin_dir}:ro")
+  info "Will bind-mount ${bin_dir} (contains $(basename "${exe_path}"))"
+}
+
+# Bind-mount the directory containing the revenium binary
 REVENIUM_PATH="$(command -v revenium || true)"
 if [[ -n "${REVENIUM_PATH}" ]]; then
+  add_bin_dir "${REVENIUM_PATH}"
+  # Also handle symlink targets (e.g. /usr/local/bin/revenium -> /home/linuxbrew/...)
   REVENIUM_REAL="$(readlink -f "${REVENIUM_PATH}" 2>/dev/null || echo "${REVENIUM_PATH}")"
-  BIND_ENTRIES+=("${REVENIUM_REAL}:${REVENIUM_REAL}:ro")
-  # Also mount the symlink path if it differs (e.g. /usr/local/bin/revenium -> linuxbrew)
   if [[ "${REVENIUM_REAL}" != "${REVENIUM_PATH}" ]]; then
-    BIND_ENTRIES+=("${REVENIUM_PATH}:${REVENIUM_PATH}:ro")
+    add_bin_dir "${REVENIUM_REAL}"
   fi
-  info "Will bind-mount revenium at ${REVENIUM_PATH}"
 fi
 
-# Bind-mount jq if available
+# Bind-mount the directory containing jq
 JQ_PATH="$(command -v jq || true)"
 if [[ -n "${JQ_PATH}" ]]; then
+  add_bin_dir "${JQ_PATH}"
   JQ_REAL="$(readlink -f "${JQ_PATH}" 2>/dev/null || echo "${JQ_PATH}")"
-  BIND_ENTRIES+=("${JQ_REAL}:${JQ_REAL}:ro")
   if [[ "${JQ_REAL}" != "${JQ_PATH}" ]]; then
-    BIND_ENTRIES+=("${JQ_PATH}:${JQ_PATH}:ro")
+    add_bin_dir "${JQ_REAL}"
   fi
-  info "Will bind-mount jq at ${JQ_PATH}"
 fi
 
 # Bind-mount revenium CLI config (API key, team/tenant/user IDs)
