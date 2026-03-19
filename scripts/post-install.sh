@@ -176,11 +176,52 @@ if [[ -n "${JQ_PATH}" ]]; then
   fi
 fi
 
-# Bind-mount revenium CLI config (API key, team/tenant/user IDs)
+# Bind-mount revenium CLI config (API key, team/tenant/user IDs).
+# Create the dir if it doesn't exist yet — the user may configure revenium
+# after post-install, and we need the mount point ready.
 REVENIUM_CONFIG_DIR="${HOME}/.config/revenium"
-if [[ -d "${REVENIUM_CONFIG_DIR}" ]]; then
-  BIND_ENTRIES+=("${REVENIUM_CONFIG_DIR}:${REVENIUM_CONFIG_DIR}:ro")
-  info "Will bind-mount revenium config at ${REVENIUM_CONFIG_DIR}"
+mkdir -p "${REVENIUM_CONFIG_DIR}"
+BIND_ENTRIES+=("${REVENIUM_CONFIG_DIR}:${REVENIUM_CONFIG_DIR}:ro")
+info "Will bind-mount revenium config at ${REVENIUM_CONFIG_DIR}"
+
+# Bind-mount /etc/resolv.conf so the container can resolve hostnames
+if [[ -e /etc/resolv.conf ]]; then
+  BIND_ENTRIES+=("/etc/resolv.conf:/etc/resolv.conf:ro")
+fi
+
+# Generate a CA certificate bundle for sandboxed environments.
+# Minimal Docker containers often lack /etc/ssl/certs/ca-certificates.crt,
+# which causes Go/TLS binaries like revenium to fail HTTPS connections.
+# Node.js (an OpenClaw dependency) ships its own CA bundle — extract it
+# to a stable path and point SSL_CERT_FILE at it.
+SSL_DIR="${OPENCLAW_HOME}/ssl"
+SSL_CERT_FILE="${SSL_DIR}/ca-certificates.crt"
+REVENIUM_ENV="${OPENCLAW_HOME}/revenium.env"
+
+if [[ ! -f "${SSL_CERT_FILE}" ]]; then
+  if command_exists node; then
+    mkdir -p "${SSL_DIR}"
+    node -e "
+      const tls = require('tls');
+      const fs = require('fs');
+      fs.writeFileSync('${SSL_CERT_FILE}', tls.rootCertificates.join('\n'));
+    "
+    info "Generated CA bundle at ${SSL_CERT_FILE}"
+  else
+    warn "node not found — cannot generate CA bundle; revenium may fail HTTPS in sandbox"
+  fi
+fi
+
+# Persist SSL_CERT_FILE to revenium.env (sourced by cron.sh)
+if [[ -f "${SSL_CERT_FILE}" ]]; then
+  if ! grep -q "SSL_CERT_FILE" "${REVENIUM_ENV}" 2>/dev/null; then
+    echo "SSL_CERT_FILE=${SSL_CERT_FILE}" >> "${REVENIUM_ENV}"
+    info "Added SSL_CERT_FILE to ${REVENIUM_ENV}"
+  fi
+  # Export for the remainder of this script (in case revenium is called later)
+  export SSL_CERT_FILE="${SSL_CERT_FILE}"
+  # Bind-mount the ssl dir into the container
+  BIND_ENTRIES+=("${SSL_DIR}:${SSL_DIR}:ro")
 fi
 
 # Build a PATH that includes the mounted bin directories so the container
@@ -226,6 +267,13 @@ if extra_path_dirs:
         docker["env"] = {}
     default_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     docker["env"]["PATH"] = f"{extra_path_dirs}:{default_path}"
+
+# Point revenium at our CA bundle inside the container
+ssl_cert_file = "${SSL_CERT_FILE}"
+if ssl_cert_file:
+    if not isinstance(docker.get("env"), dict):
+        docker["env"] = {}
+    docker["env"]["SSL_CERT_FILE"] = ssl_cert_file
 
 # Allow outbound network access so the revenium CLI can reach api.revenium.ai
 docker["network"] = "bridge"
