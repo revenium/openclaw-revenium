@@ -123,41 +123,54 @@ info "Scripts marked executable"
 # ---------------------------------------------------------------------------
 step "Configuring OpenClaw sandbox access"
 
-SKILLS_PATH="${OPENCLAW_HOME}/skills"
-BIND_ENTRY="${SKILLS_PATH}:/workspace/skills:ro"
+# Build the list of bind mounts the agent needs inside the Docker sandbox:
+#   - ~/.openclaw (rw) — skills, sessions, logs, ledger, budget-status, config
+#   - revenium binary (ro) — so the agent can call the CLI
+#   - ~/.config/revenium (ro) — CLI credentials (API key, team/tenant/user IDs)
+BIND_ENTRIES=()
+BIND_ENTRIES+=("${OPENCLAW_HOME}:${OPENCLAW_HOME}")
 
-if [[ ! -f "${OPENCLAW_CONFIG}" ]]; then
-  # Create a minimal openclaw.json with the bind mount
-  cat > "${OPENCLAW_CONFIG}" <<EJSON
-{
-  "agents": {
-    "defaults": {
-      "sandbox": {
-        "docker": {
-          "binds": [
-            "${BIND_ENTRY}"
-          ]
-        }
-      }
-    }
-  }
-}
-EJSON
-  info "Created ${OPENCLAW_CONFIG} with skills bind mount"
-else
-  # Check if the bind is already present
-  if grep -q "${SKILLS_PATH}:/workspace/skills" "${OPENCLAW_CONFIG}" 2>/dev/null; then
-    info "Sandbox bind mount already configured"
-  else
-    # Use python3 to safely merge the bind into the existing config
-    python3 <<PYEOF
-import json, sys, os
+# Bind-mount the revenium binary so the sandbox can invoke it
+REVENIUM_PATH="$(command -v revenium || true)"
+if [[ -n "${REVENIUM_PATH}" ]]; then
+  REVENIUM_REAL="$(readlink -f "${REVENIUM_PATH}" 2>/dev/null || echo "${REVENIUM_PATH}")"
+  BIND_ENTRIES+=("${REVENIUM_REAL}:${REVENIUM_REAL}:ro")
+  # Also mount the symlink path if it differs (e.g. /usr/local/bin/revenium -> linuxbrew)
+  if [[ "${REVENIUM_REAL}" != "${REVENIUM_PATH}" ]]; then
+    BIND_ENTRIES+=("${REVENIUM_PATH}:${REVENIUM_PATH}:ro")
+  fi
+  info "Will bind-mount revenium at ${REVENIUM_PATH}"
+fi
+
+# Bind-mount jq if available
+JQ_PATH="$(command -v jq || true)"
+if [[ -n "${JQ_PATH}" ]]; then
+  JQ_REAL="$(readlink -f "${JQ_PATH}" 2>/dev/null || echo "${JQ_PATH}")"
+  BIND_ENTRIES+=("${JQ_REAL}:${JQ_REAL}:ro")
+  if [[ "${JQ_REAL}" != "${JQ_PATH}" ]]; then
+    BIND_ENTRIES+=("${JQ_PATH}:${JQ_PATH}:ro")
+  fi
+  info "Will bind-mount jq at ${JQ_PATH}"
+fi
+
+# Bind-mount revenium CLI config (API key, team/tenant/user IDs)
+REVENIUM_CONFIG_DIR="${HOME}/.config/revenium"
+if [[ -d "${REVENIUM_CONFIG_DIR}" ]]; then
+  BIND_ENTRIES+=("${REVENIUM_CONFIG_DIR}:${REVENIUM_CONFIG_DIR}:ro")
+  info "Will bind-mount revenium config at ${REVENIUM_CONFIG_DIR}"
+fi
+
+python3 <<PYEOF
+import json, os
 
 config_path = "${OPENCLAW_CONFIG}"
-bind_entry = "${BIND_ENTRY}"
+bind_entries = $(printf '%s\n' "${BIND_ENTRIES[@]}" | python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
 
-with open(config_path, "r") as f:
-    config = json.load(f)
+if os.path.exists(config_path):
+    with open(config_path, "r") as f:
+        config = json.load(f)
+else:
+    config = {}
 
 # Navigate/create the nested path
 agents = config.setdefault("agents", {})
@@ -166,16 +179,15 @@ sandbox = defaults.setdefault("sandbox", {})
 docker = sandbox.setdefault("docker", {})
 binds = docker.setdefault("binds", [])
 
-if bind_entry not in binds:
-    binds.append(bind_entry)
+for entry in bind_entries:
+    if entry not in binds:
+        binds.append(entry)
 
 with open(config_path, "w") as f:
     json.dump(config, f, indent=2)
     f.write("\n")
 PYEOF
-    info "Added skills bind mount to ${OPENCLAW_CONFIG}"
-  fi
-fi
+info "Configured sandbox bind mounts in ${OPENCLAW_CONFIG}"
 
 # ---------------------------------------------------------------------------
 # 4. Enable autoAllowSkills in OpenClaw exec approvals
@@ -233,10 +245,10 @@ else
   warn "Metering scripts missing — cron metering will not work"
 fi
 
-if grep -q "${SKILLS_PATH}:/workspace/skills" "${OPENCLAW_CONFIG}" 2>/dev/null; then
-  info "Sandbox bind mount verified in openclaw.json"
+if grep -q "${OPENCLAW_HOME}" "${OPENCLAW_CONFIG}" 2>/dev/null; then
+  info "Sandbox bind mounts verified in openclaw.json"
 else
-  warn "Sandbox bind mount could not be verified"
+  warn "Sandbox bind mounts could not be verified"
 fi
 
 # Check if openclaw CLI is available to run skills list

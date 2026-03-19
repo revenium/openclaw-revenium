@@ -5,6 +5,7 @@ Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) a
 ## Prerequisites
 
 - [OpenClaw](https://docs.openclaw.ai) installed and running
+- [ClawHub](https://docs.openclaw.ai) CLI: `npm i -g clawhub`
 - A Revenium API key, Team ID, Tenant ID, and User ID
 
 ## Installation
@@ -30,8 +31,9 @@ This will:
 1. Check for and install the `revenium` CLI and `jq` via Homebrew (if missing)
 2. Verify `python3` is available
 3. Mark the skill's scripts as executable
-4. Add a read-only bind mount to `~/.openclaw/openclaw.json` so the agent can access the skill inside the sandbox
-5. Verify the installation
+4. Configure Docker sandbox bind mounts in `~/.openclaw/openclaw.json` — mounts `~/.openclaw` (rw), the `revenium` and `jq` binaries (ro), and `~/.config/revenium` (ro) so the agent can access skill files, invoke the CLI, and read credentials inside the sandbox
+5. Enable `autoAllowSkills` in `~/.openclaw/exec-approvals.json` so skill-declared binaries are auto-approved
+6. Verify the installation
 
 > **Already have prerequisites installed?** Pass `--skip-prereqs` to skip Homebrew installs and fail immediately if anything is missing.
 
