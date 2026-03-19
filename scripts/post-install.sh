@@ -183,11 +183,24 @@ if [[ -d "${REVENIUM_CONFIG_DIR}" ]]; then
   info "Will bind-mount revenium config at ${REVENIUM_CONFIG_DIR}"
 fi
 
+# Build a PATH that includes the mounted bin directories so the container
+# can actually resolve the binaries (its default PATH won't include e.g.
+# /home/linuxbrew/.linuxbrew/bin).
+EXTRA_PATH_DIRS=""
+for d in "${BIN_DIRS_SEEN[@]+"${BIN_DIRS_SEEN[@]}"}"; do
+  if [[ -z "${EXTRA_PATH_DIRS}" ]]; then
+    EXTRA_PATH_DIRS="${d}"
+  else
+    EXTRA_PATH_DIRS="${d}:${EXTRA_PATH_DIRS}"
+  fi
+done
+
 python3 <<PYEOF
 import json, os
 
 config_path = "${OPENCLAW_CONFIG}"
 bind_entries = $(printf '%s\n' "${BIND_ENTRIES[@]}" | python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
+extra_path_dirs = "${EXTRA_PATH_DIRS}"
 
 if os.path.exists(config_path):
     with open(config_path, "r") as f:
@@ -206,11 +219,24 @@ for entry in bind_entries:
     if entry not in binds:
         binds.append(entry)
 
+# Inject PATH into the container environment so mounted binaries are found
+if extra_path_dirs:
+    env = docker.setdefault("env", [])
+    # Build a PATH that prepends our dirs to the standard container PATH
+    default_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    path_value = f"PATH={extra_path_dirs}:{default_path}"
+    # Replace any existing PATH entry or add a new one
+    env[:] = [e for e in env if not e.startswith("PATH=")]
+    env.append(path_value)
+
 with open(config_path, "w") as f:
     json.dump(config, f, indent=2)
     f.write("\n")
 PYEOF
 info "Configured sandbox bind mounts in ${OPENCLAW_CONFIG}"
+if [[ -n "${EXTRA_PATH_DIRS}" ]]; then
+  info "Sandbox PATH includes: ${EXTRA_PATH_DIRS}"
+fi
 
 # ---------------------------------------------------------------------------
 # 4. Enable autoAllowSkills in OpenClaw exec approvals
