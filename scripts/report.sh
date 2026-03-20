@@ -150,20 +150,19 @@ post_to_revenium() {
   local output_tokens="$4"
   local cache_read_tokens="$5"
   local cache_creation_tokens="$6"
-  local request_time="$7"
-  local response_time="$8"
-  local duration_ms="$9"
-  local stop_reason="${10}"
-  local transaction_id="${11}"
-  local model_source="${12}"
-  local is_streamed="${13}"
-  local trace_id="${14:-}"
-  local operation_type="${15:-CHAT}"
-  local system_prompt="${16:-}"
-  local input_messages="${17:-}"
-  local output_response="${18:-}"
-
-  local total_tokens=$((input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens))
+  local total_tokens="$7"
+  local request_time="$8"
+  local response_time="$9"
+  local duration_ms="${10}"
+  local stop_reason="${11}"
+  local transaction_id="${12}"
+  local model_source="${13}"
+  local is_streamed="${14}"
+  local trace_id="${15:-}"
+  local operation_type="${16:-CHAT}"
+  local system_prompt="${17:-}"
+  local input_messages="${18:-}"
+  local output_response="${19:-}"
 
   local cmd=(
     revenium meter completion
@@ -326,6 +325,7 @@ process_session() {
     output_tokens=$(echo "${line}" | jq -r '.message.usage.output // 0')
     cache_read=$(echo "${line}" | jq -r '.message.usage.cacheRead // 0')
     cache_create=$(echo "${line}" | jq -r '.message.usage.cacheWrite // 0')
+    total_tokens=$(echo "${line}" | jq -r '.message.usage.totalTokens // 0')
     timestamp=$(echo "${line}" | jq -r '.timestamp // empty' 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
     tx_id=$(echo "${line}" | jq -r '.id // empty' 2>/dev/null || echo "${session_id}-$(date +%s%N)")
     stop_reason=$(map_stop_reason "$(echo "${line}" | jq -r '.message.stopReason // "stop"')")
@@ -410,8 +410,7 @@ print(json.dumps([{'role': 'user', 'content': text}]))
     fi
 
     # Skip zero-usage lines
-    local total=$((input_tokens + output_tokens))
-    if [[ "${total}" -eq 0 ]]; then
+    if [[ "${total_tokens}" -eq 0 ]]; then
       continue
     fi
 
@@ -424,6 +423,7 @@ print(json.dumps([{'role': 'user', 'content': text}]))
         "${model}" "${provider}" \
         "${input_tokens}" "${output_tokens}" \
         "${cache_read}" "${cache_create}" \
+        "${total_tokens}" \
         "${request_time:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
         "${timestamp:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
         "${duration_ms}" \
