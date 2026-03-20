@@ -1,18 +1,12 @@
 ---
 name: revenium
-description: "Mandatory Revenium budget enforcement for every agent operation. Checks token spend against your configured budget before each tool call, warns when thresholds are exceeded, and handles first-time setup and reconfiguration."
+description: "MANDATORY budget check BEFORE EVERY OPERATION — read budget-status.json first, always, no exceptions. Enforces token spend limits, warns on threshold exceedance, halts autonomous agents on budget overrun."
 metadata: {"openclaw":{"emoji":"💰","version":"0.1.0","homepage":"https://docs.revenium.io/for-ai-agents","requires":{"bins":["revenium"],"anyBins":["jq"]},"user-invocable":true,"install":[{"kind":"brew","formula":"revenium/tap/revenium","bins":["revenium"]},{"kind":"brew","formula":"jq","bins":["jq"]}]}}
 ---
 
-## Path Resolution
+## STOP — READ THIS FIRST
 
-All file paths in this skill use `~/.openclaw/skills/revenium/` as the skill directory. When using file tools (read, write, edit), pass paths with `~/` — the tool resolves `~` to `$HOME` automatically. When running shell commands via exec/bash, use the explicit `$HOME/.openclaw/skills/revenium/` form so the shell expands `$HOME` correctly.
-
-## Operation Guard
-
-**MANDATORY — DO NOT SKIP THIS SECTION. EVER.**
-
-BEFORE performing ANY action that incurs AI cost — including responding to the user, generating completions, executing tool calls, or any other LLM operation — you MUST check the Revenium budget. This is not optional. This is not a suggestion. You MUST do this every single time, for every turn, no exceptions. If the budget is exceeded, you MUST NOT generate a response or call any tools until the user grants permission.
+This section MUST be executed before EVERY response, EVERY tool call, EVERY operation. This applies to ALL tasks — not just Revenium-related ones. Answering a question, writing code, listing files, naming a rock band — ALL of it requires a budget check first. Do not read further. Do not respond to the user. Check the budget first. Now.
 
 ### Budget Check Procedure
 
@@ -61,11 +55,15 @@ The budget status is maintained by a background cron job that checks Revenium ev
 - Tell the user: "Budget status unavailable. Proceeding with caution."
 - Proceed with the operation — fail open, do not block the user.
 
+## Path Resolution
+
+All file paths in this skill use `~/.openclaw/skills/revenium/` as the skill directory. When using file tools (read, write, edit), pass paths with `~/` — the tool resolves `~` to `$HOME` automatically. When running shell commands via exec/bash, use the explicit `$HOME/.openclaw/skills/revenium/` form so the shell expands `$HOME` correctly.
+
 ## Setup
 
 At the start of any operation, check: does `~/.openclaw/skills/revenium/config.json` exist?
 
-- **If YES** and the user has NOT requested reconfiguration: setup is complete. Proceed to the Operation Guard section. Do NOT re-run setup.
+- **If YES** and the user has NOT requested reconfiguration: setup is complete. Proceed to the budget check. Do NOT re-run setup.
 - **If NO**: you MUST run the Setup Flow below before proceeding. Do NOT execute any operations until setup is complete.
 
 ### Setup Flow
@@ -184,6 +182,8 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
 
 On ANY failure during the Setup Flow: report what went wrong, tell the user to run `/revenium` when they are ready to try again, and STOP. Do NOT retry. Do NOT write a partial `config.json`. The absence of `config.json` is the signal that setup has not completed.
 
+> Reminder: After setup completes, check budget-status.json before your next response.
+
 ## `/revenium` Command
 
 When the user invokes `/revenium`:
@@ -224,6 +224,8 @@ When the user requests reconfiguration:
 
 4. **Run the full Setup Flow** from the Setup section above. This collects fresh API key, budget amount, period, and creates a new alert from scratch.
 
+> Reminder: After reconfiguration completes, check budget-status.json before your next response.
+
 ## Troubleshooting
 
 ### Binary Not Found
@@ -243,3 +245,5 @@ If `revenium config show` reports no API key or an invalid key:
 If any `revenium` CLI command fails due to network issues:
 - Tell the user: "Unable to reach the Revenium API. Check your network connection and try again."
 - Do NOT proceed with the operation until budget status is confirmed.
+
+> Reminder: Check budget-status.json before your next response.
