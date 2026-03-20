@@ -462,7 +462,12 @@ try:
 except (FileNotFoundError, json.JSONDecodeError):
     pass
 
-exceeded = data.get('exceeded', False)
+# The Revenium API does not return an 'exceeded' field — compute it from
+# currentValue vs threshold (or negative remaining).
+current = float(data.get('currentValue', 0))
+threshold = float(data.get('threshold', 0))
+exceeded = current > threshold if threshold > 0 else False
+data['exceeded'] = exceeded
 
 if exceeded and not prev_halted:
     # Transition: not halted -> halted
