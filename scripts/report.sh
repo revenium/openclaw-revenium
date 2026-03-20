@@ -156,9 +156,10 @@ post_to_revenium() {
   local model_source="${10}"
   local is_streamed="${11}"
   local trace_id="${12:-}"
-  local system_prompt="${13:-}"
-  local input_messages="${14:-}"
-  local output_response="${15:-}"
+  local operation_type="${13:-CHAT}"
+  local system_prompt="${14:-}"
+  local input_messages="${15:-}"
+  local output_response="${16:-}"
 
   local total_tokens=$((input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens))
 
@@ -178,7 +179,7 @@ post_to_revenium() {
     --request-duration 0
     --agent "OpenClaw"
     --transaction-id "${transaction_id}"
-    --operation-type "CHAT"
+    --operation-type "${operation_type}"
     --quiet
   )
 
@@ -324,6 +325,18 @@ process_session() {
     tx_id=$(echo "${line}" | jq -r '.id // empty' 2>/dev/null || echo "${session_id}-$(date +%s%N)")
     stop_reason=$(map_stop_reason "$(echo "${line}" | jq -r '.message.stopReason // "stop"')")
 
+    # Determine operation type from message content:
+    #   GUARDRAIL — completion reads budget-status.json (budget enforcement check)
+    #   TOOL_CALL — completion invokes tools (stopReason=toolUse)
+    #   CHAT      — regular text response
+    local raw_stop_reason operation_type="CHAT"
+    raw_stop_reason=$(echo "${line}" | jq -r '.message.stopReason // "stop"')
+    if echo "${line}" | jq -e '.message.content[] | select(.type=="toolCall") | .arguments' 2>/dev/null | grep -q "budget-status.json"; then
+      operation_type="GUARDRAIL"
+    elif [[ "${raw_stop_reason}" == "toolUse" || "${raw_stop_reason}" == "tool_use" ]]; then
+      operation_type="TOOL_CALL"
+    fi
+
     # Walk the parentId chain to find the originating user message (trace ID).
     # This correlates all assistant completions within a single conversation turn.
     local trace_id=""
@@ -383,7 +396,7 @@ print(json.dumps([{'role': 'user', 'content': text}]))
         "${timestamp:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
         "${stop_reason}" "${tx_id}" \
         "${model_source}" "${is_streamed}" \
-        "${trace_id}" \
+        "${trace_id}" "${operation_type}" \
         "${system_prompt}" "${input_msgs_json}" "${output_resp}"; then
       echo "TX:${tx_id}" >> "${LEDGER_FILE}"
       ((reported_count++)) || true
