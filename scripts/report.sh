@@ -150,16 +150,18 @@ post_to_revenium() {
   local output_tokens="$4"
   local cache_read_tokens="$5"
   local cache_creation_tokens="$6"
-  local timestamp="$7"
-  local stop_reason="$8"
-  local transaction_id="$9"
-  local model_source="${10}"
-  local is_streamed="${11}"
-  local trace_id="${12:-}"
-  local operation_type="${13:-CHAT}"
-  local system_prompt="${14:-}"
-  local input_messages="${15:-}"
-  local output_response="${16:-}"
+  local request_time="$7"
+  local response_time="$8"
+  local duration_ms="$9"
+  local stop_reason="${10}"
+  local transaction_id="${11}"
+  local model_source="${12}"
+  local is_streamed="${13}"
+  local trace_id="${14:-}"
+  local operation_type="${15:-CHAT}"
+  local system_prompt="${16:-}"
+  local input_messages="${17:-}"
+  local output_response="${18:-}"
 
   local total_tokens=$((input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens))
 
@@ -173,10 +175,10 @@ post_to_revenium() {
     --cache-read-tokens "${cache_read_tokens}"
     --cache-creation-tokens "${cache_creation_tokens}"
     --stop-reason "${stop_reason}"
-    --request-time "${timestamp}"
-    --completion-start-time "${timestamp}"
-    --response-time "${timestamp}"
-    --request-duration 0
+    --request-time "${request_time}"
+    --completion-start-time "${request_time}"
+    --response-time "${response_time}"
+    --request-duration "${duration_ms}"
     --agent "OpenClaw"
     --transaction-id "${transaction_id}"
     --operation-type "${operation_type}"
@@ -269,16 +271,19 @@ process_session() {
   # For each assistant message, we walk parentId up to the nearest user
   # message — that user message's ID becomes the trace ID, correlating
   # all completions within a single conversation turn.
-  declare -A parent_map  # id -> parentId
-  declare -A role_map    # id -> role (user|assistant|toolResult)
+  declare -A parent_map   # id -> parentId
+  declare -A role_map     # id -> role (user|assistant|toolResult)
+  declare -A ts_map       # id -> ISO 8601 timestamp
   while IFS= read -r mline; do
-    local mid mparent mrole
+    local mid mparent mrole mts
     mid=$(echo "${mline}" | jq -r '.id // empty' 2>/dev/null || true)
     mparent=$(echo "${mline}" | jq -r '.parentId // empty' 2>/dev/null || true)
     mrole=$(echo "${mline}" | jq -r '.message.role // empty' 2>/dev/null || true)
+    mts=$(echo "${mline}" | jq -r '.timestamp // empty' 2>/dev/null || true)
     if [[ -n "${mid}" ]]; then
       [[ -n "${mparent}" ]] && parent_map["${mid}"]="${mparent}"
       [[ -n "${mrole}" ]] && role_map["${mid}"]="${mrole}"
+      [[ -n "${mts}" ]] && ts_map["${mid}"]="${mts}"
     fi
   done < <(jq -c 'select(.type=="message")' "${session_file}" 2>/dev/null)
 
@@ -324,6 +329,32 @@ process_session() {
     timestamp=$(echo "${line}" | jq -r '.timestamp // empty' 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
     tx_id=$(echo "${line}" | jq -r '.id // empty' 2>/dev/null || echo "${session_id}-$(date +%s%N)")
     stop_reason=$(map_stop_reason "$(echo "${line}" | jq -r '.message.stopReason // "stop"')")
+
+    # Compute request time (parent message timestamp) and duration in ms.
+    # The parent's timestamp is when the request was dispatched; this message's
+    # timestamp is when the response arrived.
+    local request_time="${timestamp}"
+    local duration_ms=0
+    local parent_id_for_ts
+    parent_id_for_ts=$(echo "${line}" | jq -r '.parentId // empty' 2>/dev/null || true)
+    if [[ -n "${parent_id_for_ts}" && -n "${ts_map[${parent_id_for_ts}]+x}" ]]; then
+      request_time="${ts_map[${parent_id_for_ts}]}"
+      # Compute duration in milliseconds via python (ISO 8601 -> epoch diff)
+      duration_ms=$(python3 -c "
+from datetime import datetime, timezone
+def parse_ts(s):
+    for fmt in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S.%f%z', '%Y-%m-%dT%H:%M:%S%z'):
+        try: return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc) if '+' not in s and not s.endswith('Z') else datetime.fromisoformat(s.replace('Z', '+00:00'))
+        except: pass
+    return None
+t1 = parse_ts('${request_time}')
+t2 = parse_ts('${timestamp}')
+if t1 and t2:
+    print(max(0, int((t2 - t1).total_seconds() * 1000)))
+else:
+    print(0)
+" 2>/dev/null || echo 0)
+    fi
 
     # Determine operation type from message content:
     #   GUARDRAIL — completion reads budget-status.json (budget enforcement check)
@@ -393,7 +424,9 @@ print(json.dumps([{'role': 'user', 'content': text}]))
         "${model}" "${provider}" \
         "${input_tokens}" "${output_tokens}" \
         "${cache_read}" "${cache_create}" \
+        "${request_time:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
         "${timestamp:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
+        "${duration_ms}" \
         "${stop_reason}" "${tx_id}" \
         "${model_source}" "${is_streamed}" \
         "${trace_id}" "${operation_type}" \
