@@ -43,6 +43,28 @@ warn()  { log "WARN " "$@"; }
 error() { log "ERROR" "$@"; }
 
 # ---------------------------------------------------------------------------
+# PATH — ensure revenium/jq are discoverable (cron and sandbox have minimal PATH)
+# ---------------------------------------------------------------------------
+BREW_PREFIX=""
+if command -v brew &>/dev/null; then
+  BREW_PREFIX="$(brew --prefix 2>/dev/null || true)"
+fi
+
+for p in \
+  "${BREW_PREFIX:+${BREW_PREFIX}/bin}" \
+  "${BREW_PREFIX:+${BREW_PREFIX}/sbin}" \
+  /home/linuxbrew/.linuxbrew/bin \
+  /home/linuxbrew/.linuxbrew/sbin \
+  /opt/homebrew/bin \
+  /opt/homebrew/sbin \
+  /usr/local/bin \
+  /usr/bin \
+  "${HOME}/go/bin" \
+  "${HOME}/.local/bin"; do
+  [[ -n "${p}" && -d "${p}" ]] && export PATH="${p}:${PATH}"
+done
+
+# ---------------------------------------------------------------------------
 # Guards
 # ---------------------------------------------------------------------------
 if ! command -v revenium &>/dev/null; then

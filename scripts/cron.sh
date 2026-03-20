@@ -29,9 +29,26 @@ if [[ -f "${ENV_FILE}" ]]; then
   set +o allexport
 fi
 
-# Ensure revenium CLI is on PATH (common install locations)
-for p in /usr/local/bin /usr/bin "${HOME}/go/bin" "${HOME}/.local/bin"; do
-  [[ -d "${p}" ]] && export PATH="${p}:${PATH}"
+# Ensure revenium CLI is on PATH.
+# Cron runs with a minimal PATH, so we add common package manager locations.
+# Try dynamic detection first (brew --prefix), fall back to well-known paths.
+BREW_PREFIX=""
+if command -v brew &>/dev/null; then
+  BREW_PREFIX="$(brew --prefix 2>/dev/null || true)"
+fi
+
+for p in \
+  "${BREW_PREFIX:+${BREW_PREFIX}/bin}" \
+  "${BREW_PREFIX:+${BREW_PREFIX}/sbin}" \
+  /home/linuxbrew/.linuxbrew/bin \
+  /home/linuxbrew/.linuxbrew/sbin \
+  /opt/homebrew/bin \
+  /opt/homebrew/sbin \
+  /usr/local/bin \
+  /usr/bin \
+  "${HOME}/go/bin" \
+  "${HOME}/.local/bin"; do
+  [[ -n "${p}" && -d "${p}" ]] && export PATH="${p}:${PATH}"
 done
 
 exec bash "${SKILL_DIR}/scripts/report.sh" "$@"
