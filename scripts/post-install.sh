@@ -363,7 +363,31 @@ PYEOF
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Inject budget check into AGENTS.md
+# 5. Seed initial budget-status.json
+# ---------------------------------------------------------------------------
+step "Seeding initial budget-status.json"
+
+BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
+if [[ ! -f "${BUDGET_STATUS_FILE}" ]]; then
+  cat > "${BUDGET_STATUS_FILE}" <<BSJSON
+{
+  "currentValue": 0,
+  "threshold": 0,
+  "percentUsed": 0,
+  "remaining": 0,
+  "exceeded": false,
+  "halted": false,
+  "lastChecked": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "note": "Seed file — will be replaced by cron on first run"
+}
+BSJSON
+  info "Created seed budget-status.json (cron will overwrite on first run)"
+else
+  info "budget-status.json already exists"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Inject budget check into AGENTS.md
 # ---------------------------------------------------------------------------
 step "Injecting budget check into AGENTS.md"
 
@@ -418,7 +442,7 @@ PYEOF
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Verify
+# 7. Verify
 # ---------------------------------------------------------------------------
 step "Verifying installation"
 
