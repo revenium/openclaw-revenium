@@ -202,7 +202,7 @@ When the user invokes `/revenium`:
    - **Halt status:** Read `~/.openclaw/skills/revenium/budget-status.json` and check the `halted` field. Display "ACTIVE (since HALTED_AT)" if `halted` is `true`, or "inactive" if `halted` is `false` or absent.
    - If halt is active, also show: "To resume operations, run: `bash ~/.openclaw/skills/revenium/scripts/clear-halt.sh`"
 
-3. **Offer reconfiguration.** Ask the user: "Would you like to update your budget configuration?" If the user declines, STOP — no further action.
+3. **Offer actions.** Ask the user: "Would you like to **reset** the budget (zero out current spend), **reconfigure** (change threshold/period), or **done**?" If the user declines or says done, STOP — no further action.
 
 ### If Setup Is NOT Complete (no config.json)
 
@@ -225,6 +225,51 @@ When the user requests reconfiguration:
 4. **Run the full Setup Flow** from the Setup section above. This collects fresh API key, budget amount, period, and creates a new alert from scratch.
 
 > Reminder: After reconfiguration completes, check budget-status.json before your next response.
+
+### Reset Budget Flow
+
+When the user requests a budget reset (zero out current spend without changing settings):
+
+1. **Read existing config.** Read `alertId`, `organizationName`, `autonomousMode`, `notifyChannel`, and `notifyTarget` from `~/.openclaw/skills/revenium/config.json`. Call the alert ID `OLD_ALERT_ID`.
+
+2. **Get current alert settings.** Run:
+   ```
+   revenium alerts budget get OLD_ALERT_ID --json
+   ```
+   Extract `name`, `threshold`, and `periodDuration` from the response.
+
+3. **Delete the old alert.** Run:
+   ```
+   revenium alerts budget delete OLD_ALERT_ID --yes
+   ```
+   If this fails: warn the user but continue.
+
+4. **Create a new alert with the same settings.** Run:
+   ```
+   revenium alerts budget create --name "ALERT_NAME" --threshold THRESHOLD --period PERIOD --json
+   ```
+   Use the `name`, `threshold`, and `periodDuration` values from step 2.
+
+5. **Extract the new alert ID.** From the create response, extract the `"id"` field. Call this `NEW_ALERT_ID`.
+
+6. **Update config.json.** Replace `alertId` with `NEW_ALERT_ID`, preserving all other fields:
+   ```
+   python3 -c "
+   import json
+   with open('$HOME/.openclaw/skills/revenium/config.json', 'r') as f:
+       config = json.load(f)
+   config['alertId'] = 'NEW_ALERT_ID'
+   with open('$HOME/.openclaw/skills/revenium/config.json', 'w') as f:
+       json.dump(config, f, indent=2)
+       f.write('\n')
+   "
+   ```
+
+7. **Reset local budget status.** Write a fresh `budget-status.json` with zeroed values and `exceeded: false`, `halted: false`.
+
+8. **Confirm to the user.** Tell the user: "Budget reset. Spend counter is now $0.00 of $THRESHOLD (PERIOD). Alert ID: NEW_ALERT_ID."
+
+> Reminder: After budget reset completes, check budget-status.json before your next response.
 
 ## Troubleshooting
 
