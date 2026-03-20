@@ -155,9 +155,10 @@ post_to_revenium() {
   local transaction_id="$9"
   local model_source="${10}"
   local is_streamed="${11}"
-  local system_prompt="${12:-}"
-  local input_messages="${13:-}"
-  local output_response="${14:-}"
+  local trace_id="${12:-}"
+  local system_prompt="${13:-}"
+  local input_messages="${14:-}"
+  local output_response="${15:-}"
 
   local total_tokens=$((input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens))
 
@@ -180,6 +181,11 @@ post_to_revenium() {
     --operation-type "CHAT"
     --quiet
   )
+
+  # Add trace ID to correlate related completions within a conversation turn
+  if [[ -n "${trace_id}" ]]; then
+    cmd+=(--trace-id "${trace_id}")
+  fi
 
   # Add model source (e.g., "bedrock") if available
   if [[ -n "${model_source}" ]]; then
@@ -258,6 +264,23 @@ process_session() {
     fi
   done < <(jq -c 'select(.type=="message") | select(.message.role=="user")' "${session_file}" 2>/dev/null)
 
+  # Build a parent-chain lookup and role map to compute trace IDs.
+  # For each assistant message, we walk parentId up to the nearest user
+  # message — that user message's ID becomes the trace ID, correlating
+  # all completions within a single conversation turn.
+  declare -A parent_map  # id -> parentId
+  declare -A role_map    # id -> role (user|assistant|toolResult)
+  while IFS= read -r mline; do
+    local mid mparent mrole
+    mid=$(echo "${mline}" | jq -r '.id // empty' 2>/dev/null || true)
+    mparent=$(echo "${mline}" | jq -r '.parentId // empty' 2>/dev/null || true)
+    mrole=$(echo "${mline}" | jq -r '.message.role // empty' 2>/dev/null || true)
+    if [[ -n "${mid}" ]]; then
+      [[ -n "${mparent}" ]] && parent_map["${mid}"]="${mparent}"
+      [[ -n "${mrole}" ]] && role_map["${mid}"]="${mrole}"
+    fi
+  done < <(jq -c 'select(.type=="message")' "${session_file}" 2>/dev/null)
+
   local reported_count=0
   local failed_count=0
 
@@ -301,6 +324,24 @@ process_session() {
     tx_id=$(echo "${line}" | jq -r '.id // empty' 2>/dev/null || echo "${session_id}-$(date +%s%N)")
     stop_reason=$(map_stop_reason "$(echo "${line}" | jq -r '.message.stopReason // "stop"')")
 
+    # Walk the parentId chain to find the originating user message (trace ID).
+    # This correlates all assistant completions within a single conversation turn.
+    local trace_id=""
+    local walk_id="${tx_id}"
+    for _ in $(seq 1 50); do  # cap at 50 hops to avoid infinite loops
+      local walk_parent="${parent_map[${walk_id}]:-}"
+      if [[ -z "${walk_parent}" ]]; then
+        break
+      fi
+      if [[ "${role_map[${walk_parent}]:-}" == "user" ]]; then
+        trace_id="${walk_parent}"
+        break
+      fi
+      walk_id="${walk_parent}"
+    done
+    # Fall back to session ID if no user message found in the chain
+    trace_id="${trace_id:-${session_id}}"
+
     # Look up the user message that triggered this completion via parentId
     local parent_id input_msgs_json=""
     parent_id=$(echo "${line}" | jq -r '.parentId // empty' 2>/dev/null || true)
@@ -342,6 +383,7 @@ print(json.dumps([{'role': 'user', 'content': text}]))
         "${timestamp:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
         "${stop_reason}" "${tx_id}" \
         "${model_source}" "${is_streamed}" \
+        "${trace_id}" \
         "${system_prompt}" "${input_msgs_json}" "${output_resp}"; then
       echo "TX:${tx_id}" >> "${LEDGER_FILE}"
       ((reported_count++)) || true
