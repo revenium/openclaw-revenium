@@ -363,7 +363,62 @@ PYEOF
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Verify
+# 5. Inject budget check into AGENTS.md
+# ---------------------------------------------------------------------------
+step "Injecting budget check into AGENTS.md"
+
+AGENTS_MD="${OPENCLAW_HOME}/workspace/AGENTS.md"
+BUDGET_MARKER="## Budget Check (Mandatory)"
+
+if [[ ! -f "${AGENTS_MD}" ]]; then
+  warn "AGENTS.md not found at ${AGENTS_MD} — skipping budget injection"
+elif grep -q "${BUDGET_MARKER}" "${AGENTS_MD}" 2>/dev/null; then
+  info "Budget check already present in AGENTS.md"
+else
+  python3 <<PYEOF
+import re
+
+section = """
+## Budget Check (Mandatory)
+
+BEFORE EVERY RESPONSE, NO EXCEPTIONS — read \`~/.openclaw/skills/revenium/budget-status.json\`.
+
+- **File missing:** Warn user the metering cron may not be installed, then proceed.
+- **\`exceeded\` is \`false\`:** Proceed silently. Do NOT mention the budget.
+- **\`exceeded\` is \`true\`:** Follow the halt/warn logic in \`~/.openclaw/skills/revenium/SKILL.md\` (interactive vs autonomous mode).
+
+This applies to ALL operations — chat, tool calls, code, questions, everything. No task is exempt.
+"""
+
+path = "${AGENTS_MD}"
+with open(path, "r") as f:
+    content = f.read()
+
+injected = False
+
+# Try 1: inject after "Don't ask permission. Just do it."
+anchor = "Don't ask permission. Just do it."
+if anchor in content:
+    content = content.replace(anchor, anchor + "\n" + section, 1)
+    injected = True
+
+# Try 2: inject before "## Memory"
+if not injected and "## Memory" in content:
+    content = content.replace("## Memory", section + "\n## Memory", 1)
+    injected = True
+
+# Try 3: append
+if not injected:
+    content += "\n" + section
+
+with open(path, "w") as f:
+    f.write(content)
+PYEOF
+  info "Injected budget check into AGENTS.md"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Verify
 # ---------------------------------------------------------------------------
 step "Verifying installation"
 
