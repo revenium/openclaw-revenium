@@ -254,37 +254,35 @@ process_session() {
     system_prompt="${system_prompt:0:500}..."
   fi
 
-  # Build a lookup of message ID -> user text content for input-messages
-  # Each assistant message has a parentId pointing to the user message that triggered it
-  declare -A user_messages
-  while IFS= read -r uline; do
-    local uid ucontent
-    uid=$(echo "${uline}" | jq -r '.id // empty' 2>/dev/null || true)
-    ucontent=$(echo "${uline}" | jq -r '[.message.content[] | select(.type=="text") | .text] | join("\n")' 2>/dev/null || true)
-    if [[ -n "${uid}" && -n "${ucontent}" ]]; then
-      user_messages["${uid}"]="${ucontent}"
-    fi
-  done < <(jq -c 'select(.type=="message") | select(.message.role=="user")' "${session_file}" 2>/dev/null)
+  # Build lookup files for message metadata (bash 3.x compatible — no associative arrays).
+  # These temp files replace declare -A and are used for trace ID walks, duration
+  # computation, and user message lookups via grep.
+  local msg_meta_file user_msgs_file
+  msg_meta_file=$(mktemp "${TMPDIR:-/tmp}/rv-meta.XXXXXX")
+  user_msgs_file=$(mktemp "${TMPDIR:-/tmp}/rv-umsg.XXXXXX")
+  # shellcheck disable=SC2064
+  trap "rm -f '${msg_meta_file}' '${user_msgs_file}'" EXIT
 
-  # Build a parent-chain lookup and role map to compute trace IDs.
-  # For each assistant message, we walk parentId up to the nearest user
-  # message — that user message's ID becomes the trace ID, correlating
-  # all completions within a single conversation turn.
-  declare -A parent_map   # id -> parentId
-  declare -A role_map     # id -> role (user|assistant|toolResult)
-  declare -A ts_map       # id -> ISO 8601 timestamp
-  while IFS= read -r mline; do
-    local mid mparent mrole mts
-    mid=$(echo "${mline}" | jq -r '.id // empty' 2>/dev/null || true)
-    mparent=$(echo "${mline}" | jq -r '.parentId // empty' 2>/dev/null || true)
-    mrole=$(echo "${mline}" | jq -r '.message.role // empty' 2>/dev/null || true)
-    mts=$(echo "${mline}" | jq -r '.timestamp // empty' 2>/dev/null || true)
-    if [[ -n "${mid}" ]]; then
-      [[ -n "${mparent}" ]] && parent_map["${mid}"]="${mparent}"
-      [[ -n "${mrole}" ]] && role_map["${mid}"]="${mrole}"
-      [[ -n "${mts}" ]] && ts_map["${mid}"]="${mts}"
-    fi
-  done < <(jq -c 'select(.type=="message")' "${session_file}" 2>/dev/null)
+  # msg_meta_file: TAB-separated "id \t parentId \t role \t timestamp"
+  jq -r 'select(.type=="message") | [.id // "", .parentId // "", (.message.role // ""), .timestamp // ""] | @tsv' \
+    "${session_file}" 2>/dev/null > "${msg_meta_file}" || true
+
+  # user_msgs_file: TAB-separated "id \t text_content"
+  # Content has newlines replaced with \n literal to keep one line per message.
+  jq -r 'select(.type=="message") | select(.message.role=="user") |
+    [.id, ([.message.content[] | select(.type=="text") | .text] | join("\\n"))] | @tsv' \
+    "${session_file}" 2>/dev/null > "${user_msgs_file}" || true
+
+  # Helper: look up a field from msg_meta_file by message ID
+  # Usage: meta_lookup ID FIELD_NUM  (2=parentId, 3=role, 4=timestamp)
+  meta_lookup() {
+    grep "^${1}	" "${msg_meta_file}" 2>/dev/null | head -1 | cut -f"${2}"
+  }
+
+  # Helper: look up user message text by ID
+  user_msg_lookup() {
+    grep "^${1}	" "${user_msgs_file}" 2>/dev/null | head -1 | cut -f2-
+  }
 
   local reported_count=0
   local failed_count=0
@@ -335,16 +333,19 @@ process_session() {
     # timestamp is when the response arrived.
     local request_time="${timestamp}"
     local duration_ms=0
-    local parent_id_for_ts
+    local parent_id_for_ts parent_ts
     parent_id_for_ts=$(echo "${line}" | jq -r '.parentId // empty' 2>/dev/null || true)
-    if [[ -n "${parent_id_for_ts}" && -n "${ts_map[${parent_id_for_ts}]+x}" ]]; then
-      request_time="${ts_map[${parent_id_for_ts}]}"
-      # Compute duration in milliseconds via python (ISO 8601 -> epoch diff)
-      duration_ms=$(python3 -c "
+    if [[ -n "${parent_id_for_ts}" ]]; then
+      parent_ts=$(meta_lookup "${parent_id_for_ts}" 4)
+      if [[ -n "${parent_ts}" ]]; then
+        request_time="${parent_ts}"
+        duration_ms=$(python3 -c "
 from datetime import datetime, timezone
 def parse_ts(s):
-    for fmt in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S.%f%z', '%Y-%m-%dT%H:%M:%S%z'):
-        try: return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc) if '+' not in s and not s.endswith('Z') else datetime.fromisoformat(s.replace('Z', '+00:00'))
+    try: return datetime.fromisoformat(s.replace('Z', '+00:00'))
+    except: pass
+    for fmt in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ'):
+        try: return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
         except: pass
     return None
 t1 = parse_ts('${request_time}')
@@ -354,6 +355,7 @@ if t1 and t2:
 else:
     print(0)
 " 2>/dev/null || echo 0)
+      fi
     fi
 
     # Determine operation type from message content:
@@ -372,12 +374,17 @@ else:
     # This correlates all assistant completions within a single conversation turn.
     local trace_id=""
     local walk_id="${tx_id}"
-    for _ in $(seq 1 50); do  # cap at 50 hops to avoid infinite loops
-      local walk_parent="${parent_map[${walk_id}]:-}"
+    local walk_i=0
+    while [[ "${walk_i}" -lt 50 ]]; do  # cap at 50 hops to avoid infinite loops
+      walk_i=$((walk_i + 1))
+      local walk_parent
+      walk_parent=$(meta_lookup "${walk_id}" 2)
       if [[ -z "${walk_parent}" ]]; then
         break
       fi
-      if [[ "${role_map[${walk_parent}]:-}" == "user" ]]; then
+      local walk_role
+      walk_role=$(meta_lookup "${walk_parent}" 3)
+      if [[ "${walk_role}" == "user" ]]; then
         trace_id="${walk_parent}"
         break
       fi
@@ -389,16 +396,20 @@ else:
     # Look up the user message that triggered this completion via parentId
     local parent_id input_msgs_json=""
     parent_id=$(echo "${line}" | jq -r '.parentId // empty' 2>/dev/null || true)
-    if [[ -n "${parent_id}" && -n "${user_messages[${parent_id}]+x}" ]]; then
-      # Format as JSON array with single message object
-      input_msgs_json=$(python3 -c "
+    if [[ -n "${parent_id}" ]]; then
+      local user_text
+      user_text=$(user_msg_lookup "${parent_id}")
+      if [[ -n "${user_text}" ]]; then
+        # Format as JSON array with single message object
+        input_msgs_json=$(python3 -c "
 import json, sys
 text = sys.stdin.read()
 # Truncate to 1000 chars
 if len(text) > 1000:
     text = text[:1000] + '...'
 print(json.dumps([{'role': 'user', 'content': text}]))
-" <<< "${user_messages[${parent_id}]}" 2>/dev/null || true)
+" <<< "${user_text}" 2>/dev/null || true)
+      fi
     fi
 
     # Extract the assistant's response text content
