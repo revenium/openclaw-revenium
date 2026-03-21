@@ -1,12 +1,12 @@
 # Revenium OpenClaw Skill
 
-Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) agents using the [Revenium](https://docs.revenium.io/for-ai-agents) platform. Tracks AI spend, enforces configurable budget guardrails, and reports usage automatically — so agents never silently blow through your token budget.
+Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) agents using the [Revenium](https://www.revenium.ai) platform. Tracks AI spend, enforces configurable budget guardrails, and reports usage automatically — so agents never silently blow through your token budget.
 
 ## Prerequisites
 
 - [OpenClaw](https://docs.openclaw.ai) installed and running
 - [ClawHub](https://docs.openclaw.ai) CLI: `npm i -g clawhub`
-- A Revenium API key, Team ID, Tenant ID, and User ID
+- A [Revenium](https://app.revenium.ai/connections)  API key, Team ID, Tenant ID, and User ID
 
 ## Installation
 
