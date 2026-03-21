@@ -111,7 +111,7 @@ fi
 info "SKILL.md present"
 
 # Ensure scripts are executable
-for script in cron.sh report.sh install-cron.sh uninstall-cron.sh clear-halt.sh post-install.sh; do
+for script in cron.sh report.sh budget-check.sh install-cron.sh uninstall-cron.sh clear-halt.sh post-install.sh; do
   if [[ -f "${SKILL_DIR}/scripts/${script}" ]]; then
     chmod +x "${SKILL_DIR}/scripts/${script}"
   fi
