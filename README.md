@@ -149,3 +149,7 @@ Optionally clean up your Revenium budget alert:
 revenium alerts budget list
 revenium alerts budget delete <alert-id> --yes
 ```
+
+## Support
+
+Questions, bugs, or feature requests? Join us on [Discord](http://discord.gg/J2DbmjZ2nA).
