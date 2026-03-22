@@ -6,7 +6,7 @@ Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) a
 
 - [OpenClaw](https://docs.openclaw.ai) installed and running
 - [ClawHub](https://docs.openclaw.ai) CLI: `npm i -g clawhub`
-- A [Revenium](https://app.revenium.ai/connections)  API key, Team ID, Tenant ID, and User ID
+- [Revenium](https://app.revenium.ai/connections)  API key, Team ID, Tenant ID, and User ID
 
 ## Installation
 
