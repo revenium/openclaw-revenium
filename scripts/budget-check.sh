@@ -114,7 +114,7 @@ if echo "${HALT_TRANSITION}" | head -1 | grep -q "HALT_TRANSITION=true"; then
     MSG="Budget halt active. Spent \$${CURRENT_VALUE} of \$${THRESHOLD} (${PERCENT}%). All autonomous operations are now stopped. To resume: bash ~/.openclaw/skills/revenium/scripts/clear-halt.sh"
 
     if command -v openclaw &>/dev/null; then
-      openclaw message send --channel "${NOTIFY_CHANNEL}" --to "${NOTIFY_TARGET}" "${MSG}" 2>/dev/null && \
+      openclaw message send --channel "${NOTIFY_CHANNEL}" --target "${NOTIFY_TARGET}" --message "${MSG}" 2>/dev/null && \
         echo "Halt notification sent via ${NOTIFY_CHANNEL}" || \
         echo "Failed to send halt notification via ${NOTIFY_CHANNEL}"
     else
