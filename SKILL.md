@@ -4,11 +4,33 @@ description: "MANDATORY budget check BEFORE EVERY OPERATION — read budget-stat
 metadata: {"openclaw":{"emoji":"💰","version":"0.1.0","homepage":"https://docs.revenium.io/for-ai-agents","requires":{"bins":["revenium"],"anyBins":["jq"]},"user-invocable":true,"install":[{"kind":"brew","formula":"revenium/tap/revenium","bins":["revenium"]},{"kind":"brew","formula":"jq","bins":["jq"]}]}}
 ---
 
-## STOP — READ THIS FIRST
+## ABSOLUTE FIRST — HALT CHECK (NON-NEGOTIABLE)
 
-This section MUST be executed before EVERY response, EVERY tool call, EVERY operation. This applies to ALL tasks — not just Revenium-related ones. Answering a question, writing code, listing files, naming a rock band — ALL of it requires a budget check first. Do not read further. Do not respond to the user. Check the budget first. Now.
+Before you read ANY other part of this file, before you write ANY response, before you make ANY tool call:
 
-### Budget Check Procedure
+1. Read `~/.openclaw/skills/revenium/budget-status.json`
+2. Check the `halted` field
+
+**If `halted` is `true`:**
+
+YOUR ENTIRE RESPONSE MUST BE EXACTLY THIS AND NOTHING ELSE:
+
+> Budget enforcement halt is active. $[currentValue] of $[threshold] used ([percentUsed]%). To resume: `bash ~/.openclaw/skills/revenium/scripts/clear-halt.sh`
+
+- Do NOT make any tool calls
+- Do NOT fetch any data
+- Do NOT append any content
+- Do NOT continue reading this skill file
+- Do NOT answer the user's question
+- ONLY output the halt message above
+
+**If `halted` is `false`, proceed to the Budget Check Procedure below.**
+
+This is not optional. This is not guidance. If you output ANYTHING other than the halt message when `halted: true`, you are violating this skill's requirements.
+
+## Budget Check Procedure
+
+**MANDATORY — execute before EVERY response, EVERY tool call, EVERY operation.** This applies to ALL tasks — not just Revenium-related ones. Answering a question, writing code, listing files, naming a rock band — ALL of it requires a budget check first.
 
 The budget status is maintained by a background cron job that checks Revenium every minute and writes the result to `~/.openclaw/skills/revenium/budget-status.json`. You read this local file — do NOT call the Revenium API directly.
 
@@ -19,9 +41,12 @@ The budget status is maintained by a background cron job that checks Revenium ev
    - `threshold` — the budget limit
    - `percentUsed` — percentage of budget consumed
    - `exceeded` — boolean, whether the budget has been exceeded
+   - `halted` — boolean, whether the agent has been halted by budget enforcement
    - `lastChecked` — when the cron last updated this file
 
 3. **Evaluate the result:**
+
+   **If `halted` is true:** Follow the HALT CHECK instructions above — output ONLY the halt message and stop.
 
    **If `exceeded` is false (budget OK):** Proceed silently. Do NOT mention the budget to the user.
 
@@ -38,17 +63,7 @@ The budget status is maintained by a background cron job that checks Revenium ev
    - **If the user says yes / continue / approved:** Proceed with the operation.
    - **If the user says no / stop / cancel:** STOP. Do NOT execute the operation. Tell the user: "Operation cancelled. Run `/revenium` to adjust your budget."
 
-   **If `autonomousMode` is `true`:**
-
-   Check the `halted` field in `~/.openclaw/skills/revenium/budget-status.json`.
-
-   - **If `halted` is `true`:** You MUST STOP immediately. Do NOT execute any operation, do NOT generate any response beyond this message:
-
-     > "Budget enforcement halt is active. $CURRENT_VALUE of $THRESHOLD budget used (PERCENT_USED%). A notification has been sent to your configured channel. To resume, run: `bash ~/.openclaw/skills/revenium/scripts/clear-halt.sh`"
-
-     Replace the values with the actual numbers from the file. Do NOT proceed under any circumstances until `halted` is `false`.
-
-   - **If `halted` is `false` but `exceeded` is `true`:** The user has explicitly cleared the halt — this is an approval to proceed. Continue with the operation.
+   **If `autonomousMode` is `true` and `halted` is `false` but `exceeded` is `true`:** The user has explicitly cleared the halt — this is an approval to proceed. Continue with the operation.
 
 ### If budget-status.json is missing or unreadable
 
