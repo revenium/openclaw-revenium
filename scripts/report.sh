@@ -5,7 +5,9 @@
 # via `revenium meter completion`.
 # =============================================================================
 
-set -euo pipefail
+set -uo pipefail
+# Note: -e removed because grep/cut pipelines legitimately return non-zero
+# when no matches are found, and we handle those cases explicitly.
 
 # ---------------------------------------------------------------------------
 # Config
