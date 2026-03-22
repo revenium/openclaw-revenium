@@ -454,6 +454,7 @@ BUDGET_GUARD_SRC="${SKILL_DIR}/BUDGET-GUARD.md"
 BUDGET_GUARD_DST="${OPENCLAW_HOME}/workspace/BUDGET-GUARD.md"
 
 if [[ -f "${BUDGET_GUARD_SRC}" ]]; then
+  mkdir -p "$(dirname "${BUDGET_GUARD_DST}")"
   cp "${BUDGET_GUARD_SRC}" "${BUDGET_GUARD_DST}"
   info "Deployed BUDGET-GUARD.md to workspace"
 elif [[ -f "${BUDGET_GUARD_DST}" ]]; then
