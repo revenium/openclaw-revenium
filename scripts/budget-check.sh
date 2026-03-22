@@ -48,7 +48,12 @@ if [[ -z "${BUDGET_JSON}" ]]; then
   exit 1
 fi
 
-python3 << PYEOF
+# Read config for autonomous mode and notification settings
+AUTONOMOUS=$(python3 -c "import json; print(json.load(open('${CONFIG_FILE}')).get('autonomousMode', False))" 2>/dev/null || echo "False")
+NOTIFY_CHANNEL=$(python3 -c "import json; print(json.load(open('${CONFIG_FILE}')).get('notifyChannel', ''))" 2>/dev/null || true)
+NOTIFY_TARGET=$(python3 -c "import json; print(json.load(open('${CONFIG_FILE}')).get('notifyTarget', ''))" 2>/dev/null || true)
+
+HALT_TRANSITION=$(python3 << PYEOF
 import json
 from datetime import datetime, timezone
 
@@ -59,13 +64,63 @@ current = float(data.get('currentValue', 0))
 threshold = float(data.get('threshold', 0))
 exceeded = current > threshold if threshold > 0 else False
 data['exceeded'] = exceeded
-data['halted'] = False
 
 if 'note' in data:
     del data['note']
 
+# Read previous budget-status.json to preserve halt state
+prev_halted = False
+try:
+    with open('${BUDGET_STATUS_FILE}', 'r') as f:
+        prev = json.load(f)
+        prev_halted = prev.get('halted', False)
+except (FileNotFoundError, json.JSONDecodeError):
+    prev = {}
+
+autonomous = '${AUTONOMOUS}' == 'True'
+halt_transition = False
+
+if autonomous and exceeded and not prev_halted:
+    # Transition: not halted -> halted
+    data['halted'] = True
+    data['haltedAt'] = datetime.now(timezone.utc).isoformat()
+    halt_transition = True
+elif prev_halted:
+    # Preserve existing halt (only clear-halt.sh can clear it)
+    data['halted'] = True
+    data['haltedAt'] = prev.get('haltedAt', datetime.now(timezone.utc).isoformat())
+else:
+    # Not autonomous or not exceeded — no halt
+    data['halted'] = False
+
 with open('${BUDGET_STATUS_FILE}', 'w') as f:
     json.dump(data, f, indent=2)
 
-print(f"Budget: \${current:.2f} / \${threshold:.2f} ({'EXCEEDED' if exceeded else 'OK'})")
+print(f"HALT_TRANSITION={'true' if halt_transition else 'false'}")
+print(f"Budget: \${current:.2f} / \${threshold:.2f} ({'EXCEEDED' if exceeded else 'OK'}){' [HALTED]' if data.get('halted') else ''}")
 PYEOF
+)
+
+echo "${HALT_TRANSITION}" | tail -1
+
+# Send notification on halt transition
+if echo "${HALT_TRANSITION}" | head -1 | grep -q "HALT_TRANSITION=true"; then
+  if [[ -n "${NOTIFY_CHANNEL}" && -n "${NOTIFY_TARGET}" ]]; then
+    # Extract values for the notification message
+    CURRENT_VALUE=$(python3 -c "import json; print(f\"\${json.load(open('${BUDGET_STATUS_FILE}')).get('currentValue', 0):.2f}\")" 2>/dev/null || echo "?")
+    THRESHOLD=$(python3 -c "import json; print(f\"\${json.load(open('${BUDGET_STATUS_FILE}')).get('threshold', 0):.2f}\")" 2>/dev/null || echo "?")
+    PERCENT=$(python3 -c "import json; d=json.load(open('${BUDGET_STATUS_FILE}')); print(f\"{float(d.get('currentValue',0))/float(d.get('threshold',1))*100:.0f}\")" 2>/dev/null || echo "?")
+
+    MSG="Budget halt active. Spent \$${CURRENT_VALUE} of \$${THRESHOLD} (${PERCENT}%). All autonomous operations are now stopped. To resume: bash ~/.openclaw/skills/revenium/scripts/clear-halt.sh"
+
+    if command -v openclaw &>/dev/null; then
+      openclaw message send --channel "${NOTIFY_CHANNEL}" --to "${NOTIFY_TARGET}" "${MSG}" 2>/dev/null && \
+        echo "Halt notification sent via ${NOTIFY_CHANNEL}" || \
+        echo "Failed to send halt notification via ${NOTIFY_CHANNEL}"
+    else
+      echo "openclaw CLI not available — halt notification not sent"
+    fi
+  else
+    echo "Budget halted but no notification channel configured"
+  fi
+fi
