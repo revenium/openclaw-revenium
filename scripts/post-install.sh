@@ -442,7 +442,58 @@ PYEOF
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Verify
+# 7. Configure bootstrap-extra-files hook for isolated sessions
+# ---------------------------------------------------------------------------
+step "Configuring budget guard for isolated sessions"
+
+# Deploy BUDGET-GUARD.md to the workspace so it can be injected into
+# all sessions (including isolated cron jobs and subagents) via the
+# bootstrap-extra-files hook. This covers sessions where AGENTS.md
+# isn't loaded (e.g. lightContext cron jobs).
+BUDGET_GUARD_SRC="${SKILL_DIR}/BUDGET-GUARD.md"
+BUDGET_GUARD_DST="${OPENCLAW_HOME}/workspace/BUDGET-GUARD.md"
+
+if [[ -f "${BUDGET_GUARD_SRC}" ]]; then
+  cp "${BUDGET_GUARD_SRC}" "${BUDGET_GUARD_DST}"
+  info "Deployed BUDGET-GUARD.md to workspace"
+elif [[ -f "${BUDGET_GUARD_DST}" ]]; then
+  info "BUDGET-GUARD.md already in workspace"
+fi
+
+# Enable the bootstrap-extra-files hook to inject BUDGET-GUARD.md into
+# every agent session (including isolated cron jobs).
+python3 <<PYEOF
+import json, os
+
+config_path = "${OPENCLAW_CONFIG}"
+if os.path.exists(config_path):
+    with open(config_path, "r") as f:
+        config = json.load(f)
+else:
+    config = {}
+
+hooks = config.setdefault("hooks", {})
+internal = hooks.setdefault("internal", {})
+internal["enabled"] = True
+entries = internal.setdefault("entries", {})
+
+bef = entries.setdefault("bootstrap-extra-files", {})
+bef["enabled"] = True
+
+# Add BUDGET-GUARD.md to the files list if not already present
+files = bef.setdefault("files", [])
+guard_file = "BUDGET-GUARD.md"
+if guard_file not in files:
+    files.append(guard_file)
+
+with open(config_path, "w") as f:
+    json.dump(config, f, indent=2)
+    f.write("\n")
+PYEOF
+info "Configured bootstrap-extra-files hook for budget guard"
+
+# ---------------------------------------------------------------------------
+# 8. Verify
 # ---------------------------------------------------------------------------
 step "Verifying installation"
 
