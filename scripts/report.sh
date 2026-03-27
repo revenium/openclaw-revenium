@@ -281,8 +281,13 @@ process_session() {
   local session_id
   session_id=$(basename "${session_file}" .jsonl)
 
-  # Skip if already fully reported
-  if grep -q "^DONE:${session_id}$" "${LEDGER_FILE}" 2>/dev/null; then
+  # Get last processed line offset for this session
+  local offset total_lines
+  offset=$(get_offset "${session_id}")
+  total_lines=$(wc -l < "${session_file}" | tr -d ' ')
+
+  # Nothing new to process — replaces the old DONE: skip
+  if [[ "${offset}" -ge "${total_lines}" ]]; then
     return 0
   fi
 
@@ -488,20 +493,14 @@ print(json.dumps([{'role': 'user', 'content': text}]))
       ((failed_count++)) || true
     fi
 
-  done < "${session_file}"
+  done < <(tail -n +$((offset + 1)) "${session_file}")
 
   if [[ "${reported_count}" -gt 0 ]]; then
     info "Session ${session_id}: reported ${reported_count} events, ${failed_count} failures"
   fi
 
-  # If session file hasn't been modified in >1 hour, mark as DONE
-  local now mod_time age
-  now=$(date +%s)
-  mod_time=$(stat -c %Y "${session_file}" 2>/dev/null || stat -f %m "${session_file}" 2>/dev/null || echo 0)
-  age=$((now - mod_time))
-  if [[ "${age}" -gt 3600 ]]; then
-    echo "DONE:${session_id}" >> "${LEDGER_FILE}"
-  fi
+  # Persist the line offset so next run skips already-processed lines
+  set_offset "${session_id}" "${total_lines}"
 }
 
 # ---------------------------------------------------------------------------
