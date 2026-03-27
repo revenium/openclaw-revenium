@@ -5,7 +5,7 @@ milestone_name: milestone
 status: completed
 stopped_at: Phase 2 context gathered
 last_updated: "2026-03-14T22:43:35.861Z"
-last_activity: 2026-03-14 — Completed 01-01 Skill Scaffolding
+last_activity: 2026-03-27 — Completed quick task 260327-o1o
 progress:
   total_phases: 3
   completed_phases: 1
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 Phase: 1 of 3 (Skill Scaffolding) -- COMPLETE
 Plan: 1 of 1 in current phase
 Status: Phase 1 complete, ready for Phase 2
-Last activity: 2026-03-14 — Completed 01-01 Skill Scaffolding
+Last activity: 2026-03-27 — Completed quick task 260327-o1o: Replace DONE session skip with line-offset tracking
 
 Progress: [██████████] 100%
 
@@ -68,6 +68,12 @@ Recent decisions affecting current work:
 ### Pending Todos
 
 None yet.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260327-o1o | Replace DONE session skip with line-offset tracking in report.sh | 2026-03-27 | 7481c0c | [260327-o1o-replace-done-session-skip-with-line-offs](./quick/260327-o1o-replace-done-session-skip-with-line-offs/) |
 
 ### Blockers/Concerns
 
