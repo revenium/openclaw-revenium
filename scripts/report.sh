@@ -31,6 +31,7 @@ LOG_FILE="${OPENCLAW_HOME}/revenium-metering.log"
 SKILL_DIR="${OPENCLAW_HOME}/skills/revenium"
 CONFIG_FILE="${SKILL_DIR}/config.json"
 BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
+OFFSETS_FILE="${OPENCLAW_HOME}/revenium-offsets.json"
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -140,6 +141,43 @@ map_stop_reason() {
     cancelled|canceled)    echo "CANCELLED" ;;
     *)                     echo "END" ;;
   esac
+}
+
+# ---------------------------------------------------------------------------
+# Offset helpers — track last-processed line count per session (replaces DONE:)
+# ---------------------------------------------------------------------------
+get_offset() {
+  local sid="$1"
+  if [[ ! -f "${OFFSETS_FILE}" ]]; then
+    echo 0
+    return
+  fi
+  python3 -c "
+import json, sys
+try:
+    d = json.load(open('${OFFSETS_FILE}'))
+    print(d.get('${sid}', 0))
+except:
+    print(0)
+" 2>/dev/null || echo 0
+}
+
+set_offset() {
+  local sid="$1"
+  local count="$2"
+  python3 -c "
+import json, os, tempfile
+path = '${OFFSETS_FILE}'
+try:
+    d = json.load(open(path))
+except:
+    d = {}
+d['${sid}'] = int('${count}')
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or '.')
+with os.fdopen(fd, 'w') as f:
+    json.dump(d, f)
+os.rename(tmp, path)
+" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
