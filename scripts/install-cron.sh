@@ -8,7 +8,7 @@ set -euo pipefail
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CRON_SCRIPT="${SKILL_DIR}/scripts/cron.sh"
 CRON_COMMENT="# revenium-metering"
-CRON_SCHEDULE="* * * * *"
+CRON_SCHEDULE="*/15 * * * *"
 
 # Build a PATH for the cron entry that includes Homebrew/Linuxbrew locations.
 # Cron runs with a minimal PATH, so we bake in the paths where revenium lives.
@@ -41,7 +41,7 @@ fi
 # Add to crontab
 ( crontab -l 2>/dev/null || true; echo "${CRON_LINE}" ) | crontab -
 
-echo "✅ Revenium metering cron installed (every minute)"
+echo "✅ Revenium metering cron installed (every 15 minutes)"
 echo "   Log: ${HOME}/.openclaw/revenium-metering.log"
 echo ""
 echo "To view logs:    tail -f ~/.openclaw/revenium-metering.log"

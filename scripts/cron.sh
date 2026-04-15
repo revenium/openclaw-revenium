@@ -51,8 +51,9 @@ for p in \
   [[ -n "${p}" && -d "${p}" ]] && export PATH="${p}:${PATH}"
 done
 
-# Run report.sh (may fail on bash 3.x due to associative arrays)
-bash "${SKILL_DIR}/scripts/report.sh" "$@" || true
-
-# Always run budget check (bash 3.x compatible)
-bash "${SKILL_DIR}/scripts/budget-check.sh" || true
+LOCK_FILE="${OPENCLAW_HOME:-${HOME}/.openclaw}/revenium-metering.lock"
+(
+  flock -n 9 || exit 0
+  bash "${SKILL_DIR}/scripts/report.sh" "$@" || true
+  bash "${SKILL_DIR}/scripts/budget-check.sh" || true
+) 9>"${LOCK_FILE}"
