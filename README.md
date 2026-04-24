@@ -94,7 +94,8 @@ Setup is atomic — if any step fails, no partial config is written.
 
 A background cron job runs every minute and:
 
-1. **Reports usage** (`report.sh`) — reads OpenClaw session JSONL files, extracts token usage for each assistant completion, and ships events to Revenium via `revenium meter completion` with:
+1. **Checks budget** (`budget-check.sh`) — fetches the current budget alert from Revenium, computes whether spend exceeds the threshold, and writes the result to `budget-status.json`. Runs first so the halt state always refreshes even if reporting fails or hangs downstream.
+2. **Reports usage** (`report.sh`) — reads OpenClaw session JSONL files, extracts token usage for each assistant completion, and ships events to Revenium via `revenium meter completion` with:
    - Model name and provider (derived from the model string)
    - Token counts (input, output, cache read, cache write, total from the API)
    - Operation type (`CHAT`, `TOOL_CALL`, or `GUARDRAIL`)
@@ -102,7 +103,8 @@ A background cron job runs every minute and:
    - Request timing and duration computed from JSONL timestamps
    - The user's input message, assistant response, and system prompt
    - Organization name, agent identifier (`OpenClaw`), model source, and streaming flag
-2. **Checks budget** (`budget-check.sh`) — fetches the current budget alert from Revenium, computes whether spend exceeds the threshold, and writes the result to `budget-status.json`
+
+   Wrapped in a 120s `timeout` so a hung reporter can't block the next budget check.
 
 Both scripts are bash 3.x compatible (works on macOS's default bash).
 

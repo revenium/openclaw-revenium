@@ -51,9 +51,26 @@ for p in \
   [[ -n "${p}" && -d "${p}" ]] && export PATH="${p}:${PATH}"
 done
 
+# Run report.sh with a wall-clock cap so a hung reporter can never block
+# the halt check. Prefers GNU `timeout` (Linux default, macOS via coreutils
+# as `gtimeout`); degrades to an unbounded run if neither is available.
+run_report() {
+  if command -v timeout &>/dev/null; then
+    timeout 120 bash "${SKILL_DIR}/scripts/report.sh" "$@"
+  elif command -v gtimeout &>/dev/null; then
+    gtimeout 120 bash "${SKILL_DIR}/scripts/report.sh" "$@"
+  else
+    bash "${SKILL_DIR}/scripts/report.sh" "$@"
+  fi
+}
+
 LOCK_FILE="${OPENCLAW_HOME:-${HOME}/.openclaw}/revenium-metering.lock"
 (
   flock -n 9 || exit 0
-  bash "${SKILL_DIR}/scripts/report.sh" "$@" || true
+  # Budget check runs FIRST so the halt state in budget-status.json always
+  # refreshes — even if report.sh hangs or fails below. The API value it
+  # reads will be one cycle stale relative to the reporter, but a stale
+  # halt check is vastly better than a missing one.
   bash "${SKILL_DIR}/scripts/budget-check.sh" || true
+  run_report "$@" || true
 ) 9>"${LOCK_FILE}"

@@ -387,7 +387,15 @@ fi
 step "Seeding initial budget-status.json"
 
 BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
-if [[ ! -f "${BUDGET_STATUS_FILE}" ]]; then
+
+# Prefer seeding via budget-check.sh so the file has live values immediately
+# (e.g. on reinstall where config.json already carries an alertId). If the
+# script fails — typically because the /revenium flow hasn't produced an
+# alertId yet — fall back to a placeholder so budget-status.json always
+# exists for the AGENTS.md budget guard on the very first response.
+if bash "${SKILL_DIR}/scripts/budget-check.sh" >/dev/null 2>&1; then
+  info "Seeded budget-status.json via budget-check.sh (live values)"
+elif [[ ! -f "${BUDGET_STATUS_FILE}" ]]; then
   cat > "${BUDGET_STATUS_FILE}" <<BSJSON
 {
   "currentValue": 0,
@@ -397,12 +405,12 @@ if [[ ! -f "${BUDGET_STATUS_FILE}" ]]; then
   "exceeded": false,
   "halted": false,
   "lastChecked": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "note": "Seed file — will be replaced by cron on first run"
+  "note": "Placeholder — will be populated once /revenium configures an alertId and the next cron cycle (or budget-check.sh) runs"
 }
 BSJSON
-  info "Created seed budget-status.json (cron will overwrite on first run)"
+  info "Created placeholder budget-status.json (budget-check.sh couldn't seed — likely no alertId yet)"
 else
-  info "budget-status.json already exists"
+  info "budget-status.json already exists — leaving untouched"
 fi
 
 # ---------------------------------------------------------------------------
