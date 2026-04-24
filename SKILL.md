@@ -76,14 +76,14 @@ All file paths in this skill use `~/.openclaw/skills/revenium/` as the skill dir
 
 ## Setup
 
-At the start of any operation, check: does `~/.openclaw/skills/revenium/config.json` exist?
+At the start of any operation, check: does `~/.openclaw/skills/revenium/config.json` exist AND contain a non-empty `alertId` field?
 
 - **If YES** and the user has NOT requested reconfiguration: setup is complete. Proceed to the budget check. Do NOT re-run setup.
-- **If NO**: you MUST run the Setup Flow below before proceeding. Do NOT execute any operations until setup is complete.
+- **If NO** (file missing, or file exists but `alertId` is absent/empty — e.g., post-install seeded a partial config with only `autonomousMode` and `_comment`): you MUST run the Setup Flow below before proceeding. Do NOT execute any operations until setup is complete.
 
 ### Setup Flow
 
-Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`. Do NOT proceed with operations.
+Follow these steps in order. If any step fails, STOP. Do NOT write an `alertId` into `config.json`. Do NOT proceed with operations.
 
 1. **Check for existing API key.** Run:
    ```
@@ -119,7 +119,9 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
 
    Wait for the user's selection. Call this value `PERIOD`.
 
-6. **Prompt for autonomous mode.** Ask the user: "Will this agent run autonomously (without a user present)? If yes, budget exceedance will halt all operations and notify you. (yes/no, default: no)"
+6. **Prompt for autonomous mode.** First, read any pre-seeded value from `~/.openclaw/skills/revenium/config.json` (post-install.sh writes a seed with `autonomousMode` and a `_comment` field before any agent session runs). If `config.json` exists and has an `autonomousMode` field, use that value as the DEFAULT for the prompt below — show it in the prompt, e.g. "(yes/no, default: yes — from post-install)". Otherwise the default is `no`.
+
+   Ask the user: "Will this agent run autonomously (without a user present)? If yes, budget exceedance will halt all operations and notify you. (yes/no, default: DEFAULT_VALUE)"
 
    - **If yes:** Set `AUTONOMOUS_MODE` to `true`. Then:
      - Ask: "Which OpenClaw channel should receive budget alerts?" Present supported types: `slack`, `discord`, `telegram`, `whatsapp`, `signal`, `googlechat`, `msteams`, `mattermost`, `imessage`
@@ -167,11 +169,17 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
    python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])"
    ```
 
-12. **Write config.json.** This MUST be the FINAL step — only write after ALL previous steps have succeeded. Write `~/.openclaw/skills/revenium/config.json` with pretty-printed JSON containing the alert ID, optional organization name, and autonomous mode settings:
+12. **Write config.json.** This MUST be the FINAL step — only write after ALL previous steps have succeeded. Load any existing config first so the `_comment` field seeded by post-install.sh (and any other unknown keys) is preserved, then merge in the values collected above:
    ```
    python3 -c "
-   import json
-   config = {'alertId': 'ALERT_ID'}
+   import json, os
+   path = os.path.expanduser('~/.openclaw/skills/revenium/config.json')
+   try:
+       with open(path) as f:
+           config = json.load(f)
+   except (FileNotFoundError, json.JSONDecodeError):
+       config = {}
+   config['alertId'] = 'ALERT_ID'
    org = 'ORG_NAME'
    if org:
        config['organizationName'] = org
@@ -180,10 +188,15 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
    if autonomous:
        config['notifyChannel'] = 'NOTIFY_CHANNEL'
        config['notifyTarget'] = 'NOTIFY_TARGET'
-   print(json.dumps(config, indent=2))
-   " > ~/.openclaw/skills/revenium/config.json
+   else:
+       config.pop('notifyChannel', None)
+       config.pop('notifyTarget', None)
+   with open(path, 'w') as f:
+       json.dump(config, f, indent=2)
+       f.write('\n')
+   "
    ```
-   Replace `ALERT_ID`, `ORG_NAME`, `AUTONOMOUS_MODE`, `NOTIFY_CHANNEL`, and `NOTIFY_TARGET` with the actual values. If the user skipped the organization name, omit it. If autonomous mode is false, omit `notifyChannel` and `notifyTarget`.
+   Replace `ALERT_ID`, `ORG_NAME`, `AUTONOMOUS_MODE`, `NOTIFY_CHANNEL`, and `NOTIFY_TARGET` with the actual values. If the user skipped the organization name, omit it. If autonomous mode is false, `notifyChannel`/`notifyTarget` are stripped. Any `_comment` or other pre-existing fields are carried through untouched.
 
 13. **Install the metering cron.** Run:
    ```
@@ -195,7 +208,7 @@ Follow these steps in order. If any step fails, STOP. Do NOT write `config.json`
 
 ### Error Handling
 
-On ANY failure during the Setup Flow: report what went wrong, tell the user to run `/revenium` when they are ready to try again, and STOP. Do NOT retry. Do NOT write a partial `config.json`. The absence of `config.json` is the signal that setup has not completed.
+On ANY failure during the Setup Flow: report what went wrong, tell the user to run `/revenium` when they are ready to try again, and STOP. Do NOT retry. Do NOT write an `alertId` into `config.json`. The absence of an `alertId` field in `config.json` is the signal that setup has not completed — a pre-seeded `config.json` with only `autonomousMode` and `_comment` still means "setup not complete".
 
 > Reminder: After setup completes, check budget-status.json before your next response.
 
@@ -203,7 +216,7 @@ On ANY failure during the Setup Flow: report what went wrong, tell the user to r
 
 When the user invokes `/revenium`:
 
-### If Setup Is Complete (config.json exists)
+### If Setup Is Complete (config.json has a non-empty `alertId`)
 
 1. **Show budget status.** Read `alertId` from `~/.openclaw/skills/revenium/config.json`, then run:
    ```
@@ -219,9 +232,9 @@ When the user invokes `/revenium`:
 
 3. **Offer actions.** Ask the user: "Would you like to **reset** the budget (zero out current spend), **reconfigure** (change threshold/period), or **done**?" If the user declines or says done, STOP — no further action.
 
-### If Setup Is NOT Complete (no config.json)
+### If Setup Is NOT Complete (config.json missing, or present but missing `alertId`)
 
-Run the Setup Flow from the Setup section above.
+Run the Setup Flow from the Setup section above. The flow will honor any pre-seeded `autonomousMode` / `_comment` fields when writing the final config.
 
 ### Reconfiguration Flow
 
@@ -235,9 +248,25 @@ When the user requests reconfiguration:
    ```
    If this fails (e.g., alert already deleted or not found): log a warning but continue. The goal is to prevent orphaned alerts.
 
-3. **Delete config.json.** Remove `~/.openclaw/skills/revenium/config.json`.
+3. **Clear the `alertId` field.** Do NOT delete `config.json` — that would drop the operator-facing `_comment` and any pre-seeded `autonomousMode` default. Instead, strip just the alert-specific fields so the Setup Flow sees "alertId missing → setup incomplete":
+   ```
+   python3 -c "
+   import json, os
+   path = os.path.expanduser('~/.openclaw/skills/revenium/config.json')
+   try:
+       with open(path) as f:
+           config = json.load(f)
+   except (FileNotFoundError, json.JSONDecodeError):
+       config = {}
+   for k in ('alertId', 'organizationName', 'notifyChannel', 'notifyTarget'):
+       config.pop(k, None)
+   with open(path, 'w') as f:
+       json.dump(config, f, indent=2)
+       f.write('\n')
+   "
+   ```
 
-4. **Run the full Setup Flow** from the Setup section above. This collects fresh API key, budget amount, period, and creates a new alert from scratch.
+4. **Run the full Setup Flow** from the Setup section above. This collects fresh API key, budget amount, period, and creates a new alert from scratch. The Setup Flow's step 12 merges the new values into the preserved config, keeping `_comment` and using the prior `autonomousMode` as the prompt default.
 
 > Reminder: After reconfiguration completes, check budget-status.json before your next response.
 

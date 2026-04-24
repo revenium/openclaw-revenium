@@ -387,7 +387,36 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Inject budget check into AGENTS.md
+# 6. Seed initial config.json
+# ---------------------------------------------------------------------------
+step "Seeding initial config.json"
+
+SKILL_CONFIG_FILE="${SKILL_DIR}/config.json"
+if [[ -f "${SKILL_CONFIG_FILE}" ]]; then
+  info "config.json already exists — leaving autonomousMode untouched"
+else
+  AUTONOMOUS_MODE="false"
+  if [[ -t 0 && -t 1 ]]; then
+    printf "  Will this agent run autonomously with heartbeats? [y/N] "
+    read -r AUTO_REPLY || AUTO_REPLY=""
+    case "${AUTO_REPLY}" in
+      [yY]|[yY][eE][sS]) AUTONOMOUS_MODE="true" ;;
+    esac
+  else
+    info "Non-interactive shell — defaulting autonomousMode to false"
+  fi
+
+  cat > "${SKILL_CONFIG_FILE}" <<CJSON
+{
+  "_comment": "autonomousMode: when true, budget exceedance halts ALL agent operations and sends a notification to the configured channel (requires notifyChannel and notifyTarget). When false (default, interactive mode), the agent warns the user on budget exceedance and asks for permission to continue. Flip this by re-running post-install.sh, invoking /revenium, or editing this file directly.",
+  "autonomousMode": ${AUTONOMOUS_MODE}
+}
+CJSON
+  info "Seeded config.json with autonomousMode=${AUTONOMOUS_MODE}"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. Inject budget check into AGENTS.md
 # ---------------------------------------------------------------------------
 step "Injecting budget check into AGENTS.md"
 
@@ -442,7 +471,7 @@ PYEOF
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Configure bootstrap-extra-files hook for isolated sessions
+# 8. Configure bootstrap-extra-files hook for isolated sessions
 # ---------------------------------------------------------------------------
 step "Configuring budget guard for isolated sessions"
 
@@ -494,7 +523,7 @@ PYEOF
 info "Configured bootstrap-extra-files hook for budget guard"
 
 # ---------------------------------------------------------------------------
-# 8. Verify
+# 9. Verify
 # ---------------------------------------------------------------------------
 step "Verifying installation"
 
