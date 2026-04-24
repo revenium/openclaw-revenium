@@ -126,7 +126,10 @@ step "Configuring OpenClaw sandbox access"
 # Build the list of bind mounts the agent needs inside the Docker sandbox:
 #   - ~/.openclaw (rw) — skills, sessions, logs, ledger, budget-status, config
 #   - bin directories containing revenium/jq (ro) — so the agent can invoke CLIs
-#   - ~/.config/revenium (ro) — CLI credentials (API key, team/tenant/user IDs)
+# NOTE: we used to bind-mount ~/.config/revenium for CLI credentials, but the
+# OpenClaw sandbox rejects any bind whose destination falls under ~/.config/
+# (treated as a credential path). Credentials are now injected as env vars
+# (REVENIUM_API_KEY etc.) further down — see the "revenium credentials" block.
 BIND_ENTRIES=()
 BIND_ENTRIES+=("${OPENCLAW_HOME}:${OPENCLAW_HOME}")
 
@@ -194,13 +197,57 @@ if [[ -n "${JQ_PATH}" ]]; then
   fi
 fi
 
-# Bind-mount revenium CLI config (API key, team/tenant/user IDs).
-# Create the dir if it doesn't exist yet — the user may configure revenium
-# after post-install, and we need the mount point ready.
+# Inject revenium CLI credentials into the sandbox as environment variables.
+# We cannot bind-mount ~/.config/revenium — the OpenClaw sandbox rejects any
+# bind whose destination is under ~/.config/ as a "credential path". The
+# revenium CLI honors REVENIUM_API_KEY / REVENIUM_API_URL / REVENIUM_TEAM_ID
+# (env vars take precedence over the config file). We also pass
+# REVENIUM_TENANT_ID / REVENIUM_OWNER_ID in case the CLI picks them up; they
+# are harmless if ignored.
 REVENIUM_CONFIG_DIR="${HOME}/.config/revenium"
+REVENIUM_CONFIG_FILE="${REVENIUM_CONFIG_DIR}/config.yaml"
 mkdir -p "${REVENIUM_CONFIG_DIR}"
-BIND_ENTRIES+=("${REVENIUM_CONFIG_DIR}:${REVENIUM_CONFIG_DIR}:ro")
-info "Will bind-mount revenium config at ${REVENIUM_CONFIG_DIR}"
+
+REVENIUM_API_KEY=""
+REVENIUM_API_URL=""
+REVENIUM_TEAM_ID=""
+REVENIUM_TENANT_ID=""
+REVENIUM_OWNER_ID=""
+
+if [[ -f "${REVENIUM_CONFIG_FILE}" ]]; then
+  # Simple line-based YAML reader — config.yaml is a flat key: value map.
+  # We tolerate optional quotes and whitespace, skip comments/blank lines.
+  while IFS= read -r line; do
+    case "${line}" in
+      ''|\#*) continue ;;
+    esac
+    key="${line%%:*}"
+    val="${line#*:}"
+    # trim leading/trailing whitespace
+    key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+    val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
+    # strip surrounding single or double quotes
+    case "${val}" in
+      \"*\") val="${val#\"}"; val="${val%\"}" ;;
+      \'*\') val="${val#\'}"; val="${val%\'}" ;;
+    esac
+    case "${key}" in
+      key|api-key) REVENIUM_API_KEY="${val}" ;;
+      api-url)    REVENIUM_API_URL="${val}" ;;
+      team-id)    REVENIUM_TEAM_ID="${val}" ;;
+      tenant-id)  REVENIUM_TENANT_ID="${val}" ;;
+      owner-id)   REVENIUM_OWNER_ID="${val}" ;;
+    esac
+  done < "${REVENIUM_CONFIG_FILE}"
+
+  if [[ -n "${REVENIUM_API_KEY}" ]]; then
+    info "Loaded revenium credentials from ${REVENIUM_CONFIG_FILE} — will inject as env vars"
+  else
+    warn "${REVENIUM_CONFIG_FILE} exists but has no api-key — run 'revenium config set key ...' on the host then re-run this script"
+  fi
+else
+  warn "${REVENIUM_CONFIG_FILE} not found — run 'revenium config set key ...' on the host, then re-run this script so credentials reach the sandbox"
+fi
 
 # Generate a CA certificate bundle for sandboxed environments.
 # Minimal Docker containers often lack /etc/ssl/certs/ca-certificates.crt,
@@ -310,6 +357,31 @@ if extra_lib_dirs:
 ssl_cert_file = "${SSL_CERT_FILE}"
 if ssl_cert_file:
     docker["env"]["SSL_CERT_FILE"] = ssl_cert_file
+
+# Drop any stale ~/.config/revenium bind from prior post-install runs — the
+# sandbox now rejects it as a credential path. Credentials are injected via
+# env vars below instead.
+revenium_config_dir = os.path.expanduser("~/.config/revenium")
+docker["binds"] = [
+    b for b in docker.get("binds", [])
+    if revenium_config_dir not in b.split(":", 2)[:2]
+]
+
+# Inject revenium CLI credentials as env vars (CLI honors these and they
+# take precedence over the config file it would otherwise read from
+# ~/.config/revenium/config.yaml, which we cannot mount into the sandbox).
+revenium_env_pairs = {
+    "REVENIUM_API_KEY":   "${REVENIUM_API_KEY}",
+    "REVENIUM_API_URL":   "${REVENIUM_API_URL}",
+    "REVENIUM_TEAM_ID":   "${REVENIUM_TEAM_ID}",
+    "REVENIUM_TENANT_ID": "${REVENIUM_TENANT_ID}",
+    "REVENIUM_OWNER_ID":  "${REVENIUM_OWNER_ID}",
+}
+for k, v in revenium_env_pairs.items():
+    if v:
+        docker["env"][k] = v
+    else:
+        docker["env"].pop(k, None)
 
 # Allow outbound network access so the revenium CLI can reach api.revenium.ai
 docker["network"] = "bridge"

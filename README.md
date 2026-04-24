@@ -31,11 +31,14 @@ This will:
 1. Check for and install the `revenium` CLI and `jq` via Homebrew (if missing)
 2. Verify `python3` is available
 3. Mark the skill's scripts as executable
-4. Configure Docker sandbox bind mounts in `~/.openclaw/openclaw.json` — mounts `~/.openclaw` (rw), bin directories containing `revenium` and `jq` (ro) with shared library dirs, `~/.config/revenium` (ro) for CLI credentials, and sets `PATH`, `HOME`, `LD_LIBRARY_PATH`, and `SSL_CERT_FILE` in the container environment
+4. Configure Docker sandbox bind mounts in `~/.openclaw/openclaw.json` — mounts `~/.openclaw` (rw), bin directories containing `revenium` and `jq` (ro) with shared library dirs, and sets `PATH`, `HOME`, `LD_LIBRARY_PATH`, and `SSL_CERT_FILE` in the container environment. **Credentials are NOT bind-mounted** — the OpenClaw sandbox rejects any bind whose destination falls under `~/.config/`. Instead, post-install reads the host's `~/.config/revenium/config.yaml` and injects `REVENIUM_API_KEY` / `REVENIUM_API_URL` / `REVENIUM_TEAM_ID` / `REVENIUM_TENANT_ID` / `REVENIUM_OWNER_ID` into the sandbox env (env vars take precedence over the config file inside the CLI).
 5. Enable `autoAllowSkills` in `~/.openclaw/exec-approvals.json` so skill-declared binaries are auto-approved
 6. Seed an initial `budget-status.json` so the agent doesn't error before the cron's first run
-7. Inject a mandatory budget check section into `AGENTS.md` so budget enforcement is always in context
-8. Verify the installation
+7. Seed an initial `config.json` (prompts interactively for `autonomousMode`) so operators can set the halt-vs-warn behavior up front
+8. Inject a mandatory budget check section into `AGENTS.md` so budget enforcement is always in context
+9. Verify the installation
+
+> **Credentials must be set on the HOST first.** Run `revenium config set key <KEY>` (plus `team-id`, `tenant-id`, `owner-id`) in your host terminal before invoking post-install, then re-run post-install and restart the gateway any time you rotate those values. `revenium config set` issued from inside an agent session writes to an ephemeral sandbox path and will not persist.
 
 > **Already have prerequisites installed?** Pass `--skip-prereqs` to skip Homebrew installs and fail immediately if anything is missing.
 

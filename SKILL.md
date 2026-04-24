@@ -89,23 +89,29 @@ Follow these steps in order. If any step fails, STOP. Do NOT write an `alertId` 
    ```
    revenium config show
    ```
-   If the output shows an API Key is already set (not empty), skip to step 3. The key is already configured.
+   Inside the sandbox, the CLI reads credentials from the `REVENIUM_API_KEY` / `REVENIUM_TEAM_ID` / `REVENIUM_TENANT_ID` / `REVENIUM_OWNER_ID` environment variables that post-install.sh injects from the host's `~/.config/revenium/config.yaml`. If `revenium config show` reports a non-empty API Key, skip to step 3 — credentials are already reaching the sandbox.
 
-2. **If no API key is configured:** Collect the following from the user. Ask for each value and wait for their response:
+2. **If no API key is configured:** credentials must be set on the HOST (not inside the sandbox). `revenium config set ...` run from inside the agent session writes to an ephemeral sandbox path that is not mounted back to the host and will NOT persist.
+
+   Collect the following from the user:
 
    - **API Key**: "Please provide your Revenium API key."
    - **Team ID**: "Please provide your Revenium Team ID."
    - **Tenant ID**: "Please provide your Revenium Tenant ID."
-   - **User ID**: "Please provide your Revenium User ID."
+   - **User ID** (owner id): "Please provide your Revenium User ID."
 
-   Then configure the CLI by running each command in order:
+   Then instruct the user to run these commands in their HOST terminal (outside the agent session), one at a time:
    ```
    revenium config set key API_KEY
    revenium config set team-id TEAM_ID
    revenium config set tenant-id TENANT_ID
-   revenium config set user-id USER_ID
+   revenium config set owner-id USER_ID
    ```
-   Replace the placeholder values with the user's actual responses. If any command returns a non-zero exit code: tell the user what went wrong, tell them to run `/revenium` when ready, and STOP. Do NOT write `config.json`.
+   After those succeed, the user must re-run post-install so the new credentials propagate into the sandbox env, then restart the OpenClaw gateway so it picks up the updated `openclaw.json`:
+   ```
+   bash ~/.openclaw/skills/revenium/scripts/post-install.sh --skip-prereqs
+   ```
+   Pause the setup flow and wait for the user to confirm they have completed these host steps and restarted the gateway. When they do, re-run `revenium config show` to verify the API key is now visible to the sandbox. If it is still empty, STOP and tell the user to run `/revenium` when ready. Do NOT write an `alertId` into `config.json`.
 
 3. **Prompt for organization name (optional).** Ask the user: "What is your organization name for Revenium reporting? (optional — press Enter to skip)" If the user provides a value, call it `ORG_NAME`. If they skip, leave it empty.
 
@@ -327,7 +333,7 @@ If `revenium` is not found on PATH:
 
 If `revenium config show` reports no API key or an invalid key:
 - STOP all operations that require budget checking
-- Tell the user: "Your Revenium API key is missing or invalid. Run `/revenium` to reconfigure."
+- Tell the user: "Your Revenium API key is missing or invalid inside the sandbox. Inside the agent session, the CLI reads credentials from the `REVENIUM_API_KEY` env var, which post-install.sh injects from your host's `~/.config/revenium/config.yaml`. To fix: on your HOST terminal (not the agent session) run `revenium config set key <KEY>` (plus `team-id`, `tenant-id`, `owner-id` as needed), then re-run `bash ~/.openclaw/skills/revenium/scripts/post-install.sh --skip-prereqs` and restart the OpenClaw gateway. Finally run `/revenium` to resume setup."
 
 ### Network Errors
 
