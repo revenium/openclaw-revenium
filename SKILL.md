@@ -89,9 +89,9 @@ Follow these steps in order. If any step fails, STOP. Do NOT write an `alertId` 
    ```
    revenium config show
    ```
-   Inside the sandbox, the CLI reads credentials from the `REVENIUM_API_KEY` / `REVENIUM_TEAM_ID` / `REVENIUM_TENANT_ID` / `REVENIUM_OWNER_ID` environment variables that post-install.sh injects from the host's `~/.config/revenium/config.yaml`. If `revenium config show` reports a non-empty API Key, skip to step 3 — credentials are already reaching the sandbox.
+   The sandbox reads credentials from a read-only bind mount of the host's `~/.config/revenium/` (set up by post-install.sh with `dangerouslyAllowExternalBindSources: true`), so any value already set on the host is visible live inside the agent session. If `revenium config show` reports a non-empty API Key, skip to step 3.
 
-2. **If no API key is configured:** credentials must be set on the HOST (not inside the sandbox). `revenium config set ...` run from inside the agent session writes to an ephemeral sandbox path that is not mounted back to the host and will NOT persist.
+2. **If no API key is configured:** credentials must be set on the HOST. The bind mount into the sandbox is read-only, so `revenium config set ...` run from inside the agent session will fail to persist — the CLI cannot write back through the bind.
 
    Collect the following from the user:
 
@@ -107,11 +107,7 @@ Follow these steps in order. If any step fails, STOP. Do NOT write an `alertId` 
    revenium config set tenant-id TENANT_ID
    revenium config set owner-id USER_ID
    ```
-   After those succeed, the user must re-run post-install so the new credentials propagate into the sandbox env, then restart the OpenClaw gateway so it picks up the updated `openclaw.json`:
-   ```
-   bash ~/.openclaw/skills/revenium/scripts/post-install.sh --skip-prereqs
-   ```
-   Pause the setup flow and wait for the user to confirm they have completed these host steps and restarted the gateway. When they do, re-run `revenium config show` to verify the API key is now visible to the sandbox. If it is still empty, STOP and tell the user to run `/revenium` when ready. Do NOT write an `alertId` into `config.json`.
+   Because the sandbox sees host changes through the bind mount live, no post-install re-run or gateway restart is required — pause the setup flow while the user runs the commands on the host, then re-run `revenium config show` inside the agent session to confirm the API key is now visible. If it is still empty, STOP and tell the user to run `/revenium` when ready. Do NOT write an `alertId` into `config.json`.
 
 3. **Prompt for organization name (optional).** Ask the user: "What is your organization name for Revenium reporting? (optional — press Enter to skip)" If the user provides a value, call it `ORG_NAME`. If they skip, leave it empty.
 
@@ -333,7 +329,7 @@ If `revenium` is not found on PATH:
 
 If `revenium config show` reports no API key or an invalid key:
 - STOP all operations that require budget checking
-- Tell the user: "Your Revenium API key is missing or invalid inside the sandbox. Inside the agent session, the CLI reads credentials from the `REVENIUM_API_KEY` env var, which post-install.sh injects from your host's `~/.config/revenium/config.yaml`. To fix: on your HOST terminal (not the agent session) run `revenium config set key <KEY>` (plus `team-id`, `tenant-id`, `owner-id` as needed), then re-run `bash ~/.openclaw/skills/revenium/scripts/post-install.sh --skip-prereqs` and restart the OpenClaw gateway. Finally run `/revenium` to resume setup."
+- Tell the user: "Your Revenium API key is missing or invalid inside the sandbox. The sandbox reads credentials from a read-only bind mount of your host's `~/.config/revenium/`, so fix them on the host: run `revenium config set key <KEY>` (plus `team-id`, `tenant-id`, `owner-id` as needed) in your HOST terminal. The change is picked up live — no post-install re-run or gateway restart needed. Then run `/revenium` to resume setup."
 
 ### Network Errors
 
