@@ -13,7 +13,7 @@ Build a single SKILL.md file that turns every OpenClaw agent on the machine into
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Skill Scaffolding** - Valid SKILL.md that loads in OpenClaw and gates on revenium binary (completed 2026-03-14)
-- [ ] **Phase 2: Setup Flow** - Agent-guided first-time config of API key, budget, and anomaly ID persistence
+- [x] **Phase 2: Setup Flow** - Agent-guided first-time config of API key, budget, and anomaly ID persistence (completed 2026-05-29)
 - [ ] **Phase 3: Operation Guard** - Pre-operation budget check with warn-and-ask and configurable behavior
 
 ## Phase Details
@@ -42,10 +42,10 @@ Plans:
   3. The anomaly ID returned from alert creation is written to `{baseDir}/config.json`
   4. Re-running setup with an existing `config.json` skips budget creation instead of creating a duplicate alert
   5. User can explicitly request re-configuration and the agent re-runs setup from scratch
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 02-01-PLAN.md — Author Setup and /revenium Command sections with complete agent instructions for configuration, idempotency, and reconfiguration
+- [x] 02-01-PLAN.md — Author Setup and /revenium Command sections with complete agent instructions for configuration, idempotency, and reconfiguration
 
 ### Phase 3: Operation Guard
 **Goal**: The agent checks budget status before every operation, routes to warn-and-ask or silent pass-through based on budget state, and respects user-configured grace mode behavior
@@ -66,5 +66,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Skill Scaffolding | 1/1 | Complete    | 2026-03-14 |
-| 2. Setup Flow | 0/1 | Planning complete | - |
+| 2. Setup Flow | 1/1 | Complete    | 2026-05-29 |
 | 3. Operation Guard | 0/TBD | Not started | - |

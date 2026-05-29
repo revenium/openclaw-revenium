@@ -14,14 +14,14 @@
 
 ### Setup Flow
 
-- [ ] **SETUP-01**: Agent prompts user for Revenium API key on first use
-- [ ] **SETUP-02**: Agent configures CLI via `revenium config set key <api-key>`
-- [ ] **SETUP-03**: Agent prompts user for budget amount (numeric threshold)
-- [ ] **SETUP-04**: Agent prompts user for budget period (DAILY, WEEKLY, MONTHLY, QUARTERLY)
-- [ ] **SETUP-05**: Agent creates budget alert via `revenium alerts budget create --name <name> --threshold <amount> --period <period>`
-- [ ] **SETUP-06**: Agent persists the returned anomaly ID to a config file for subsequent checks
-- [ ] **SETUP-07**: Setup is idempotent — skips budget creation if anomaly ID already exists
-- [ ] **SETUP-08**: Agent can reconfigure settings (re-run setup) when user requests it
+- [x] **SETUP-01**: Agent prompts user for Revenium API key on first use
+- [x] **SETUP-02**: Agent configures CLI via `revenium config set key <api-key>`
+- [x] **SETUP-03**: Agent prompts user for budget amount (numeric threshold)
+- [x] **SETUP-04**: Agent prompts user for budget period (DAILY, WEEKLY, MONTHLY, QUARTERLY)
+- [x] **SETUP-05**: Agent creates budget alert via `revenium alerts budget create --name <name> --threshold <amount> --period <period>`
+- [x] **SETUP-06**: Agent persists the returned anomaly ID to a config file for subsequent checks
+- [x] **SETUP-07**: Setup is idempotent — skips budget creation if anomaly ID already exists
+- [x] **SETUP-08**: Agent can reconfigure settings (re-run setup) when user requests it
 
 ### Budget Guard
 
@@ -60,14 +60,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SKAF-02 | Phase 1 | Complete |
 | SKAF-03 | Phase 1 | Complete |
 | SKAF-04 | Phase 1 | Complete |
-| SETUP-01 | Phase 2 | Pending |
-| SETUP-02 | Phase 2 | Pending |
-| SETUP-03 | Phase 2 | Pending |
-| SETUP-04 | Phase 2 | Pending |
-| SETUP-05 | Phase 2 | Pending |
-| SETUP-06 | Phase 2 | Pending |
-| SETUP-07 | Phase 2 | Pending |
-| SETUP-08 | Phase 2 | Pending |
+| SETUP-01 | Phase 2 | Complete |
+| SETUP-02 | Phase 2 | Complete |
+| SETUP-03 | Phase 2 | Complete |
+| SETUP-04 | Phase 2 | Complete |
+| SETUP-05 | Phase 2 | Complete |
+| SETUP-06 | Phase 2 | Complete |
+| SETUP-07 | Phase 2 | Complete |
+| SETUP-08 | Phase 2 | Complete |
 | GUARD-01 | Phase 3 | Pending |
 | GUARD-02 | Phase 3 | Pending |
 | GUARD-03 | Phase 3 | Pending |
