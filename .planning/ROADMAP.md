@@ -49,17 +49,24 @@ Plans:
 - [x] 02-01-PLAN.md — Author Setup and /revenium Command sections with complete agent instructions for configuration, idempotency, and reconfiguration
 
 ### Phase 3: Guardrail Engine
-**Goal**: Replace the legacy budget-alert model with guardrails-native enforcement: `common.sh` shared helpers, `setup-guardrails.sh` interactive rule creation, `guardrail-check.sh` cron stage, updated `cron.sh` pipeline with alertId→ruleIds auto-migration, rewritten SKILL.md enforcement section (guardrail-status.json schema, halt logic, setup flow delegation), and updated `GUARDRAIL-GUARD.md` workspace bootstrap file
+**Goal**: Replace the legacy budget-alert model with guardrails-native enforcement: `common.sh` shared helpers, `setup-guardrails.sh` interactive rule creation, `guardrail-check.sh` cron stage, updated `cron.sh` pipeline (no migration code, per D-02), rewritten SKILL.md enforcement section (guardrail-status.json schema, halt logic, setup flow delegation), and updated `BUDGET-GUARD.md` workspace bootstrap file (filename unchanged, per D-05)
 **Depends on**: Phase 2
 **Requirements**: GUARD-01, GUARD-02, GUARD-03, GUARD-04, GUARD-05, GUARD-06
 **Success Criteria** (what must be TRUE):
   1. `setup-guardrails.sh --interactive` creates at least one guardrails budget rule via `revenium guardrails budget-rules create` and writes `ruleIds` array to `config.json`
   2. `guardrail-check.sh` polls `revenium guardrails enforcement-rules get` and writes `guardrail-status.json` atomically on every cron tick
   3. When any non-shadow rule is in `block` state and autonomous mode is on, `guardrail-status.json` sets `halted: true` and the agent emits the verbatim halt string
-  4. Legacy `alertId`-only installs auto-migrate to `ruleIds` on the first cron tick via `setup-guardrails.sh --from-alert --auto`
+  4. Legacy `alertId`-only installs are treated as "setup not complete" (run Setup Flow); `guardrail-check.sh` exits 0 silently on such installs (no auto-migration, per D-02/D-03/D-04)
   5. SKILL.md reads `guardrail-status.json` (not `budget-status.json`) and the halt check uses `haltedRule` fields
-  6. `GUARDRAIL-GUARD.md` is injected via `bootstrap-extra-files` and references `guardrail-status.json`
-**Plans**: TBD
+  6. `BUDGET-GUARD.md` is injected via `bootstrap-extra-files` and references `guardrail-status.json`
+**Plans:** 5 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Upgrade OpenClaw CLI + author common.sh shared library
+- [ ] 03-02-PLAN.md — Author guardrail-check.sh cron enforcement stage (writes guardrail-status.json)
+- [ ] 03-03-PLAN.md — Author setup-guardrails.sh interactive rule creation
+- [ ] 03-04-PLAN.md — Wire cron.sh/post-install.sh/clear-halt.sh; delete budget-check.sh
+- [ ] 03-05-PLAN.md — Rewrite SKILL.md + BUDGET-GUARD.md guardrail-native enforcement
 
 ### Phase 4: Task Metering & Attribution
 **Goal**: Every meter completion carries a `--task-type` from the controlled taxonomy; SKILL.md mandates task classification before every substantive turn; subagent spend rolls up under the root session via `AGENT:STARTS_WITH:openclaw-{root_session_id}` naming; setup offers optional per-task-type guardrail rules
@@ -82,5 +89,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Skill Scaffolding | 1/1 | Complete    | 2026-03-14 |
 | 2. Setup Flow | 1/1 | Complete    | 2026-05-29 |
-| 3. Guardrail Engine | 0/TBD | Not started | - |
+| 3. Guardrail Engine | 0/5 | Planned | - |
 | 4. Task Metering & Attribution | 0/TBD | Not started | - |
