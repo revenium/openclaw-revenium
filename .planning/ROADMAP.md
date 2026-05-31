@@ -87,6 +87,11 @@ Plans:
 - [x] 03-04-PLAN.md — Wire cron.sh/post-install.sh/clear-halt.sh; delete budget-check.sh
 - [x] 03-05-PLAN.md — Rewrite SKILL.md + BUDGET-GUARD.md guardrail-native enforcement
 
+**Gap Closure** *(closes GUARD-03/GUARD-04 warn-and-ask gap + CR-01/CR-02 from review)*
+
+- [ ] 03-06-PLAN.md — guardrail-check.sh: emit warned/warnedRules signal (GUARD-03/04 producer) + CR-02 fail-open guard
+- [ ] 03-07-PLAN.md — SKILL.md warn-and-ask branch (GUARD-03/04 consumer) + setup-guardrails.sh clear ruleIds on recreate (CR-01)
+
 ### Phase 4: Task Metering & Attribution
 
 **Goal**: Every meter completion carries a `--task-type` from the controlled taxonomy; SKILL.md mandates task classification before every substantive turn; subagent spend rolls up under the root session via `AGENT:STARTS_WITH:openclaw-{root_session_id}` naming; setup offers optional per-task-type guardrail rules
