@@ -111,7 +111,7 @@ fi
 info "SKILL.md present"
 
 # Ensure scripts are executable
-for script in cron.sh report.sh budget-check.sh install-cron.sh uninstall-cron.sh clear-halt.sh post-install.sh; do
+for script in cron.sh report.sh common.sh setup-guardrails.sh guardrail-check.sh install-cron.sh uninstall-cron.sh clear-halt.sh post-install.sh; do
   if [[ -f "${SKILL_DIR}/scripts/${script}" ]]; then
     chmod +x "${SKILL_DIR}/scripts/${script}"
   fi
@@ -382,35 +382,21 @@ PYEOF
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Seed initial budget-status.json
+# 5. Seed initial guardrail-status.json
 # ---------------------------------------------------------------------------
-step "Seeding initial budget-status.json"
+step "Seeding initial guardrail-status.json"
 
-BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
+GUARDRAIL_STATUS_FILE="${SKILL_DIR}/guardrail-status.json"
 
-# Prefer seeding via budget-check.sh so the file has live values immediately
-# (e.g. on reinstall where config.json already carries an alertId). If the
-# script fails — typically because the /revenium flow hasn't produced an
-# alertId yet — fall back to a placeholder so budget-status.json always
-# exists for the AGENTS.md budget guard on the very first response.
-if bash "${SKILL_DIR}/scripts/budget-check.sh" >/dev/null 2>&1; then
-  info "Seeded budget-status.json via budget-check.sh (live values)"
-elif [[ ! -f "${BUDGET_STATUS_FILE}" ]]; then
-  cat > "${BUDGET_STATUS_FILE}" <<BSJSON
-{
-  "currentValue": 0,
-  "threshold": 0,
-  "percentUsed": 0,
-  "remaining": 0,
-  "exceeded": false,
-  "halted": false,
-  "lastChecked": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "note": "Placeholder — will be populated once /revenium configures an alertId and the next cron cycle (or budget-check.sh) runs"
-}
-BSJSON
-  info "Created placeholder budget-status.json (budget-check.sh couldn't seed — likely no alertId yet)"
+if [[ ! -f "${GUARDRAIL_STATUS_FILE}" ]]; then
+  python3 -c "
+import json, sys
+data = {'halted': False, 'lastChecked': None, 'rules': []}
+sys.stdout.write(json.dumps(data, indent=2) + '\n')
+" > "${GUARDRAIL_STATUS_FILE}"
+  info "Seeded guardrail-status.json placeholder"
 else
-  info "budget-status.json already exists — leaving untouched"
+  info "guardrail-status.json already exists — leaving untouched"
 fi
 
 # ---------------------------------------------------------------------------
@@ -445,27 +431,25 @@ fi
 # ---------------------------------------------------------------------------
 # 7. Inject budget check into AGENTS.md
 # ---------------------------------------------------------------------------
-step "Injecting budget check into AGENTS.md"
+step "Injecting guardrail check into AGENTS.md"
 
 AGENTS_MD="${OPENCLAW_HOME}/workspace/AGENTS.md"
-BUDGET_MARKER="## Budget Check (Mandatory)"
+GUARDRAIL_MARKER="## Guardrail Check (Mandatory)"
 
 if [[ ! -f "${AGENTS_MD}" ]]; then
-  warn "AGENTS.md not found at ${AGENTS_MD} — skipping budget injection"
-elif grep -q "${BUDGET_MARKER}" "${AGENTS_MD}" 2>/dev/null; then
-  info "Budget check already present in AGENTS.md"
+  warn "AGENTS.md not found at ${AGENTS_MD} — skipping guardrail injection"
+elif grep -q "${GUARDRAIL_MARKER}" "${AGENTS_MD}" 2>/dev/null; then
+  info "Guardrail check already present in AGENTS.md"
 else
   python3 <<PYEOF
-import re
-
 section = """
-## Budget Check (Mandatory)
+## Guardrail Check (Mandatory)
 
-BEFORE EVERY RESPONSE, NO EXCEPTIONS — read \`~/.openclaw/skills/revenium/budget-status.json\`.
+BEFORE EVERY RESPONSE, NO EXCEPTIONS — read \`~/.openclaw/skills/revenium/guardrail-status.json\`.
 
-- **File missing:** Warn user the metering cron may not be installed, then proceed.
-- **\`exceeded\` is \`false\`:** Proceed silently. Do NOT mention the budget.
-- **\`exceeded\` is \`true\`:** Follow the halt/warn logic in \`~/.openclaw/skills/revenium/SKILL.md\` (interactive vs autonomous mode).
+- **File missing:** Proceed with caution (metering cron may not be installed yet).
+- **\`halted\` is \`false\`:** Proceed silently. Do NOT mention guardrails.
+- **\`halted\` is \`true\`:** YOUR ENTIRE RESPONSE MUST BE EXACTLY the HALT CHECK message from \`~/.openclaw/skills/revenium/SKILL.md\` — substitute values from the \`haltedRule\` block in guardrail-status.json. Do NOT continue with any other response.
 
 This applies to ALL operations — chat, tool calls, code, questions, everything. No task is exempt.
 """
@@ -494,7 +478,7 @@ if not injected:
 with open(path, "w") as f:
     f.write(content)
 PYEOF
-  info "Injected budget check into AGENTS.md"
+  info "Injected guardrail check into AGENTS.md"
 fi
 
 # ---------------------------------------------------------------------------
@@ -560,10 +544,10 @@ else
   fail "SKILL.md not found after install"
 fi
 
-if [[ -f "${SKILL_DIR}/scripts/report.sh" ]]; then
-  info "Metering scripts present"
+if [[ -f "${SKILL_DIR}/scripts/guardrail-check.sh" ]]; then
+  info "Guardrail scripts present"
 else
-  warn "Metering scripts missing — cron metering will not work"
+  warn "Guardrail scripts missing — cron enforcement will not work"
 fi
 
 if grep -q "${OPENCLAW_HOME}" "${OPENCLAW_CONFIG}" 2>/dev/null; then
