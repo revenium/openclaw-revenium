@@ -33,7 +33,7 @@ This will:
 3. Mark the skill's scripts as executable
 4. Configure Docker sandbox bind mounts in `~/.openclaw/openclaw.json` — mounts `~/.openclaw` (rw), bin directories containing `revenium` and `jq` (ro) with shared library dirs, and `~/.config/revenium` (ro) so the CLI inside the sandbox reads host credentials live. Also sets `PATH`, `HOME`, `LD_LIBRARY_PATH`, and `SSL_CERT_FILE` in the container environment, and enables `dangerouslyAllowExternalBindSources: true` under `agents.defaults.sandbox.docker` — without that flag, OpenClaw's sandbox validator rejects the `~/.config/revenium` mount as a "credential path."
 5. Enable `autoAllowSkills` in `~/.openclaw/exec-approvals.json` so skill-declared binaries are auto-approved
-6. Seed an initial `budget-status.json` so the agent doesn't error before the cron's first run
+6. Seed an initial `guardrail-status.json` so the agent doesn't error before the cron's first run
 7. Seed an initial `config.json` (prompts interactively for `autonomousMode`) so operators can set the halt-vs-warn behavior up front
 8. Inject a mandatory budget check section into `AGENTS.md` so budget enforcement is always in context
 9. Verify the installation
@@ -94,7 +94,7 @@ Setup is atomic — if any step fails, no partial config is written.
 
 A background cron job runs every minute and:
 
-1. **Checks budget** (`budget-check.sh`) — fetches the current budget alert from Revenium, computes whether spend exceeds the threshold, and writes the result to `budget-status.json`. Runs first so the halt state always refreshes even if reporting fails or hangs downstream.
+1. **Checks budget** (`budget-check.sh`) — fetches the current budget alert from Revenium, computes whether spend exceeds the threshold, and writes the result to `guardrail-status.json`. Runs first so the halt state always refreshes even if reporting fails or hangs downstream.
 2. **Reports usage** (`report.sh`) — reads OpenClaw session JSONL files, extracts token usage for each assistant completion, and ships events to Revenium via `revenium meter completion` with:
    - Model name and provider (derived from the model string)
    - Token counts (input, output, cache read, cache write, total from the API)
@@ -110,7 +110,7 @@ Both scripts are bash 3.x compatible (works on macOS's default bash).
 
 ### Budget Enforcement
 
-Before every turn (completions, tool calls, responses — any action that incurs AI cost), the agent reads the local `budget-status.json` file written by the cron:
+Before every turn (completions, tool calls, responses — any action that incurs AI cost), the agent reads the local `guardrail-status.json` file written by the cron:
 
 - **Within budget** — proceeds silently, no interruption
 - **Budget exceeded (interactive mode)** — warns the user with current spend vs. threshold and asks for permission to continue
@@ -146,7 +146,7 @@ The skill stores its config at `~/.openclaw/skills/revenium/config.json`:
 
 Your API key, Team ID, Tenant ID, and User ID are stored separately by the `revenium` CLI (at `~/.config/revenium/config.yaml`).
 
-The cron writes `~/.openclaw/skills/revenium/budget-status.json` with the latest budget check result — this is what the agent reads to enforce the guard.
+The cron writes `~/.openclaw/skills/revenium/guardrail-status.json` with the latest budget check result — this is what the agent reads to enforce the guard.
 
 ## Uninstalling
 
