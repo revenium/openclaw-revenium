@@ -71,7 +71,7 @@ Plans:
   5. SKILL.md reads `guardrail-status.json` (not `budget-status.json`) and the halt check uses `haltedRule` fields
   6. `BUDGET-GUARD.md` is injected via `bootstrap-extra-files` and references `guardrail-status.json`
 
-**Plans:** 1/5 plans executed
+**Plans:** 3/5 plans executed
 Plans:
 **Wave 1**
 
@@ -79,8 +79,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-02-PLAN.md — Author guardrail-check.sh cron enforcement stage (writes guardrail-status.json)
-- [ ] 03-03-PLAN.md — Author setup-guardrails.sh interactive rule creation
+- [x] 03-02-PLAN.md — Author guardrail-check.sh cron enforcement stage (writes guardrail-status.json)
+- [x] 03-03-PLAN.md — Author setup-guardrails.sh interactive rule creation
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -111,5 +111,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Skill Scaffolding | 1/1 | Complete    | 2026-03-14 |
 | 2. Setup Flow | 1/1 | Complete    | 2026-05-29 |
-| 3. Guardrail Engine | 1/5 | In Progress|  |
+| 3. Guardrail Engine | 3/5 | In Progress|  |
 | 4. Task Metering & Attribution | 0/TBD | Not started | - |
