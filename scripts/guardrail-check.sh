@@ -330,7 +330,7 @@ if halt_transition and halted_rule:
 # Always emitted (defaults to '[]') so bash sed extraction is deterministic.
 print(f"SHADOW_TRANSITIONS={json.dumps(shadow_transitions)}")
 PY
-)
+) || { warn "guardrail status update failed — status file may be stale"; exit 0; }
 
 # Emit KEY=value lines from the heredoc to stdout so the cron caller (and test
 # harness) can observe HALT_TRANSITION, HALTED_RULE_*, etc.
