@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Skill Scaffolding** - Valid SKILL.md that loads in OpenClaw and gates on revenium binary (completed 2026-03-14)
 - [x] **Phase 2: Setup Flow** - Agent-guided first-time config of API key, budget, and anomaly ID persistence (completed 2026-05-29)
-- [ ] **Phase 3: Guardrail Engine** - Replace legacy budget-alert enforcement with guardrails-native rules: common infrastructure, setup-guardrails.sh, guardrail-check.sh, updated SKILL.md and cron pipeline
+- [x] **Phase 3: Guardrail Engine** - Replace legacy budget-alert enforcement with guardrails-native rules: common infrastructure, setup-guardrails.sh, guardrail-check.sh, updated SKILL.md and cron pipeline (completed 2026-05-31)
 - [ ] **Phase 4: Task Metering & Attribution** - Task-type taxonomy, mandatory TASK CLASSIFICATION in SKILL.md, --task-type on every meter completion, and subagent trace correlation via root session ID
 
 ## Phase Details
@@ -71,7 +71,7 @@ Plans:
   5. SKILL.md reads `guardrail-status.json` (not `budget-status.json`) and the halt check uses `haltedRule` fields
   6. `BUDGET-GUARD.md` is injected via `bootstrap-extra-files` and references `guardrail-status.json`
 
-**Plans:** 3/5 plans executed
+**Plans:** 5/5 plans complete
 Plans:
 **Wave 1**
 
@@ -84,8 +84,8 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 03-04-PLAN.md — Wire cron.sh/post-install.sh/clear-halt.sh; delete budget-check.sh
-- [ ] 03-05-PLAN.md — Rewrite SKILL.md + BUDGET-GUARD.md guardrail-native enforcement
+- [x] 03-04-PLAN.md — Wire cron.sh/post-install.sh/clear-halt.sh; delete budget-check.sh
+- [x] 03-05-PLAN.md — Rewrite SKILL.md + BUDGET-GUARD.md guardrail-native enforcement
 
 ### Phase 4: Task Metering & Attribution
 
@@ -111,5 +111,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Skill Scaffolding | 1/1 | Complete    | 2026-03-14 |
 | 2. Setup Flow | 1/1 | Complete    | 2026-05-29 |
-| 3. Guardrail Engine | 3/5 | In Progress|  |
+| 3. Guardrail Engine | 5/5 | Complete   | 2026-05-31 |
 | 4. Task Metering & Attribution | 0/TBD | Not started | - |
