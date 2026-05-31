@@ -488,6 +488,10 @@ for rid in config.get('ruleIds', []):
     print(rid)
 PY
           )
+          # CR-01: clear ruleIds in config.json BEFORE deleting rules so a failed
+          # create_rule does not leave stale IDs; next run re-triggers Setup Flow.
+          write_rule_ids_to_config '[]'
+          info "Cleared ruleIds in config.json for recreate"
           local rid
           while IFS= read -r rid; do
             if [[ -n "${rid}" ]]; then
