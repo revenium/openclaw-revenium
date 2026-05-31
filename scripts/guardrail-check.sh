@@ -211,6 +211,29 @@ any_blocked = any(
 )
 new_halted = autonomous and any_blocked
 
+# warn signal (GUARD-03/04): true only when NOT autonomous AND at least one
+# non-shadow rule is in block state. Independent of halted — a block breach in
+# non-autonomous mode yields halted:false/warned:true; in autonomous mode yields
+# halted:true/warned:false.
+new_warned = (not autonomous) and any_blocked
+
+# warned_rules: all non-shadow blocked rules for consumer (SKILL.md plan 03-07).
+# Uses the same field set as halted_rule so consumers have consistent shape.
+warned_rules = []
+if new_warned:
+    warned_rules = [
+        {
+            'ruleId': r['ruleId'],
+            'name': r['name'],
+            'metricType': r['metricType'],
+            'windowType': r['windowType'],
+            'currentValue': r['currentValue'],
+            'hardLimit': r['hardLimit'],
+        }
+        for r in new_rules
+        if r['state'] == 'block' and not r.get('shadowMode', False)
+    ]
+
 # HALT_TRANSITION detection (D-11): new halt iff new_halted and not prev_halted
 halt_transition = False
 if new_halted and not prev_halted:
@@ -266,6 +289,8 @@ for nr in new_rules:
 # Build output document (Pattern 6 schema)
 data = {
     'halted': new_halted,
+    'warned': new_warned,
+    'warnedRules': warned_rules,
     'autonomousMode': autonomous,
     'lastChecked': now,
     'rules': new_rules,
