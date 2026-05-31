@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: ready_to_plan
-stopped_at: Phase 02 complete (1/1) — ready to discuss Phase 3
-last_updated: 2026-05-29T21:46:20.399Z
-last_activity: 2026-03-27 — Completed quick task 260327-o1o
+stopped_at: Phase 02 complete (1/1) — ready to discuss Phase 3 (Guardrail Engine)
+last_updated: 2026-05-30T00:00:00.000Z
+last_activity: 2026-05-30 — Roadmap updated: Phase 3 replaced with Guardrail Engine + Phase 4 Task Metering & Attribution (guardrails-native revenium API)
 progress:
-  total_phases: 3
-  completed_phases: 1
-  total_plans: 1
+  total_phases: 4
+  completed_phases: 2
+  total_plans: 2
   completed_plans: 2
-  percent: 33
+  percent: 50
 ---
 
 # Project State
@@ -21,11 +21,11 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-13)
 
 **Core value:** Agents never silently blow through token budgets — every operation is budget-checked, and the user always has control over whether to continue past a budget threshold.
-**Current focus:** Phase 3 — operation guard
+**Current focus:** Phase 3 — guardrail engine (port from Hermes: common.sh, setup-guardrails.sh, guardrail-check.sh, SKILL.md rewrite)
 
 ## Current Position
 
-Phase: 3 of 3 (operation guard)
+Phase: 3 of 4 (guardrail engine)
 Plan: Not started
 Status: Ready to plan
 Last activity: 2026-05-29
@@ -78,9 +78,9 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 3]: Revenium API response schema for `alerts budget get --json` must be verified before writing parsing instructions — field names (exceeded, currentValue, threshold) are assumed but unconfirmed
-- [Phase 3]: Optimal mandatory framing for LLM instruction compliance is empirical — adversarial testing required after authoring
-- [Phase 3]: Network failure behavior (fail-open vs. fail-closed) is a product decision not yet made
+- [Phase 3]: OpenClaw's `openclaw hooks install` supports custom hook packs but native `pre_llm_call`/`pre_tool_call` events are unconfirmed — hooks research needed; `bootstrap-extra-files` + GUARDRAIL-GUARD.md is the structural fallback
+- [Phase 3]: `revenium guardrails enforcement-rules get` returns integer ruleIds; `budget-rules list` returns string-hash IDs — name-based join required (confirmed in Hermes guardrail-check.sh)
+- [Phase 4]: OpenClaw subagent session model (parentSessionId field in session JSONL) needs verification before root-session-ID walk can be implemented
 
 ## Session Continuity
 

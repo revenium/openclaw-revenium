@@ -2,7 +2,7 @@
 
 ## Overview
 
-Build a single SKILL.md file that turns every OpenClaw agent on the machine into a budget-aware agent. The work flows in three locked phases: first the skill must load correctly (scaffolding), then the agent must be able to configure its budget (setup flow), then the agent must check that budget before every operation (guard). Each phase is a hard prerequisite for the next — nothing is parallelizable.
+Build the skill suite that turns every OpenClaw agent on the machine into a guardrail-enforced, metered agent. The work flows in four locked phases: first the skill must load correctly (scaffolding), then the agent must be able to configure its budget (setup flow), then the core guardrail engine replaces the legacy budget-alert model with first-class guardrail rules (guardrail engine), and finally task-type metering and subagent trace correlation complete the observability picture. Each phase is a hard prerequisite for the next — nothing is parallelizable.
 
 ## Phases
 
@@ -14,7 +14,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Skill Scaffolding** - Valid SKILL.md that loads in OpenClaw and gates on revenium binary (completed 2026-03-14)
 - [x] **Phase 2: Setup Flow** - Agent-guided first-time config of API key, budget, and anomaly ID persistence (completed 2026-05-29)
-- [ ] **Phase 3: Operation Guard** - Pre-operation budget check with warn-and-ask and configurable behavior
+- [ ] **Phase 3: Guardrail Engine** - Replace legacy budget-alert enforcement with guardrails-native rules: common infrastructure, setup-guardrails.sh, guardrail-check.sh, updated SKILL.md and cron pipeline
+- [ ] **Phase 4: Task Metering & Attribution** - Task-type taxonomy, mandatory TASK CLASSIFICATION in SKILL.md, --task-type on every meter completion, and subagent trace correlation via root session ID
 
 ## Phase Details
 
@@ -47,24 +48,39 @@ Plans:
 Plans:
 - [x] 02-01-PLAN.md — Author Setup and /revenium Command sections with complete agent instructions for configuration, idempotency, and reconfiguration
 
-### Phase 3: Operation Guard
-**Goal**: The agent checks budget status before every operation, routes to warn-and-ask or silent pass-through based on budget state, and respects user-configured grace mode behavior
+### Phase 3: Guardrail Engine
+**Goal**: Replace the legacy budget-alert model with guardrails-native enforcement: `common.sh` shared helpers, `setup-guardrails.sh` interactive rule creation, `guardrail-check.sh` cron stage, updated `cron.sh` pipeline with alertId→ruleIds auto-migration, rewritten SKILL.md enforcement section (guardrail-status.json schema, halt logic, setup flow delegation), and updated `GUARDRAIL-GUARD.md` workspace bootstrap file
 **Depends on**: Phase 2
 **Requirements**: GUARD-01, GUARD-02, GUARD-03, GUARD-04, GUARD-05, GUARD-06
 **Success Criteria** (what must be TRUE):
-  1. Agent runs `revenium alerts budget get <anomaly-id>` before every tool call without user prompting
-  2. When budget is within threshold, agent proceeds to the operation without any interruption
-  3. When budget is exceeded, agent shows current spend vs. threshold (e.g., "$4.80 of $5.00 daily budget used") and asks for permission before continuing
-  4. User can set grace mode to hard-stop, causing the agent to refuse to continue when budget is exceeded
+  1. `setup-guardrails.sh --interactive` creates at least one guardrails budget rule via `revenium guardrails budget-rules create` and writes `ruleIds` array to `config.json`
+  2. `guardrail-check.sh` polls `revenium guardrails enforcement-rules get` and writes `guardrail-status.json` atomically on every cron tick
+  3. When any non-shadow rule is in `block` state and autonomous mode is on, `guardrail-status.json` sets `halted: true` and the agent emits the verbatim halt string
+  4. Legacy `alertId`-only installs auto-migrate to `ruleIds` on the first cron tick via `setup-guardrails.sh --from-alert --auto`
+  5. SKILL.md reads `guardrail-status.json` (not `budget-status.json`) and the halt check uses `haltedRule` fields
+  6. `GUARDRAIL-GUARD.md` is injected via `bootstrap-extra-files` and references `guardrail-status.json`
+**Plans**: TBD
+
+### Phase 4: Task Metering & Attribution
+**Goal**: Every meter completion carries a `--task-type` from the controlled taxonomy; SKILL.md mandates task classification before every substantive turn; subagent spend rolls up under the root session via `AGENT:STARTS_WITH:openclaw-{root_session_id}` naming; setup offers optional per-task-type guardrail rules
+**Depends on**: Phase 3
+**Requirements**: METER-01, METER-02, METER-03, TRACE-01, TRACE-02
+**Success Criteria** (what must be TRUE):
+  1. `task-taxonomy.json` exists at `~/.openclaw/skills/revenium/task-taxonomy.json` with the standard 8-label vocabulary (research, analysis, generation, review, code_review, refactor, planning, debugging)
+  2. SKILL.md contains a mandatory TASK CLASSIFICATION section that fires before every substantive turn and writes a per-session task marker
+  3. `report.sh` reads the task marker and passes `--task-type <label>` on every `revenium meter completion` call (defaulting to `unclassified` when no marker is present)
+  4. `report.sh` resolves the root session ID and passes `--agent "openclaw-{root_session_id}"` so subagent spend aggregates correctly in Revenium
+  5. `setup-guardrails.sh --interactive` offers optional per-task-type budget rules drawn from `task-taxonomy.json`
 **Plans**: TBD
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3
+Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Skill Scaffolding | 1/1 | Complete    | 2026-03-14 |
 | 2. Setup Flow | 1/1 | Complete    | 2026-05-29 |
-| 3. Operation Guard | 0/TBD | Not started | - |
+| 3. Guardrail Engine | 0/TBD | Not started | - |
+| 4. Task Metering & Attribution | 0/TBD | Not started | - |
