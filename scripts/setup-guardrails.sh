@@ -338,10 +338,17 @@ PY
 
 # ---------------------------------------------------------------------------
 # Helper: write_rule_ids_and_config RULE_IDS_JSON AUTONOMOUS
-# Extended write-back that also persists autonomousMode (GUARD-06 / D-06).
-# Preserves alertId and all other fields (D-04).
-# Atomic via temp-then-rename (T-03-10 mitigation).
-# Bash 3.2: all values passed via env; python3 heredoc.
+# Extended write-back that persists ruleIds + autonomousMode (GUARD-06 / D-06).
+#
+# autonomousMode semantics (GUARD-06):
+#   true  — agent hard-stops on halt without asking (autonomous enforcement)
+#   false — agent warns and asks user before continuing (warn-and-ask, default)
+#
+# This is the sole writer for the autonomousMode field. SKILL.md reads this
+# field from config.json to determine halt behavior (D-04, D-18).
+#
+# Preserves alertId and all other fields (D-04, T-03-10 mitigation).
+# Atomic via temp-then-rename; Bash 3.2: all values passed via env.
 # ---------------------------------------------------------------------------
 write_rule_ids_and_config() {
   local rule_ids_json="$1"
