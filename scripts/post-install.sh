@@ -448,7 +448,8 @@ section = """
 BEFORE EVERY RESPONSE, NO EXCEPTIONS — read \`~/.openclaw/skills/revenium/guardrail-status.json\`.
 
 - **File missing:** Proceed with caution (metering cron may not be installed yet).
-- **\`halted\` is \`false\`:** Proceed silently. Do NOT mention guardrails.
+- **\`halted\` is \`false\` AND \`warned\` is \`false\`:** Proceed silently. Do NOT mention guardrails.
+- **\`halted\` is \`false\` AND \`warned\` is \`true\`:** Execute the warn-and-ask flow from the "Guardrail Check Procedure" section of \`~/.openclaw/skills/revenium/SKILL.md\` — read \`warnedRules\` from guardrail-status.json, surface one "Budget warning — rule '[name]' ([metricType], [windowType]) at [currentValue] of [hardLimit] hard-limit." line per rule, then ask the user "Do you want me to proceed anyway, or stop?" and WAIT for the answer. Do NOT make any tool calls until the user grants permission.
 - **\`halted\` is \`true\`:** YOUR ENTIRE RESPONSE MUST BE EXACTLY the HALT CHECK message from \`~/.openclaw/skills/revenium/SKILL.md\` — substitute values from the \`haltedRule\` block in guardrail-status.json. Do NOT continue with any other response.
 
 This applies to ALL operations — chat, tool calls, code, questions, everything. No task is exempt.
