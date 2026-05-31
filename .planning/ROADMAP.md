@@ -71,7 +71,7 @@ Plans:
   5. SKILL.md reads `guardrail-status.json` (not `budget-status.json`) and the halt check uses `haltedRule` fields
   6. `BUDGET-GUARD.md` is injected via `bootstrap-extra-files` and references `guardrail-status.json`
 
-**Plans:** 8 plans (7 complete, 1 pending gap closure)
+**Plans:** 8/8 plans complete
 Plans:
 **Wave 1**
 
@@ -91,7 +91,7 @@ Plans:
 
 - [x] 03-06-PLAN.md — guardrail-check.sh: emit warned/warnedRules signal (GUARD-03/04 producer) + CR-02 fail-open guard
 - [x] 03-07-PLAN.md — SKILL.md warn-and-ask branch (GUARD-03/04 consumer) + setup-guardrails.sh clear ruleIds on recreate (CR-01)
-- [ ] 03-08-PLAN.md — Per-turn warn wiring: post-install.sh AGENTS.md injection + BUDGET-GUARD.md learn warned:true → warn-and-ask (GUARD-03/04 always-on surface); README budget-status.json doc drift fix
+- [x] 03-08-PLAN.md — Per-turn warn wiring: post-install.sh AGENTS.md injection + BUDGET-GUARD.md learn warned:true → warn-and-ask (GUARD-03/04 always-on surface); README budget-status.json doc drift fix
 
 ### Phase 4: Task Metering & Attribution
 
@@ -117,5 +117,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Skill Scaffolding | 1/1 | Complete    | 2026-03-14 |
 | 2. Setup Flow | 1/1 | Complete    | 2026-05-29 |
-| 3. Guardrail Engine | 7/7 | Complete   | 2026-05-31 |
+| 3. Guardrail Engine | 8/8 | Complete   | 2026-05-31 |
 | 4. Task Metering & Attribution | 0/TBD | Not started | - |
