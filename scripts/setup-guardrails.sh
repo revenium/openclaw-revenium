@@ -1,0 +1,612 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# setup-guardrails.sh — interactive rule-creation entry point for the Phase 3
+# guardrails-native budget enforcement. Two modes per D-02:
+#   default     : --hard-limit N --period P [--shadow-mode] from CLI args.
+#   --interactive: operator prompts; called by SKILL.md Setup Flow (D-18).
+# Legacy migration mode is intentionally absent (D-02/D-03 decision).
+# Idempotent via ruleIds-presence pre-check; flock-guarded via RULES_LOCK_FILE.
+# --shadow-mode propagates to create_rule (D-08).
+# Bash 3.2 compatible (macOS default) — uses env-passing heredoc pattern for
+# ALL python3 calls; no associative arrays, no lowercase expansion, no heredoc
+# strings inside subshells (Pitfall 5).
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/common.sh"
+
+ensure_path
+
+# ---------------------------------------------------------------------------
+# Usage
+# ---------------------------------------------------------------------------
+usage() {
+  cat <<'USAGE'
+setup-guardrails.sh — create Revenium guardrails budget rules for OpenClaw
+
+MODES:
+  Default mode (all args from CLI flags):
+    setup-guardrails.sh --hard-limit 100 --period MONTHLY [--shadow-mode]
+
+  Interactive mode (operator prompts; used by SKILL.md Setup Flow):
+    setup-guardrails.sh --interactive [--shadow-mode]
+
+OPTIONS:
+  --hard-limit <N>    Budget hard limit (numeric, e.g. 50.00). Required in default mode.
+  --period <P>        Budget period: DAILY | WEEKLY | MONTHLY | QUARTERLY. Required in default mode.
+  --shadow-mode       Created rule runs in shadow mode (observe only, no blocking). D-08.
+  --interactive       Collect all args from operator prompts.
+  --help              Show this usage block and exit.
+
+DEFAULT FILTER SCOPING:
+  Created rules default-scope to --filter AGENT:IS:${REVENIUM_AGENT_NAME:-OpenClaw}
+  so the rule evaluates against meter completions shipped by this skill.
+
+EXAMPLES:
+  # Fresh install — interactive mode:
+  setup-guardrails.sh --interactive
+
+  # Default mode — MONTHLY hard limit:
+  setup-guardrails.sh --hard-limit 100 --period MONTHLY
+
+  # Shadow mode — observe only:
+  setup-guardrails.sh --interactive --shadow-mode
+USAGE
+}
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+MODE="default"
+HARD_LIMIT=""
+PERIOD=""
+SHADOW_MODE="false"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --interactive)
+      MODE="interactive"
+      shift
+      ;;
+    --hard-limit)
+      HARD_LIMIT="${2:-}"
+      if [[ -z "${HARD_LIMIT}" ]]; then
+        error "--hard-limit requires a value"; exit 2
+      fi
+      shift 2
+      ;;
+    --period)
+      PERIOD="${2:-}"
+      if [[ -z "${PERIOD}" ]]; then
+        error "--period requires a value"; exit 2
+      fi
+      shift 2
+      ;;
+    --shadow-mode)
+      SHADOW_MODE="true"
+      shift
+      ;;
+    --help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "unknown flag: $1"
+      exit 2
+      ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# Mode resolution validation
+# ---------------------------------------------------------------------------
+if [[ "${MODE}" == "default" ]]; then
+  if [[ -z "${HARD_LIMIT}" || -z "${PERIOD}" ]]; then
+    error "default mode requires --hard-limit and --period"
+    exit 2
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Capability precheck (fail-open)
+# ---------------------------------------------------------------------------
+if ! has_guardrails_cli; then
+  echo "The revenium CLI does not support guardrails budget-rules commands."
+  echo "Upgrade with: brew upgrade revenium/tap/revenium"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Helper: read_config_field KEY
+# Reads a field from CONFIG_FILE; prints 'nonempty' for non-empty arrays,
+# 'true'/'false' for booleans, and the value string for scalars.
+# Bash 3.2: uses env-passing heredoc pattern (not herestrings).
+# ---------------------------------------------------------------------------
+read_config_field() {
+  CONFIG_FILE="${CONFIG_FILE}" KEY="$1" python3 - <<'PY'
+import json, os
+try:
+    val = json.load(open(os.environ['CONFIG_FILE'])).get(os.environ['KEY'], '')
+except Exception:
+    val = ''
+if isinstance(val, list):
+    print('nonempty' if val else '')
+elif isinstance(val, bool):
+    print('true' if val else 'false')
+else:
+    print(val if val is not None else '')
+PY
+}
+
+# ---------------------------------------------------------------------------
+# Helpers: input validation
+# ---------------------------------------------------------------------------
+validate_hard_limit() {
+  [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]]
+}
+
+validate_period() {
+  case "$1" in DAILY|WEEKLY|MONTHLY|QUARTERLY) return 0 ;; *) return 1 ;; esac
+}
+
+# ---------------------------------------------------------------------------
+# Config.json existence check
+# Interactive / default modes self-bootstrap: create STATE_DIR + seed an
+# empty config.json so the operator can run on a fresh host without
+# manually preparing state first.
+# ---------------------------------------------------------------------------
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+  info "no config.json at ${CONFIG_FILE} — bootstrapping fresh state"
+  mkdir -p "${STATE_DIR}" || { error "could not create ${STATE_DIR}"; exit 1; }
+  printf '{}\n' > "${CONFIG_FILE}" || { error "could not seed ${CONFIG_FILE}"; exit 1; }
+fi
+
+# ---------------------------------------------------------------------------
+# Pre-check: ruleIds presence (idempotency)
+# ---------------------------------------------------------------------------
+RULE_IDS=$(read_config_field ruleIds)
+
+if [[ "${MODE}" == "default" ]]; then
+  if [[ "${RULE_IDS}" == "nonempty" ]]; then
+    error "ruleIds already populated; refusing to create duplicate. Use --interactive to update/recreate."
+    exit 1
+  fi
+fi
+# For interactive mode, re-run gate is handled in run_interactive() after flock acquisition.
+
+# ---------------------------------------------------------------------------
+# Acquire RULES_LOCK_FILE flock (guards pre-check-and-create window).
+# Python fcntl.flock LOCK_EX|LOCK_NB; warns + exits 0 on contention.
+# Bash 3.2: uses env-passing heredoc pattern.
+# ---------------------------------------------------------------------------
+exec 9>"${RULES_LOCK_FILE}"
+if ! python3 - <<'PY'
+import fcntl, sys
+try:
+    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except (OSError, BlockingIOError):
+    sys.exit(11)
+PY
+then
+  warn "rules.lock held by concurrent setup-guardrails — skipping this run"
+  exit 0
+fi
+
+# Re-check ruleIds after flock (TOCTOU defense)
+RULE_IDS=$(read_config_field ruleIds)
+if [[ "${RULE_IDS}" == "nonempty" ]]; then
+  info "ruleIds populated by concurrent process — exiting cleanly"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Helper: compute_warn_threshold HARD_LIMIT
+# Returns 80% of the hard limit via python3 float math, trailing zeros stripped.
+# Bash 3.2: uses env-passing heredoc pattern.
+# ---------------------------------------------------------------------------
+compute_warn_threshold() {
+  local hard_limit="$1"
+  HARD_LIMIT_ENV="${hard_limit}" python3 - <<'PY'
+import os
+hard = float(os.environ['HARD_LIMIT_ENV'])
+warn = hard * 0.8
+result = f"{warn:.2f}".rstrip('0').rstrip('.')
+print(result if result else '0')
+PY
+}
+
+# ---------------------------------------------------------------------------
+# Helper: period_titled PERIOD
+# Title-cases the period string: MONTHLY -> Monthly, etc.
+# ---------------------------------------------------------------------------
+period_titled() {
+  local period="$1"
+  case "${period}" in
+    DAILY)     echo "Daily" ;;
+    WEEKLY)    echo "Weekly" ;;
+    MONTHLY)   echo "Monthly" ;;
+    QUARTERLY) echo "Quarterly" ;;
+    *)         echo "${period}" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Helper: create_rule RULE_NAME HARD_LIMIT WARN_THRESHOLD PERIOD
+# Single call site for rule creation (single base rule per D-02/D-03).
+# Sets RULE_ID and RULE_EXIT globals on return.
+# Appends --shadow-mode when SHADOW_MODE="true" (D-08).
+# Filter defaults to AGENT:IS:${REVENIUM_AGENT_NAME} (D-23).
+# Bash 3.2: RULE_JSON passed via env to python3 heredoc.
+# ---------------------------------------------------------------------------
+RULE_EXIT=0
+RULE_ID=""
+
+create_rule() {
+  local rule_name="$1"
+  local hard_limit="$2"
+  local warn_threshold="$3"
+  local period="$4"
+
+  local rule_json
+  # T-03-09 mitigation: validate_hard_limit and validate_period enforce input
+  # allowlists before values reach the CLI (ASVS V5 input validation). Both
+  # validators run before create_rule is ever called.
+
+  if [[ "${SHADOW_MODE}" == "true" ]]; then
+    rule_json=$(revenium guardrails budget-rules create \
+      --output json \
+      --name "${rule_name}" \
+      --description "" \
+      --metric-type TOTAL_COST \
+      --window-type "${period}" \
+      --action BLOCK \
+      --group-by AGENT \
+      --warn-threshold "${warn_threshold}" \
+      --hard-limit "${hard_limit}" \
+      --filter "AGENT:IS:${REVENIUM_AGENT_NAME}" \
+      --shadow-mode \
+      2>&1) && RULE_EXIT=0 || RULE_EXIT=$?
+  else
+    rule_json=$(revenium guardrails budget-rules create \
+      --output json \
+      --name "${rule_name}" \
+      --description "" \
+      --metric-type TOTAL_COST \
+      --window-type "${period}" \
+      --action BLOCK \
+      --group-by AGENT \
+      --warn-threshold "${warn_threshold}" \
+      --hard-limit "${hard_limit}" \
+      --filter "AGENT:IS:${REVENIUM_AGENT_NAME}" \
+      2>&1) && RULE_EXIT=0 || RULE_EXIT=$?
+  fi
+
+  if [[ "${RULE_EXIT}" -ne 0 ]]; then
+    local truncated_err="${rule_json:0:200}"
+    error "rule creation failed (exit ${RULE_EXIT}): ${truncated_err}"
+    RULE_ID=""
+    return
+  fi
+
+  RULE_ID=$(RULE_JSON="${rule_json}" python3 - <<'PY'
+import json, os, sys
+try:
+    d = json.loads(os.environ['RULE_JSON'])
+    print(d['id'])
+except Exception:
+    pass
+PY
+  )
+
+  info "Created rule ${RULE_ID} for ${rule_name} (warn=${warn_threshold} hard=${hard_limit} period=${period})"
+}
+
+# ---------------------------------------------------------------------------
+# Helper: write_rule_ids_to_config RULE_IDS_JSON
+# Atomic write via temp-then-rename (T-03-10 mitigation, D-14).
+# Preserves alertId and all other existing config fields (D-04).
+# Bash 3.2: all values passed via env; python3 heredoc.
+# ---------------------------------------------------------------------------
+write_rule_ids_to_config() {
+  local rule_ids_json="$1"
+  CONFIG_FILE="${CONFIG_FILE}" NEW_RULE_IDS_JSON="${rule_ids_json}" python3 - <<'PY'
+import json, os, tempfile
+from pathlib import Path
+
+config_path = Path(os.environ['CONFIG_FILE'])
+new_rule_ids = json.loads(os.environ['NEW_RULE_IDS_JSON'])
+
+try:
+    config = json.loads(config_path.read_text())
+except Exception:
+    config = {}
+
+config['ruleIds'] = new_rule_ids
+# D-04: leave legacy alertId as an orphan — never remove it from config.json.
+
+tmp_dir = config_path.parent
+with tempfile.NamedTemporaryFile('w', dir=str(tmp_dir), delete=False, suffix='.tmp') as tmp:
+    json.dump(config, tmp, indent=2)
+    tmp.write('\n')
+    tmp.flush()
+    os.fsync(tmp.fileno())
+    tmp_name = tmp.name
+
+os.rename(tmp_name, str(config_path))
+PY
+}
+
+# ---------------------------------------------------------------------------
+# Helper: write_rule_ids_and_config RULE_IDS_JSON AUTONOMOUS
+# Extended write-back that also persists autonomousMode (GUARD-06 / D-06).
+# Preserves alertId and all other fields (D-04).
+# Atomic via temp-then-rename (T-03-10 mitigation).
+# Bash 3.2: all values passed via env; python3 heredoc.
+# ---------------------------------------------------------------------------
+write_rule_ids_and_config() {
+  local rule_ids_json="$1"
+  local autonomous="${2:-}"
+  CONFIG_FILE="${CONFIG_FILE}" \
+  NEW_RULE_IDS_JSON="${rule_ids_json}" \
+  AUTONOMOUS="${autonomous}" \
+  python3 - <<'PY'
+import json, os, tempfile
+from pathlib import Path
+
+config_path = Path(os.environ['CONFIG_FILE'])
+new_rule_ids = json.loads(os.environ['NEW_RULE_IDS_JSON'])
+autonomous = os.environ.get('AUTONOMOUS', '')
+
+try:
+    config = json.loads(config_path.read_text())
+except Exception:
+    config = {}
+
+config['ruleIds'] = new_rule_ids
+
+if autonomous in ('true', 'false'):
+    config['autonomousMode'] = (autonomous == 'true')
+# D-04: leave legacy alertId as an orphan — never remove it from config.json.
+
+tmp_dir = config_path.parent
+with tempfile.NamedTemporaryFile('w', dir=str(tmp_dir), delete=False, suffix='.tmp') as tmp:
+    json.dump(config, tmp, indent=2)
+    tmp.write('\n')
+    tmp.flush()
+    os.fsync(tmp.fileno())
+    tmp_name = tmp.name
+
+os.rename(tmp_name, str(config_path))
+PY
+}
+
+# ---------------------------------------------------------------------------
+# Mode A: run_default — all args from CLI flags
+# ---------------------------------------------------------------------------
+run_default() {
+  # Validate args (mode resolution already confirmed they're present)
+  if ! validate_hard_limit "${HARD_LIMIT}"; then
+    error "--hard-limit '${HARD_LIMIT}' must be a positive number"
+    exit 2
+  fi
+  if ! validate_period "${PERIOD}"; then
+    error "--period '${PERIOD}' must be DAILY, WEEKLY, MONTHLY, or QUARTERLY"
+    exit 2
+  fi
+
+  local warn_threshold
+  warn_threshold=$(compute_warn_threshold "${HARD_LIMIT}")
+
+  local period_title
+  period_title=$(period_titled "${PERIOD}")
+  local rule_name="OpenClaw ${period_title} Budget"
+
+  create_rule "${rule_name}" "${HARD_LIMIT}" "${warn_threshold}" "${PERIOD}"
+
+  if [[ "${RULE_EXIT}" -ne 0 || -z "${RULE_ID}" ]]; then
+    exit 1
+  fi
+
+  local new_rule_ids_json="[\"${RULE_ID}\"]"
+  write_rule_ids_to_config "${new_rule_ids_json}"
+
+  info "config.json now contains ruleIds=[${RULE_ID}]"
+  echo "Created 1 rule(s). config.json updated. ruleIds=${new_rule_ids_json}"
+}
+
+# ---------------------------------------------------------------------------
+# Mode B: run_interactive — operator prompts (D-18)
+# Prompts for: hard limit, period, autonomous (grace) mode (GUARD-06/D-06),
+# shadow mode (D-08). Writes ruleIds + autonomousMode to config.json.
+# ---------------------------------------------------------------------------
+run_interactive() {
+  echo ""
+  echo "Setting up Revenium guardrails budget rules for OpenClaw..."
+  echo ""
+
+  # Re-run gate: if ruleIds already populated, offer [r]ecreate / [c]ancel
+  if [[ "${RULE_IDS}" == "nonempty" ]]; then
+    echo "Existing budget rules found:"
+
+    # List current rules from Revenium and display them
+    local rules_json
+    rules_json=$(revenium guardrails budget-rules list --output json 2>/dev/null) || rules_json="[]"
+
+    # Read current ruleIds from config.json and display matching rules
+    CONFIG_FILE="${CONFIG_FILE}" RULES_JSON="${rules_json}" python3 - <<'PY'
+import json, os
+try:
+    config = json.loads(open(os.environ['CONFIG_FILE']).read())
+except Exception:
+    config = {}
+rule_ids = config.get('ruleIds', [])
+try:
+    rules = json.loads(os.environ['RULES_JSON'])
+except Exception:
+    rules = []
+rules_by_id = {r['id']: r for r in rules}
+for rid in rule_ids:
+    r = rules_by_id.get(rid)
+    if r:
+        # T-03-09: truncate name to 64 chars for display (log injection mitigation)
+        name = (r.get('name') or '')[:64]
+        print("  {}  {}  hard={}  warn={}  window={}".format(
+            rid, name,
+            r.get('hardLimit', '?'),
+            r.get('warnThreshold', '?'),
+            r.get('windowType', '?')
+        ))
+    else:
+        print("  {}  (not found in Revenium)".format(rid))
+PY
+
+    echo ""
+    echo "Note: hard-limit cannot be updated in place; choose [r] to delete and recreate."
+
+    local rerun_action=""
+    local attempt=0
+    while [[ ${attempt} -lt 3 ]]; do
+      read -r -p "Action? [r]ecreate / [c]ancel: " rerun_action
+      case "${rerun_action}" in
+        r|recreate)
+          # Delete all existing rules then fall through to fresh-install path
+          local cur_rule_ids_raw
+          cur_rule_ids_raw=$(CONFIG_FILE="${CONFIG_FILE}" python3 - <<'PY'
+import json, os
+try:
+    config = json.loads(open(os.environ['CONFIG_FILE']).read())
+except Exception:
+    config = {}
+for rid in config.get('ruleIds', []):
+    print(rid)
+PY
+          )
+          local rid
+          while IFS= read -r rid; do
+            if [[ -n "${rid}" ]]; then
+              revenium guardrails budget-rules delete "${rid}" --yes >/dev/null 2>&1 || true
+              info "Deleted existing rule ${rid}"
+            fi
+          done <<EOF
+${cur_rule_ids_raw}
+EOF
+          RULE_IDS=""
+          break
+          ;;
+        c|cancel|"")
+          echo "Cancelled."
+          exit 0
+          ;;
+        *)
+          echo "Invalid choice. Please enter r or c."
+          attempt=$((attempt + 1))
+          ;;
+      esac
+    done
+
+    if [[ ${attempt} -ge 3 ]]; then
+      error "Too many invalid responses."
+      exit 1
+    fi
+  fi
+
+  # --------------------------------------------------------------------------
+  # Operator prompts — fresh-install path
+  # --------------------------------------------------------------------------
+  local hard_limit="" period="" autonomous="" shadow_response=""
+
+  # Prompt for hard limit
+  local hl_attempt=0
+  while [[ ${hl_attempt} -lt 3 ]]; do
+    read -r -p "Budget hard limit (numeric, e.g. 50.00): " hard_limit
+    if validate_hard_limit "${hard_limit}"; then
+      break
+    fi
+    echo "Invalid input. Must be a positive number (e.g. 50 or 100.00)."
+    hl_attempt=$((hl_attempt + 1))
+  done
+  if ! validate_hard_limit "${hard_limit}"; then
+    error "Too many invalid inputs for hard-limit."
+    exit 1
+  fi
+
+  # Prompt for period
+  local period_attempt=0
+  while [[ ${period_attempt} -lt 3 ]]; do
+    read -r -p "Budget period (DAILY/WEEKLY/MONTHLY/QUARTERLY): " period
+    if validate_period "${period}"; then
+      break
+    fi
+    echo "Invalid period. Must be DAILY, WEEKLY, MONTHLY, or QUARTERLY."
+    period_attempt=$((period_attempt + 1))
+  done
+  if ! validate_period "${period}"; then
+    error "Too many invalid inputs for period."
+    exit 1
+  fi
+
+  # Prompt for autonomous mode (GUARD-06 / D-06):
+  # autonomous=true  → hard-stop on halt (autonomous mode; no warn-and-ask)
+  # autonomous=false → warn-and-ask (default; user retains control)
+  local auto_response=""
+  read -r -p "Enable autonomous mode (hard-stop when budget is exceeded, no warn-and-ask)? (yes/no, default no): " auto_response || auto_response=""
+  case "${auto_response}" in
+    yes|y|YES|Y)
+      autonomous="true"
+      ;;
+    *)
+      autonomous="false"
+      ;;
+  esac
+
+  # Prompt for shadow mode (D-08): observe-only rules, no blocking.
+  # Added AFTER autonomous/notify prompts and BEFORE create_rule per plan spec.
+  read -r -p "Run in shadow mode (observe-only rules, no blocking)? (yes/no, default no): " shadow_response || shadow_response=""
+  case "${shadow_response}" in
+    yes|y|YES|Y)
+      SHADOW_MODE="true"
+      ;;
+    *)
+      SHADOW_MODE="false"
+      ;;
+  esac
+
+  local warn_threshold
+  warn_threshold=$(compute_warn_threshold "${hard_limit}")
+
+  local period_title
+  period_title=$(period_titled "${period}")
+  local rule_name="OpenClaw ${period_title} Budget"
+
+  # Create the single base budget rule
+  create_rule "${rule_name}" "${hard_limit}" "${warn_threshold}" "${period}"
+
+  if [[ "${RULE_EXIT}" -ne 0 || -z "${RULE_ID}" ]]; then
+    error "Failed to create base budget rule."
+    exit 1
+  fi
+
+  local base_rule_id="${RULE_ID}"
+
+  # Build JSON array from single rule ID
+  local new_rule_ids_json="[\"${base_rule_id}\"]"
+
+  write_rule_ids_and_config "${new_rule_ids_json}" "${autonomous}"
+
+  local rule_count
+  rule_count=$(NEW_RULE_IDS_JSON="${new_rule_ids_json}" python3 - <<'PY'
+import json, os
+print(len(json.loads(os.environ['NEW_RULE_IDS_JSON'])))
+PY
+  )
+  echo "Created ${rule_count} rule(s). config.json updated. ruleIds=${new_rule_ids_json}"
+}
+
+# ---------------------------------------------------------------------------
+# Top-level mode dispatch (D-02: default | interactive only; no migration mode)
+# ---------------------------------------------------------------------------
+case "${MODE}" in
+  interactive) run_interactive ;;
+  default)     run_default ;;
+  *)           error "unknown mode ${MODE}"; exit 2 ;;
+esac
