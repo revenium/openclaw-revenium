@@ -39,13 +39,21 @@ The guardrail status is maintained by a background cron job that checks Revenium
 
 1. **Read guardrail status.** Read `~/.openclaw/skills/revenium/guardrail-status.json`. If it does not exist, tell the user "Guardrail status not yet available. The metering cron may not be installed. Run `bash ~/.openclaw/skills/revenium/scripts/install-cron.sh` to set it up." Then proceed with the operation.
 
-2. **Parse the status.** Extract `halted` from the JSON.
+2. **Parse the status.** Extract `halted`, `warned`, and (when `warned` is true) `warnedRules` from the JSON.
 
 3. **Evaluate:**
 
    **If `halted` is `true`:** Follow the HALT CHECK above — output ONLY the halt message using `haltedRule` fields, and stop.
 
-   **If `halted` is `false`:** Proceed silently. Do NOT mention the guardrail status to the user.
+   **Else if `warned` is `true`:** BEFORE doing any other work this turn, execute the warn-and-ask branch:
+
+   - Read the `warnedRules` array from `~/.openclaw/skills/revenium/guardrail-status.json`.
+   - For each entry in `warnedRules`, surface a spend-context warning line: "Budget warning — rule '[name]' ([metricType], [windowType]) at [currentValue] of [hardLimit] hard-limit."
+   - Then ask the user for permission to continue: "This rule's hard limit has been reached and you are in warn-and-ask mode (autonomous mode disabled). Do you want me to proceed anyway, or stop?"
+   - WAIT for the user's answer. Do NOT perform the requested operation or any tool calls until the user grants permission.
+   - If the user declines, stop without performing the operation. If the user grants permission, proceed with the operation for this turn.
+
+   **Else (both `halted` and `warned` are `false`):** Proceed silently. Do NOT mention the guardrail status to the user.
 
 ### If guardrail-status.json is missing or unreadable
 
