@@ -670,22 +670,25 @@ npm install -g openclaw@latest
 | Notification message injection via rule name | Tampering | Rule name is embedded in notification MSG string. Since name comes from Revenium API (not user input to this script), risk is low. Use f-string construction (not shell expansion) for MSG in Python, or quote carefully in bash. |
 | Partial config.json reads during atomic write | Tampering | Atomic write pattern (Pattern 4 above) prevents this. Never write config.json without temp-file-then-rename. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **openclaw message send flag stability post-2026.5.28 upgrade**
    - What we know: 2026.3.13 has `--channel`, `--target`, `-m` flags
    - What's unclear: whether 2026.5.28 changed any flag names (the app and CLI are versioned together)
    - Recommendation: First task in Wave 1 must be the upgrade and re-verification before any script is authored
+   - **RESOLVED:** Delegated to Plan 01 Task 1 (blocking `checkpoint:human-verify` gate). Executor must confirm flag names post-upgrade before any script is authored.
 
 2. **revenium config show teamId parsing**
    - What we know: Hermes guardrail-check.sh parses `TEAM_ID` via `revenium config show 2>&1 | sed -n 's/.*Team ID:[ \t]*//p'`
    - What's unclear: whether revenium 1.1.2 `config show` output format matches this sed expression
    - Recommendation: Run `revenium config show` on the live machine post-upgrade and confirm the "Team ID:" label is present
+   - **RESOLVED:** Delegated to Plan 01 Task 1 checkpoint. Executor verifies `revenium config show` output format at execution time.
 
 3. **SKILL.md Setup Flow interaction model for Phase 3**
    - What we know: D-18 says SKILL.md delegates entirely to `setup-guardrails.sh --interactive`; the script owns all prompts and the config.json write
    - What's unclear: Whether the existing SKILL.md setup flow sections (steps 1-14) are fully replaced, or only the budget-creation steps (steps 3-13) are replaced
    - Recommendation: The Hermes SKILL.md Setup Flow section (3 steps: verify CLI, configure credentials if needed, run setup-guardrails.sh --interactive) is the target. The full OpenClaw Setup Flow from Phase 2 (14 steps) collapses to 3 equivalent steps in Phase 3.
+   - **RESOLVED:** Full Phase 2 Setup Flow (14 steps) collapses to 3 steps per the Hermes model. Plan 05 Task 1 implements this directly.
 
 ## Assumptions Log
 
