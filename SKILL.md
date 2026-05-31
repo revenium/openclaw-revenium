@@ -1,97 +1,81 @@
 ---
 name: revenium
-description: "MANDATORY budget check BEFORE EVERY OPERATION — read budget-status.json first, always, no exceptions. Enforces token spend limits, warns on threshold exceedance, halts autonomous agents on budget overrun."
-metadata: {"openclaw":{"emoji":"💰","version":"0.1.0","homepage":"https://docs.revenium.io/for-ai-agents","requires":{"bins":["revenium"],"anyBins":["jq"]},"user-invocable":true,"install":[{"kind":"brew","formula":"revenium/tap/revenium","bins":["revenium"]},{"kind":"brew","formula":"jq","bins":["jq"]}]}}
+description: "MANDATORY guardrail check BEFORE EVERY OPERATION — read guardrail-status.json first, always, no exceptions. Enforces Revenium guardrails-native budget rules, warns on threshold exceedance, halts autonomous agents on guardrail block, and meters usage into Revenium."
+metadata: {"openclaw":{"emoji":"💰","version":"0.2.0","homepage":"https://docs.revenium.io/for-ai-agents","requires":{"bins":["revenium"],"anyBins":["openclaw"]},"user-invocable":true,"install":[{"kind":"brew","formula":"revenium/tap/revenium","bins":["revenium"]},{"kind":"npm","package":"openclaw","bins":["openclaw"]}]}}
 ---
 
 ## ABSOLUTE FIRST — HALT CHECK (NON-NEGOTIABLE)
 
+OpenClaw hooks for structural enforcement (pre-turn / pre-tool-call injection) are not yet confirmed. This HALT CHECK section is therefore the **primary enforcement gate**, not a backstop — treat it as mandatory, not optional. Execute it on every turn without exception.
+
 Before you read ANY other part of this file, before you write ANY response, before you make ANY tool call:
 
-1. Read `~/.openclaw/skills/revenium/budget-status.json`
+1. Read `~/.openclaw/skills/revenium/guardrail-status.json`
 2. Check the `halted` field
+3. If `halted` is `true`, read the `haltedRule` block
 
 **If `halted` is `true`:**
 
-YOUR ENTIRE RESPONSE MUST BE EXACTLY THIS AND NOTHING ELSE:
+YOUR ENTIRE RESPONSE MUST BE EXACTLY THIS AND NOTHING ELSE (substitute values from `guardrail-status.json::haltedRule`):
 
-> Budget enforcement halt is active. $[currentValue] of $[threshold] used ([percentUsed]%). To resume: `bash ~/.openclaw/skills/revenium/scripts/clear-halt.sh`
+> Guardrail halt active — rule '[haltedRule.name]' ([haltedRule.metricType], [haltedRule.windowType]) at [haltedRule.currentValue] of [haltedRule.hardLimit] hard-limit. To resume: `bash ~/.openclaw/skills/revenium/scripts/clear-halt.sh`
 
 - Do NOT make any tool calls
 - Do NOT fetch any data
 - Do NOT append any content
 - Do NOT continue reading this skill file
 - Do NOT answer the user's question
-- ONLY output the halt message above
+- ONLY output the halt message above with actual `haltedRule` field values substituted
 
-**If `halted` is `false`, proceed to the Budget Check Procedure below.**
+**If `halted` is `false`, proceed to the Guardrail Check Procedure below.**
 
 This is not optional. This is not guidance. If you output ANYTHING other than the halt message when `halted: true`, you are violating this skill's requirements.
 
-## Budget Check Procedure
+## Guardrail Check Procedure
 
-**MANDATORY — execute before EVERY response, EVERY tool call, EVERY operation.** This applies to ALL tasks — not just Revenium-related ones. Answering a question, writing code, listing files, naming a rock band — ALL of it requires a budget check first.
+**MANDATORY — execute before EVERY response, EVERY tool call, EVERY operation.** This applies to ALL tasks — not just Revenium-related ones.
 
-The budget status is maintained by a background cron job that checks Revenium every minute and writes the result to `~/.openclaw/skills/revenium/budget-status.json`. You read this local file — do NOT call the Revenium API directly.
+The guardrail status is maintained by a background cron job that checks Revenium every minute and writes the result to `~/.openclaw/skills/revenium/guardrail-status.json`. You read this local file — do NOT call the Revenium API directly.
 
-1. **Read budget status.** Read the file `~/.openclaw/skills/revenium/budget-status.json`. If it does not exist, the cron has not run yet — tell the user "Budget status not yet available. The metering cron may not be installed. Run `bash ~/.openclaw/skills/revenium/scripts/install-cron.sh` to set it up." Then proceed with the operation.
+1. **Read guardrail status.** Read `~/.openclaw/skills/revenium/guardrail-status.json`. If it does not exist, tell the user "Guardrail status not yet available. The metering cron may not be installed. Run `bash ~/.openclaw/skills/revenium/scripts/install-cron.sh` to set it up." Then proceed with the operation.
 
-2. **Parse the status.** Extract these fields from the JSON:
-   - `currentValue` — current spend in the budget period
-   - `threshold` — the budget limit
-   - `percentUsed` — percentage of budget consumed
-   - `exceeded` — boolean, whether the budget has been exceeded
-   - `halted` — boolean, whether the agent has been halted by budget enforcement
-   - `lastChecked` — when the cron last updated this file
+2. **Parse the status.** Extract `halted` from the JSON.
 
-3. **Evaluate the result:**
+3. **Evaluate:**
 
-   **If `halted` is true:** Follow the HALT CHECK instructions above — output ONLY the halt message and stop.
+   **If `halted` is `true`:** Follow the HALT CHECK above — output ONLY the halt message using `haltedRule` fields, and stop.
 
-   **If `exceeded` is false (budget OK):** Proceed silently. Do NOT mention the budget to the user.
+   **If `halted` is `false`:** Proceed silently. Do NOT mention the guardrail status to the user.
 
-   **If `exceeded` is true (budget blown):** Read `autonomousMode` from `~/.openclaw/skills/revenium/config.json`.
+### If guardrail-status.json is missing or unreadable
 
-   **If `autonomousMode` is `false` or absent (default — interactive mode):**
-
-   You MUST STOP. Do NOT execute any operation, do NOT generate a response. Tell the user:
-
-   > "Your Revenium budget has been exceeded. You have spent $CURRENT_VALUE of your $THRESHOLD budget (PERCENT_USED%). Last checked: LAST_CHECKED. Would you like to continue anyway?"
-
-   Replace the values with the actual numbers from the file.
-
-   - **If the user says yes / continue / approved:** Proceed with the operation.
-   - **If the user says no / stop / cancel:** STOP. Do NOT execute the operation. Tell the user: "Operation cancelled. Run `/revenium` to adjust your budget."
-
-   **If `autonomousMode` is `true` and `halted` is `false` but `exceeded` is `true`:** The user has explicitly cleared the halt — this is an approval to proceed. Continue with the operation.
-
-### If budget-status.json is missing or unreadable
-
-- Tell the user: "Budget status unavailable. Proceeding with caution."
+- Tell the user: "Guardrail status unavailable. Proceeding with caution."
 - Proceed with the operation — fail open, do not block the user.
 
 ## Path Resolution
 
-All file paths in this skill use `~/.openclaw/skills/revenium/` as the skill directory. When using file tools (read, write, edit), pass paths with `~/` — the tool resolves `~` to `$HOME` automatically. When running shell commands via exec/bash, use the explicit `$HOME/.openclaw/skills/revenium/` form so the shell expands `$HOME` correctly.
+All file paths in this skill use `~/.openclaw/skills/revenium/` as both the skill directory and the runtime state directory. When using file tools (read, write, edit), pass paths with `~/` — the tool resolves `~` to `$HOME` automatically. When running shell commands via exec/bash, use the explicit `$HOME/.openclaw/skills/revenium/` form so the shell expands `$HOME` correctly.
 
 ## Setup
 
-At the start of any operation, check: does `~/.openclaw/skills/revenium/config.json` exist AND contain a non-empty `alertId` field?
+At the start of any operation, check: does `~/.openclaw/skills/revenium/config.json` exist AND contain a non-empty `ruleIds` array (present and not `[]`)?
 
-- **If YES** and the user has NOT requested reconfiguration: setup is complete. Proceed to the budget check. Do NOT re-run setup.
-- **If NO** (file missing, or file exists but `alertId` is absent/empty — e.g., post-install seeded a partial config with only `autonomousMode` and `_comment`): you MUST run the Setup Flow below before proceeding. Do NOT execute any operations until setup is complete.
+- **If YES** and the user has NOT requested reconfiguration: setup is complete. Proceed to the guardrail check. Do NOT re-run setup.
+- **If NO** (file missing, or `ruleIds` absent, or `ruleIds` is `[]`): you MUST run the Setup Flow below before proceeding. Do NOT execute any operations until setup is complete.
+
+**Note on legacy installs:** `config.json` may carry a legacy `alertId` field from a Phase 2 install. That field is deprecated and ignored for the setup gate — `ruleIds` is the sole signal. An `alertId`-only config.json (no `ruleIds`, or `ruleIds` is `[]`) triggers the Setup Flow just as if the file were missing. The old `alertId` is left as an orphan in `config.json` and ignored.
 
 ### Setup Flow
 
-Follow these steps in order. If any step fails, STOP. Do NOT write an `alertId` into `config.json`. Do NOT proceed with operations.
+Follow these steps in order. If any step fails, STOP and explain the failure. Do NOT prompt the user for budget details yourself, and do NOT write any rule IDs into `config.json` yourself.
 
-1. **Check for existing API key.** Run:
+1. **Verify the Revenium CLI is configured.** Run:
    ```
    revenium config show
    ```
-   The sandbox reads credentials from a read-only bind mount of the host's `~/.config/revenium/` (set up by post-install.sh with `dangerouslyAllowExternalBindSources: true`), so any value already set on the host is visible live inside the agent session. If `revenium config show` reports a non-empty API Key, skip to step 3.
+   The sandbox reads credentials from a read-only bind mount of the host's `~/.config/revenium/` (set up by post-install.sh). If `revenium config show` reports a non-empty API Key, skip to step 3. If the CLI is not on PATH, tell the user to install it (`brew install revenium/tap/revenium` on macOS) and STOP.
 
-2. **If no API key is configured:** credentials must be set on the HOST. The bind mount into the sandbox is read-only, so `revenium config set ...` run from inside the agent session will fail to persist — the CLI cannot write back through the bind.
+2. **If no API key is configured:** credentials must be set on the HOST. The bind mount into the sandbox is read-only, so `revenium config set ...` run from inside the agent session cannot persist.
 
    Collect the following from the user:
 
@@ -107,234 +91,75 @@ Follow these steps in order. If any step fails, STOP. Do NOT write an `alertId` 
    revenium config set tenant-id TENANT_ID
    revenium config set owner-id USER_ID
    ```
-   Because the sandbox sees host changes through the bind mount live, no post-install re-run or gateway restart is required — pause the setup flow while the user runs the commands on the host, then re-run `revenium config show` inside the agent session to confirm the API key is now visible. If it is still empty, STOP and tell the user to run `/revenium` when ready. Do NOT write an `alertId` into `config.json`.
+   Because the sandbox sees host changes through the bind mount live, no post-install re-run or gateway restart is required — pause the setup flow while the user runs the commands on the host, then re-run `revenium config show` inside the agent session to confirm the API key is now visible. If it is still empty, STOP and tell the user to run `/revenium` when ready.
 
-3. **Prompt for organization name (optional).** Ask the user: "What is your organization name for Revenium reporting? (optional — press Enter to skip)" If the user provides a value, call it `ORG_NAME`. If they skip, leave it empty.
-
-4. **Prompt for budget amount.** Ask the user: "What budget threshold would you like to set? (numeric amount, e.g., 5.00)" Wait for the user's response. Call this value `AMOUNT`.
-
-5. **Prompt for budget period.** Ask the user: "Which budget period would you like?" and present these four options:
-   - DAILY
-   - WEEKLY
-   - MONTHLY
-   - QUARTERLY
-
-   Wait for the user's selection. Call this value `PERIOD`.
-
-6. **Prompt for autonomous mode.** First, read any pre-seeded value from `~/.openclaw/skills/revenium/config.json` (post-install.sh writes a seed with `autonomousMode` and a `_comment` field before any agent session runs). If `config.json` exists and has an `autonomousMode` field, use that value as the DEFAULT for the prompt below — show it in the prompt, e.g. "(yes/no, default: yes — from post-install)". Otherwise the default is `no`.
-
-   Ask the user: "Will this agent run autonomously (without a user present)? If yes, budget exceedance will halt all operations and notify you. (yes/no, default: DEFAULT_VALUE)"
-
-   - **If yes:** Set `AUTONOMOUS_MODE` to `true`. Then:
-     - Ask: "Which OpenClaw channel should receive budget alerts?" Present supported types: `slack`, `discord`, `telegram`, `whatsapp`, `signal`, `googlechat`, `msteams`, `mattermost`, `imessage`
-     - Wait for the user's selection. Call this value `NOTIFY_CHANNEL`.
-     - Ask: "What is the notification target on that channel?" Explain that the format varies by channel:
-       - Slack: `user:<id>` or `channel:<id>`
-       - Discord: `user:<id>` or `channel:<id>`
-       - Telegram: chat id or `@username`
-       - WhatsApp: E.164 phone number
-       - Signal: `+E.164` or `group:<id>`
-       - Teams: conversation id
-     - Wait for the user's response. Call this value `NOTIFY_TARGET`.
-   - **If no (default):** Set `AUTONOMOUS_MODE` to `false`. Skip notification channel prompts.
-
-7. **Generate the alert name.** Set `ALERT_NAME` to `"OpenClaw {Period} Budget"` where `{Period}` is the title-cased version of the selected period:
-   - DAILY -> "OpenClaw Daily Budget"
-   - WEEKLY -> "OpenClaw Weekly Budget"
-   - MONTHLY -> "OpenClaw Monthly Budget"
-   - QUARTERLY -> "OpenClaw Quarterly Budget"
-
-   Do NOT ask the user for a name. This is automatic.
-
-9. **Delete any existing budget alerts.** Before creating a new alert, you MUST check for and remove pre-existing OpenClaw budget alerts to prevent duplicates. Run:
+3. **Run the setup script:**
    ```
-   revenium alerts budget list --json
+   bash ~/.openclaw/skills/revenium/scripts/setup-guardrails.sh --interactive
    ```
-   Parse the JSON output and look for any alerts whose name starts with `"OpenClaw "`. For EACH matching alert, delete it:
-   ```
-   revenium alerts budget delete EXISTING_ALERT_ID --yes
-   ```
-   If the list command fails or returns no results, that is fine — proceed to the next step. If a delete fails, log a warning but continue.
+   The script prompts the operator for budget hard-limit, period, organization name, autonomous mode + notification channel/target, and shadow mode. On success, it creates the Revenium guardrails budget rules via `revenium guardrails budget-rules create` and writes the resulting `ruleIds` array into `~/.openclaw/skills/revenium/config.json`. You do NOT prompt the user for budget details yourself, and you do NOT write any rule IDs into `config.json` yourself — the script owns the entire interaction and the entire write.
 
-10. **Create the budget alert.** Run:
-   ```
-   revenium alerts budget create --name "ALERT_NAME" --threshold AMOUNT --period PERIOD --json
-   ```
-   If the exit code is non-zero: tell the user what went wrong, tell them to run `/revenium` when ready, and STOP. Do NOT write `config.json`.
+   Capture the exit code and act on it:
+   - **Exit 0, final output line `Created N rule(s). config.json updated. ruleIds=[...]`**: succeeded. Proceed to step 4.
+   - **Exit 0, final output line `Cancelled.`**: operator cancelled. STOP without proceeding to step 4.
+   - **Non-zero exit**: failure. Tell the user the failure message verbatim, instruct them to address it and re-run `/revenium`. STOP. Do NOT proceed to step 4.
 
-11. **Extract the alert ID.** From the JSON response, extract the `"id"` field. This is a short alphanumeric string (e.g., `"75BjG5"`). Call this value `ALERT_ID`.
+   If the user asks to set up in shadow mode, run `setup-guardrails.sh --interactive --shadow-mode` instead. By default, rules created via `--interactive` are enforcing.
 
-   **CRITICAL:** Do NOT use `anomalyId` from `budget get` responses — that is an integer and will cause HTTP 400 errors when passed to `budget get`. The correct value is the string `"id"` from the `budget create` response.
-
-   To extract reliably, pipe the create output through:
-   ```
-   python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])"
-   ```
-
-12. **Write config.json.** This MUST be the FINAL step — only write after ALL previous steps have succeeded. Load any existing config first so the `_comment` field seeded by post-install.sh (and any other unknown keys) is preserved, then merge in the values collected above:
-   ```
-   python3 -c "
-   import json, os
-   path = os.path.expanduser('~/.openclaw/skills/revenium/config.json')
-   try:
-       with open(path) as f:
-           config = json.load(f)
-   except (FileNotFoundError, json.JSONDecodeError):
-       config = {}
-   config['alertId'] = 'ALERT_ID'
-   org = 'ORG_NAME'
-   if org:
-       config['organizationName'] = org
-   autonomous = AUTONOMOUS_MODE  # True or False
-   config['autonomousMode'] = autonomous
-   if autonomous:
-       config['notifyChannel'] = 'NOTIFY_CHANNEL'
-       config['notifyTarget'] = 'NOTIFY_TARGET'
-   else:
-       config.pop('notifyChannel', None)
-       config.pop('notifyTarget', None)
-   with open(path, 'w') as f:
-       json.dump(config, f, indent=2)
-       f.write('\n')
-   "
-   ```
-   Replace `ALERT_ID`, `ORG_NAME`, `AUTONOMOUS_MODE`, `NOTIFY_CHANNEL`, and `NOTIFY_TARGET` with the actual values. If the user skipped the organization name, omit it. If autonomous mode is false, `notifyChannel`/`notifyTarget` are stripped. Any `_comment` or other pre-existing fields are carried through untouched.
-
-13. **Install the metering cron.** Run:
+4. **Install the metering cron:**
    ```
    bash ~/.openclaw/skills/revenium/scripts/install-cron.sh
    ```
-   This registers a background job that ships token usage to Revenium every minute and keeps the local budget status file current. If the cron is already installed, this is a no-op.
-
-14. **Confirm to the user.** Tell the user setup is complete. Show: the alert name, the threshold amount, the period, the organization name (if provided), and autonomous mode status (including notification channel and target if configured).
+   This registers a background job that ships token usage to Revenium every minute and keeps `guardrail-status.json` current. If the cron is already installed, this is a no-op.
 
 ### Error Handling
 
-On ANY failure during the Setup Flow: report what went wrong, tell the user to run `/revenium` when they are ready to try again, and STOP. Do NOT retry. Do NOT write an `alertId` into `config.json`. The absence of an `alertId` field in `config.json` is the signal that setup has not completed — a pre-seeded `config.json` with only `autonomousMode` and `_comment` still means "setup not complete".
-
-> Reminder: After setup completes, check budget-status.json before your next response.
+On ANY failure during the Setup Flow: report what went wrong, tell the user to run `/revenium` when they are ready to try again, and STOP. Do NOT retry. The absence of a valid `ruleIds` array in `config.json` is the signal that setup has not completed.
 
 ## `/revenium` Command
 
 When the user invokes `/revenium`:
 
-### If Setup Is Complete (config.json has a non-empty `alertId`)
+### If Setup Is Complete (config.json has a non-empty `ruleIds` array)
 
-1. **Show budget status.** Read `alertId` from `~/.openclaw/skills/revenium/config.json`, then run:
-   ```
-   revenium alerts budget get ALERT_ID --json
-   ```
-   Display the current spend versus threshold to the user (current value, threshold, percent used, remaining).
+1. **Show rule IDs and per-rule state.** Read `ruleIds` from `~/.openclaw/skills/revenium/config.json`, then read per-rule state from `~/.openclaw/skills/revenium/guardrail-status.json`. For each rule in `rules[]`, display:
+   - Rule name
+   - `state` (ok / warn / block)
+   - `currentValue` vs `hardLimit`
+   - `shadowMode` (true = observe-only, not blocking)
 
-2. **Show autonomous mode status.** Read `~/.openclaw/skills/revenium/config.json` and display:
+2. **Show autonomous mode and halt state.** Read `~/.openclaw/skills/revenium/config.json` and display:
    - **Autonomous mode:** enabled or disabled
-   - **Notification channel:** the configured channel type and target (if autonomous mode is enabled), or "not configured"
-   - **Halt status:** Read `~/.openclaw/skills/revenium/budget-status.json` and check the `halted` field. Display "ACTIVE (since HALTED_AT)" if `halted` is `true`, or "inactive" if `halted` is `false` or absent.
+   - **Halt status:** Read `~/.openclaw/skills/revenium/guardrail-status.json` and check `halted`. Display "ACTIVE (since [haltedAt])" if `halted` is `true`, or "inactive" if `false`.
    - If halt is active, also show: "To resume operations, run: `bash ~/.openclaw/skills/revenium/scripts/clear-halt.sh`"
 
-3. **Offer actions.** Ask the user: "Would you like to **reset** the budget (zero out current spend), **reconfigure** (change threshold/period), or **done**?" If the user declines or says done, STOP — no further action.
+3. **Offer actions.** Ask the user: "Would you like to **reconfigure** (change rules/settings) or **done**?"
 
-### If Setup Is NOT Complete (config.json missing, or present but missing `alertId`)
+   - **`reconfigure`:** Run `bash ~/.openclaw/skills/revenium/scripts/setup-guardrails.sh --interactive`. The script handles delete-and-recreate of existing rules. Capture the exit code using the same contract as Setup Flow step 3 above.
+   - **`done`:** STOP — no further action.
 
-Run the Setup Flow from the Setup section above. The flow will honor any pre-seeded `autonomousMode` / `_comment` fields when writing the final config.
+### If Setup Is NOT Complete (config.json missing, or `ruleIds` absent or `[]`)
 
-### Reconfiguration Flow
-
-When the user requests reconfiguration:
-
-1. **Read existing alert ID.** Read `alertId` from `~/.openclaw/skills/revenium/config.json`. Call this value `OLD_ALERT_ID`.
-
-2. **Delete the old alert.** Run:
-   ```
-   revenium alerts budget delete OLD_ALERT_ID --yes
-   ```
-   If this fails (e.g., alert already deleted or not found): log a warning but continue. The goal is to prevent orphaned alerts.
-
-3. **Clear the `alertId` field.** Do NOT delete `config.json` — that would drop the operator-facing `_comment` and any pre-seeded `autonomousMode` default. Instead, strip just the alert-specific fields so the Setup Flow sees "alertId missing → setup incomplete":
-   ```
-   python3 -c "
-   import json, os
-   path = os.path.expanduser('~/.openclaw/skills/revenium/config.json')
-   try:
-       with open(path) as f:
-           config = json.load(f)
-   except (FileNotFoundError, json.JSONDecodeError):
-       config = {}
-   for k in ('alertId', 'organizationName', 'notifyChannel', 'notifyTarget'):
-       config.pop(k, None)
-   with open(path, 'w') as f:
-       json.dump(config, f, indent=2)
-       f.write('\n')
-   "
-   ```
-
-4. **Run the full Setup Flow** from the Setup section above. This collects fresh API key, budget amount, period, and creates a new alert from scratch. The Setup Flow's step 12 merges the new values into the preserved config, keeping `_comment` and using the prior `autonomousMode` as the prompt default.
-
-> Reminder: After reconfiguration completes, check budget-status.json before your next response.
-
-### Reset Budget Flow
-
-When the user requests a budget reset (zero out current spend without changing settings):
-
-1. **Read existing config.** Read `alertId`, `organizationName`, `autonomousMode`, `notifyChannel`, and `notifyTarget` from `~/.openclaw/skills/revenium/config.json`. Call the alert ID `OLD_ALERT_ID`.
-
-2. **Get current alert settings.** Run:
-   ```
-   revenium alerts budget get OLD_ALERT_ID --json
-   ```
-   Extract `name`, `threshold`, and `periodDuration` from the response.
-
-3. **Delete the old alert.** Run:
-   ```
-   revenium alerts budget delete OLD_ALERT_ID --yes
-   ```
-   If this fails: warn the user but continue.
-
-4. **Create a new alert with the same settings.** Run:
-   ```
-   revenium alerts budget create --name "ALERT_NAME" --threshold THRESHOLD --period PERIOD --json
-   ```
-   Use the `name`, `threshold`, and `periodDuration` values from step 2.
-
-5. **Extract the new alert ID.** From the create response, extract the `"id"` field. Call this `NEW_ALERT_ID`.
-
-6. **Update config.json.** Replace `alertId` with `NEW_ALERT_ID`, preserving all other fields:
-   ```
-   python3 -c "
-   import json
-   with open('$HOME/.openclaw/skills/revenium/config.json', 'r') as f:
-       config = json.load(f)
-   config['alertId'] = 'NEW_ALERT_ID'
-   with open('$HOME/.openclaw/skills/revenium/config.json', 'w') as f:
-       json.dump(config, f, indent=2)
-       f.write('\n')
-   "
-   ```
-
-7. **Reset local budget status.** Write a fresh `budget-status.json` with zeroed values and `exceeded: false`, `halted: false`.
-
-8. **Confirm to the user.** Tell the user: "Budget reset. Spend counter is now $0.00 of $THRESHOLD (PERIOD). Alert ID: NEW_ALERT_ID."
-
-> Reminder: After budget reset completes, check budget-status.json before your next response.
+Run the Setup Flow from the Setup section above.
 
 ## Troubleshooting
 
 ### Binary Not Found
 
 If `revenium` is not found on PATH:
-- STOP all operations that require budget checking
+- STOP all operations that require guardrail checking
 - Tell the user: "The `revenium` CLI is not installed or not on your PATH. Install it from https://docs.revenium.io/for-ai-agents and ensure it is available in your shell."
 
 ### API Key Invalid
 
 If `revenium config show` reports no API key or an invalid key:
-- STOP all operations that require budget checking
+- STOP all operations that require guardrail checking
 - Tell the user: "Your Revenium API key is missing or invalid inside the sandbox. The sandbox reads credentials from a read-only bind mount of your host's `~/.config/revenium/`, so fix them on the host: run `revenium config set key <KEY>` (plus `team-id`, `tenant-id`, `owner-id` as needed) in your HOST terminal. The change is picked up live — no post-install re-run or gateway restart needed. Then run `/revenium` to resume setup."
 
 ### Network Errors
 
 If any `revenium` CLI command fails due to network issues:
 - Tell the user: "Unable to reach the Revenium API. Check your network connection and try again."
-- Do NOT proceed with the operation until budget status is confirmed.
+- Do NOT proceed with the operation until guardrail status is confirmed.
 
-> Reminder: Check budget-status.json before your next response.
+> Reminder: Check guardrail-status.json before your next response.
