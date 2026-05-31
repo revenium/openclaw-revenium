@@ -67,10 +67,6 @@ run_report() {
 LOCK_FILE="${OPENCLAW_HOME:-${HOME}/.openclaw}/revenium-metering.lock"
 (
   flock -n 9 || exit 0
-  # Budget check runs FIRST so the halt state in budget-status.json always
-  # refreshes — even if report.sh hangs or fails below. The API value it
-  # reads will be one cycle stale relative to the reporter, but a stale
-  # halt check is vastly better than a missing one.
-  bash "${SKILL_DIR}/scripts/budget-check.sh" || true
   run_report "$@" || true
+  bash "${SKILL_DIR}/scripts/guardrail-check.sh" || true
 ) 9>"${LOCK_FILE}"

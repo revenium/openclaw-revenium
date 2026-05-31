@@ -1,32 +1,52 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Clear budget enforcement halt
-# Allows the autonomous agent to resume operations after a budget exceedance.
+# Clear guardrail enforcement halt
+# Allows the autonomous agent to resume operations after a guardrail breach.
+# Targets guardrail-status.json atomically.
+# Preserves haltedRule and haltedAt fields as an audit trail — does NOT pop them.
 # =============================================================================
 
 set -euo pipefail
 
 SKILL_DIR="${HOME}/.openclaw/skills/revenium"
-BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
+GUARDRAIL_STATUS_FILE="${SKILL_DIR}/guardrail-status.json"
 
-if [[ ! -f "${BUDGET_STATUS_FILE}" ]]; then
-  echo "No budget-status.json found — nothing to clear."
+if [[ ! -f "${GUARDRAIL_STATUS_FILE}" ]]; then
+  echo "No guardrail-status.json found — nothing to clear."
   exit 0
 fi
 
-python3 -c "
-import json
+GUARDRAIL_STATUS_FILE="${GUARDRAIL_STATUS_FILE}" python3 - <<'PY'
+import json, os, tempfile
 
-with open('${BUDGET_STATUS_FILE}', 'r') as f:
+status_file = os.environ['GUARDRAIL_STATUS_FILE']
+
+with open(status_file, 'r', encoding='utf-8') as f:
     data = json.load(f)
 
 if not data.get('halted', False):
     print('No halt is currently active.')
 else:
     data['halted'] = False
-    data.pop('haltedAt', None)
-    with open('${BUDGET_STATUS_FILE}', 'w') as f:
-        json.dump(data, f, indent=2)
-    print('Budget halt cleared. The agent may now resume operations.')
-    print('Note: The budget is still exceeded. The agent will proceed until the next halt.')
-"
+    # Preserve haltedRule and haltedAt — they are audit trail fields.
+    # Do NOT pop them (unlike the legacy clear-halt.sh which removed haltedAt).
+
+    # Atomic write via tempfile.mkstemp + os.replace (T-03-14 mitigation).
+    status_dir = os.path.dirname(status_file)
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=status_dir,
+        prefix='.guardrail-status-',
+        suffix='.tmp'
+    )
+    try:
+        with os.fdopen(tmp_fd, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(data, indent=2) + '\n')
+        os.replace(tmp_path, status_file)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+
+    print('Guardrail halt cleared. The agent may now resume operations.')
+PY
