@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# =============================================================================
+# common.sh — Shared helpers for the OpenClaw Revenium skill.
+#
+# SOURCED (not executed). Defines path constants and helper functions used by
+# guardrail-check.sh, setup-guardrails.sh, and any other skill scripts.
+#
+# Usage:
+#   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#   . "${SCRIPT_DIR}/common.sh"
+# =============================================================================
+# NOTE: No `set -e` here — this is a sourced library. Callers that set -e will
+# keep it. Adding -e here would cause unexpected exits in the caller's context
+# on any sub-expression that evaluates to non-zero.
+set -uo pipefail
+
+# ---------------------------------------------------------------------------
+# OPENCLAW_HOME discovery — multi-candidate probe.
+# Honors OPENCLAW_HOME override from the environment (e.g., sandbox where
+# $HOME != host home). Falls back to the first candidate whose agents/
+# directory exists, or ${HOME}/.openclaw if none found.
+# ---------------------------------------------------------------------------
+if [[ -z "${OPENCLAW_HOME:-}" ]]; then
+  _oc_home=""
+  for _candidate in "${HOME}/.openclaw" "/home/ubuntu/.openclaw"; do
+    if [[ -d "${_candidate}/agents" ]]; then
+      _oc_home="${_candidate}"
+      break
+    fi
+  done
+  OPENCLAW_HOME="${_oc_home:-${HOME}/.openclaw}"
+  unset _oc_home _candidate
+fi
+
+# ---------------------------------------------------------------------------
+# Path constants (OpenClaw collapsed model: STATE_DIR == skill directory).
+# Unlike Hermes which separates ~/.hermes/skills/revenium/ from
+# ~/.hermes/state/revenium/, OpenClaw collapses both into
+# ~/.openclaw/skills/revenium/.
+# ---------------------------------------------------------------------------
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STATE_DIR="${OPENCLAW_HOME}/skills/revenium"
+CONFIG_FILE="${STATE_DIR}/config.json"
+GUARDRAIL_STATUS_FILE="${STATE_DIR}/guardrail-status.json"
+LOCK_FILE="${STATE_DIR}/revenium-metering.lock"
+LOG_FILE="${STATE_DIR}/revenium-metering.log"
+RULES_LOCK_FILE="${STATE_DIR}/rules.lock"
+
+# Agent name constant: defaults to "OpenClaw". Override via env to scope
+# guardrail rule filters when multiple distinct installs share one API key.
+# Used for --filter AGENT:IS:${REVENIUM_AGENT_NAME} in setup-guardrails.sh
+# and for --agent in report.sh (Phase 4 concern; constant established here).
+REVENIUM_AGENT_NAME="${REVENIUM_AGENT_NAME:-OpenClaw}"
+
+# Ensure STATE_DIR exists (idempotent).
+mkdir -p "${STATE_DIR}"
+
+# ---------------------------------------------------------------------------
+# ensure_path — extend PATH to include common package manager locations.
+# Cron runs with a minimal PATH; this adds brew/system bin dirs so revenium
+# and openclaw CLIs are found without hardcoding absolute paths.
+# ---------------------------------------------------------------------------
+ensure_path() {
+  local brew_prefix=""
+  if command -v brew >/dev/null 2>&1; then
+    brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  fi
+  for p in \
+    "${brew_prefix:+${brew_prefix}/bin}" \
+    "${brew_prefix:+${brew_prefix}/sbin}" \
+    /home/linuxbrew/.linuxbrew/bin \
+    /home/linuxbrew/.linuxbrew/sbin \
+    /opt/homebrew/bin \
+    /opt/homebrew/sbin \
+    /usr/local/bin \
+    /usr/bin \
+    "${HOME}/go/bin" \
+    "${HOME}/.local/bin"; do
+    [[ -n "${p}" && -d "${p}" ]] && export PATH="${p}:${PATH}"
+  done
+}
+
+# ---------------------------------------------------------------------------
+# log — single-source log writer.
+# Always appends one line to LOG_FILE; mirrors to stderr only when the caller
+# is interactive (TTY detected via `[ -t 2 ]`).
+#
+# Why not `tee -a "${LOG_FILE}" >&2`? Cron invokes the pipeline with
+# `>> ${LOG_FILE} 2>&1`, which captures stderr back into LOG_FILE. The
+# tee+stderr combo therefore writes every line to LOG_FILE twice under cron.
+# The TTY guard preserves the interactive UX while keeping cron's log clean.
+#
+# Usage: log "LEVEL" "message ..."
+# ---------------------------------------------------------------------------
+log() {
+  local level="$1"; shift
+  local line="[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [${level}] [revenium] $*"
+  mkdir -p "${STATE_DIR}"
+  printf '%s\n' "${line}" >> "${LOG_FILE}"
+  if [[ -t 2 ]]; then
+    printf '%s\n' "${line}" >&2
+  fi
+}
+
+info()  { log "INFO " "$@"; }
+warn()  { log "WARN " "$@"; }
+error() { log "ERROR" "$@"; }
+
+# ---------------------------------------------------------------------------
+# has_guardrails_cli — two-subcommand probe for revenium guardrails CLI.
+# Returns 0 if both subcommand families exist, non-zero otherwise.
+# Callers MUST warn + exit 0 on failure; this helper never logs or exits.
+# Verified against revenium 1.1.2 on 2026-05-31.
+# ---------------------------------------------------------------------------
+has_guardrails_cli() {
+  revenium guardrails budget-rules --help >/dev/null 2>&1 && \
+  revenium guardrails enforcement-events --help >/dev/null 2>&1
+}
