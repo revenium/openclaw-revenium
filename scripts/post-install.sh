@@ -197,16 +197,28 @@ if [[ -n "${JQ_PATH}" ]]; then
   fi
 fi
 
-# Bind-mount revenium CLI config (API key, team/tenant/user IDs).
-# The OpenClaw sandbox validator flags any bind targeting a path under
-# ~/.config/ as a "credential path" by default. We set
-# dangerouslyAllowExternalBindSources: true in the Python block below to
-# opt into mounting this directory — without it, the gateway will reject
-# the bind on startup.
-REVENIUM_CONFIG_DIR="${HOME}/.config/revenium"
-mkdir -p "${REVENIUM_CONFIG_DIR}"
-BIND_ENTRIES+=("${REVENIUM_CONFIG_DIR}:${REVENIUM_CONFIG_DIR}:ro")
-info "Will bind-mount revenium config at ${REVENIUM_CONFIG_DIR} (requires dangerouslyAllowExternalBindSources)"
+# Revenium CLI credentials reach the sandbox as REVENIUM_* env vars (injected in
+# the Python block below), NOT via a bind mount. OpenClaw's sandbox HARD-blocks
+# any bind whose destination falls under ~/.config/ as a credential path — even
+# with dangerouslyAllowExternalBindSources — so mounting ~/.config/revenium
+# crashes the gateway on startup (observed on OpenClaw 2026.4.14). revenium
+# honors REVENIUM_* env vars over the config file, so we read the host config
+# here and export the values for the Python block to inject.
+REVENIUM_CONFIG_FILE="${HOME}/.config/revenium/config.yaml"
+REV_KEY=""; REV_API_URL=""; REV_TEAM=""; REV_TENANT=""; REV_OWNER=""
+if [[ -f "${REVENIUM_CONFIG_FILE}" ]]; then
+  REV_KEY=$(sed -n 's/^key:[[:space:]]*//p' "${REVENIUM_CONFIG_FILE}" | head -1)
+  REV_API_URL=$(sed -n 's/^api-url:[[:space:]]*//p' "${REVENIUM_CONFIG_FILE}" | head -1)
+  REV_TEAM=$(sed -n 's/^team-id:[[:space:]]*//p' "${REVENIUM_CONFIG_FILE}" | head -1)
+  REV_TENANT=$(sed -n 's/^tenant-id:[[:space:]]*//p' "${REVENIUM_CONFIG_FILE}" | head -1)
+  REV_OWNER=$(sed -n 's/^owner-id:[[:space:]]*//p' "${REVENIUM_CONFIG_FILE}" | head -1)
+fi
+export REV_KEY REV_API_URL REV_TEAM REV_TENANT REV_OWNER
+if [[ -z "${REV_KEY}" ]]; then
+  warn "Revenium API key not set yet at ${REVENIUM_CONFIG_FILE}."
+  warn "Set credentials on the host, then re-run post-install.sh to inject them into the sandbox:"
+  warn "  revenium config set key <KEY>   (also team-id, tenant-id, owner-id)"
+fi
 
 # Generate a CA certificate bundle for sandboxed environments.
 # Minimal Docker containers often lack /etc/ssl/certs/ca-certificates.crt,
@@ -317,18 +329,29 @@ ssl_cert_file = "${SSL_CERT_FILE}"
 if ssl_cert_file:
     docker["env"]["SSL_CERT_FILE"] = ssl_cert_file
 
-# Opt into permissive bind-source validation so the sandbox accepts the
-# ~/.config/revenium credentials mount. Without this flag, OpenClaw's
-# sandbox validator rejects any bind whose destination falls under
-# ~/.config/ as a "credential path".
-docker["dangerouslyAllowExternalBindSources"] = True
+# We do NOT mount ~/.config/revenium — OpenClaw hard-blocks credential-path
+# binds regardless of this flag. Keep permissive bind-source validation OFF.
+docker["dangerouslyAllowExternalBindSources"] = False
 
-# Clear any stale REVENIUM_* env vars we may have injected on a previous
-# post-install run — we're back to using the bind mount as the source of
-# truth so credential rotations on the host propagate live.
-for k in ("REVENIUM_API_KEY", "REVENIUM_API_URL", "REVENIUM_TEAM_ID",
-          "REVENIUM_TENANT_ID", "REVENIUM_OWNER_ID"):
-    docker["env"].pop(k, None)
+# Inject Revenium credentials as env vars (revenium honors REVENIUM_* over the
+# config file). Values come from the host config.yaml, read in the bash block
+# above and passed through the environment. Empty values are popped so we never
+# write blank creds; the user re-runs post-install after setting credentials to
+# refresh them. NOTE: unlike the old live bind mount, env injection is a
+# snapshot — credential rotation on the host requires re-running post-install.
+import os as _os
+for _k, _src in (
+    ("REVENIUM_API_KEY", "REV_KEY"),
+    ("REVENIUM_API_URL", "REV_API_URL"),
+    ("REVENIUM_TEAM_ID", "REV_TEAM"),
+    ("REVENIUM_TENANT_ID", "REV_TENANT"),
+    ("REVENIUM_OWNER_ID", "REV_OWNER"),
+):
+    _v = _os.environ.get(_src, "")
+    if _v:
+        docker["env"][_k] = _v
+    else:
+        docker["env"].pop(_k, None)
 
 # Allow outbound network access so the revenium CLI can reach api.revenium.ai
 docker["network"] = "bridge"
