@@ -78,6 +78,12 @@ ensure_path() {
     "${HOME}/.local/bin"; do
     [[ -n "${p}" && -d "${p}" ]] && export PATH="${p}:${PATH}"
   done
+  # Always succeed: the loop's last iteration is `[[ -d ... ]] && export`, which
+  # returns non-zero when the final candidate dir is absent (e.g. ~/.local/bin on
+  # a clean host). Without this, a `set -e` caller (guardrail-check.sh,
+  # setup-guardrails.sh) aborts the moment ensure_path returns — before polling,
+  # logging, or rule creation. Pin the return code so PATH-extension is best-effort.
+  return 0
 }
 
 # ---------------------------------------------------------------------------
