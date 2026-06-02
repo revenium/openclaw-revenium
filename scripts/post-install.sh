@@ -329,9 +329,17 @@ ssl_cert_file = "${SSL_CERT_FILE}"
 if ssl_cert_file:
     docker["env"]["SSL_CERT_FILE"] = ssl_cert_file
 
-# We do NOT mount ~/.config/revenium — OpenClaw hard-blocks credential-path
-# binds regardless of this flag. Keep permissive bind-source validation OFF.
-docker["dangerouslyAllowExternalBindSources"] = False
+# OpenClaw's sandbox applies TWO independent checks to bind sources:
+#   1. Credential/system-path block (~/.config, docker socket): HARD-blocked and
+#      NOT overridable by any flag. We satisfy this by never mounting
+#      ~/.config/revenium (creds go in as REVENIUM_* env vars below).
+#   2. Allowed-roots check: bind sources must sit under ~/.openclaw/workspace
+#      unless this flag opts in. The skill legitimately mounts ~/.openclaw (rw,
+#      for skills/guardrail-status.json/logs) and the Homebrew bin/lib dirs (ro,
+#      for the revenium/jq CLIs) — all outside workspace but trusted, not
+#      credential paths. So this MUST stay true, or the gateway rejects those
+#      binds with "source is outside allowed roots" and the agent fails to start.
+docker["dangerouslyAllowExternalBindSources"] = True
 
 # Inject Revenium credentials as env vars (revenium honors REVENIUM_* over the
 # config file). Values come from the host config.yaml, read in the bash block
