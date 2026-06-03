@@ -10,10 +10,10 @@
 
 ### Job Declaration (JOBDEC)
 
-- [ ] **JOBDEC-01**: A `job-taxonomy.json` ships with 11 job-type labels (`feature_development`, `bug_fix`, `code_review`, `refactoring`, `research`, `debugging`, `testing`, `documentation`, `devops`, `planning`, `interrupted`), validated against the same snake_case regex as `task-taxonomy.json`, and is installed to the skill runtime location alongside it
-- [ ] **JOBDEC-02**: SKILL.md includes a `JOB DECLARATION` directive instructing the agent to append a `kind:"job"` marker when a unit of work concludes (mirrors the existing TASK CLASSIFICATION directive; no native-hook dependency)
-- [ ] **JOBDEC-03**: The marker writer accepts and validates job markers — fields `kind`, `ts`, `sid`, `agentic_job_id`, `job_name`, `job_type`, `status` (SUCCESS/FAILED/CANCELLED) — rejecting unknown `job_type` and malformed records, with the existing flock-protected atomic append
-- [ ] **JOBDEC-04**: The agent generates a stable, unique `agentic_job_id` (business label + short entropy suffix) and the writer sanitizes it (`:`, `|`, newline → `_`) before any value reaches a CLI argument
+- [x] **JOBDEC-01**: A `job-taxonomy.json` ships with 11 job-type labels (`feature_development`, `bug_fix`, `code_review`, `refactoring`, `research`, `debugging`, `testing`, `documentation`, `devops`, `planning`, `interrupted`), validated against the same snake_case regex as `task-taxonomy.json`, and is installed to the skill runtime location alongside it
+- [x] **JOBDEC-02**: SKILL.md includes a `JOB DECLARATION` directive instructing the agent to append a `kind:"job"` marker when a unit of work concludes (mirrors the existing TASK CLASSIFICATION directive; no native-hook dependency)
+- [x] **JOBDEC-03**: The marker writer accepts and validates job markers — fields `kind`, `ts`, `sid`, `agentic_job_id`, `job_name`, `job_type`, `status` (SUCCESS/FAILED/CANCELLED) — rejecting unknown `job_type` and malformed records, with the existing flock-protected atomic append
+- [x] **JOBDEC-04**: The agent generates a stable, unique `agentic_job_id` (business label + short entropy suffix) and the writer sanitizes it (`:`, `|`, newline → `_`) before any value reaches a CLI argument
 
 ### Job Lifecycle (JLIFE)
 
@@ -55,10 +55,10 @@ Which phases cover which requirements. Filled during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| JOBDEC-01 | Phase 5 | Pending |
-| JOBDEC-02 | Phase 5 | Pending |
-| JOBDEC-03 | Phase 5 | Pending |
-| JOBDEC-04 | Phase 5 | Pending |
+| JOBDEC-01 | Phase 5 | Complete |
+| JOBDEC-02 | Phase 5 | Complete |
+| JOBDEC-03 | Phase 5 | Complete |
+| JOBDEC-04 | Phase 5 | Complete |
 | JLIFE-01 | Phase 6 | Pending |
 | JLIFE-02 | Phase 6 | Pending |
 | JLIFE-03 | Phase 6 | Pending |

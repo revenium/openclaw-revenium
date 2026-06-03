@@ -2,15 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Agentic Job Tracking
-status: executing
-last_updated: "2026-06-03T16:48:06.590Z"
+status: ready_to_plan
+last_updated: 2026-06-03T17:13:53.151Z
 last_activity: 2026-06-03 -- Phase 05 execution started
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 3
-  completed_plans: 0
+  completed_plans: 3
   percent: 0
+stopped_at: Phase 05 complete (3/3) — ready to discuss Phase 6
 ---
 
 # Project State
@@ -20,20 +21,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-03)
 
 **Core value:** Agents never silently blow through token budgets — every completion is guardrail-checked and metered, and the user retains control over continuing past a threshold. v1.1 adds: every completion is attributed to an agentic job, opened and closed with a terminal outcome.
-**Current focus:** Phase 05 — job-declaration-foundation
+**Current focus:** Phase 6 — job lifecycle wiring
 
 ## Current Position
 
-Phase: 05 (job-declaration-foundation) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 05
-Last activity: 2026-06-03 -- Phase 05 execution started
+Phase: 6
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-06-03
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 6 (v1.0)
+- Total plans completed: 9 (v1.0)
 - Average duration: ~5 min
 - Total execution time: ~5 min
 
@@ -44,6 +45,7 @@ Last activity: 2026-06-03 -- Phase 05 execution started
 | 1. Skill Scaffolding | 1/1 | ~5 min | ~5 min |
 | 02 | 1 | - | - |
 | 04 | 4 | - | - |
+| 05 | 3 | - | - |
 
 **Recent Trend:**
 

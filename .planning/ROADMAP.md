@@ -105,7 +105,7 @@ Phases execute in numeric order: 5 → 6 → 7 → 8
 | 2. Setup Flow | v1.0 | 1/1 | Complete | 2026-05-29 |
 | 3. Guardrail Engine | v1.0 | 8/8 | Complete | 2026-05-31 |
 | 4. Task Metering & Attribution | v1.0 | 4/4 | Complete | 2026-06-03 |
-| 5. Job Declaration Foundation | v1.1 | 3/3 | Complete   | 2026-06-03 |
+| 5. Job Declaration Foundation | v1.1 | 3/3 | Complete    | 2026-06-03 |
 | 6. Job Lifecycle Wiring | v1.1 | 0/TBD | Not started | - |
 | 7. Root-Session Job Rollup | v1.1 | 0/TBD | Not started | - |
 | 8. Halt → CANCELLED Outcome | v1.1 | 0/TBD | Not started | - |
