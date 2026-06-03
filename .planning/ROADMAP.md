@@ -71,7 +71,7 @@ Full details archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.
 
 **Wave 1**
 
-  - [ ] 06-01-PLAN.md — Wave 0 test scaffolding: extend stub-revenium.sh (jobs fakes + 409 + capability-probe --help) and create test_report_jobs_argv.sh (RED) covering JLIFE-01..05
+  - [x] 06-01-PLAN.md — Wave 0 test scaffolding: extend stub-revenium.sh (jobs fakes + 409 + capability-probe --help) and create test_report_jobs_argv.sh (RED) covering JLIFE-01..05
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -118,6 +118,6 @@ Phases execute in numeric order: 5 → 6 → 7 → 8
 | 3. Guardrail Engine | v1.0 | 8/8 | Complete | 2026-05-31 |
 | 4. Task Metering & Attribution | v1.0 | 4/4 | Complete | 2026-06-03 |
 | 5. Job Declaration Foundation | v1.1 | 3/3 | Complete    | 2026-06-03 |
-| 6. Job Lifecycle Wiring | v1.1 | 0/3 | Planned | - |
+| 6. Job Lifecycle Wiring | v1.1 | 1/3 | In Progress|  |
 | 7. Root-Session Job Rollup | v1.1 | 0/TBD | Not started | - |
 | 8. Halt → CANCELLED Outcome | v1.1 | 0/TBD | Not started | - |

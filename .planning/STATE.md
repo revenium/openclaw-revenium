@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Agentic Job Tracking
 status: executing
-last_updated: "2026-06-03T19:31:12.375Z"
-last_activity: 2026-06-03 -- Phase 06 planning complete
+last_updated: "2026-06-03T19:39:36.645Z"
+last_activity: 2026-06-03 -- Phase 06 execution started
 progress:
   total_phases: 4
   completed_phases: 1
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-03)
 
 **Core value:** Agents never silently blow through token budgets — every completion is guardrail-checked and metered, and the user retains control over continuing past a threshold. v1.1 adds: every completion is attributed to an agentic job, opened and closed with a terminal outcome.
-**Current focus:** Phase 6 — job lifecycle wiring
+**Current focus:** Phase 06 — job-lifecycle-wiring
 
 ## Current Position
 
-Phase: 6
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-03 -- Phase 06 planning complete
+Phase: 06 (job-lifecycle-wiring) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 06
+Last activity: 2026-06-03 -- Phase 06 execution started
 
 ## Performance Metrics
 
