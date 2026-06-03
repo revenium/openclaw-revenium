@@ -18,6 +18,19 @@ source "${SCRIPT_DIR}/common.sh"
 ensure_path
 
 # ---------------------------------------------------------------------------
+# REVENIUM_BIN override (testability hook).
+# Integration tests set REVENIUM_BIN=/path/to/stub-revenium so the test
+# stub is called even when ensure_path prepends system paths. Production
+# runs never set this variable; the default is the `revenium` on PATH.
+# ---------------------------------------------------------------------------
+if [[ -n "${REVENIUM_BIN:-}" ]]; then
+  # Prepend the stub's directory to PATH so `revenium` resolves to it.
+  # This must come AFTER ensure_path (which prepends system paths) so the
+  # stub directory has highest priority.
+  export PATH="$(dirname "${REVENIUM_BIN}"):${PATH}"
+fi
+
+# ---------------------------------------------------------------------------
 # Usage
 # ---------------------------------------------------------------------------
 usage() {
@@ -39,8 +52,8 @@ OPTIONS:
   --help              Show this usage block and exit.
 
 DEFAULT FILTER SCOPING:
-  Created rules default-scope to --filter AGENT:IS:${REVENIUM_AGENT_NAME:-OpenClaw}
-  so the rule evaluates against meter completions shipped by this skill.
+  Created rules default-scope to --filter AGENT:STARTS_WITH:${REVENIUM_AGENT_PREFIX:-openclaw-}
+  so the rule matches all openclaw-{root_sid} and openclaw-{sid} completions (D-07).
 
 EXAMPLES:
   # Fresh install — interactive mode:
@@ -239,7 +252,9 @@ period_titled() {
 # --shadow-mode=false to get a genuinely enforcing rule. After create, the rule
 # is read back and shadowMode is asserted to match intent — on mismatch the rule
 # is cleaned up and RULE_ID is cleared so callers do NOT record a bad ruleId.
-# Filter defaults to AGENT:IS:${REVENIUM_AGENT_NAME} (D-23).
+# Base filter: AGENT:STARTS_WITH:<prefix> using REVENIUM_AGENT_PREFIX (D-07).
+# Optional 5th arg EXTRA_FILTER: additional --filter value (e.g. TASK_TYPE:IS:<label>).
+# Optional 6th arg GROUP_BY_OVERRIDE: overrides --group-by (default AGENT) when non-empty.
 # Bash 3.2: RULE_JSON passed via env to python3 heredoc.
 # ---------------------------------------------------------------------------
 RULE_EXIT=0
@@ -250,6 +265,10 @@ create_rule() {
   local hard_limit="$2"
   local warn_threshold="$3"
   local period="$4"
+  local extra_filter="${5:-}"        # optional: e.g. "TASK_TYPE:IS:research" (NP-4)
+  local group_by_override="${6:-}"   # optional: override --group-by (e.g. TASK_TYPE)
+
+  local group_by_arg="${group_by_override:-AGENT}"
 
   local rule_json
   # T-03-09 mitigation: validate_hard_limit and validate_period enforce input
@@ -257,38 +276,42 @@ create_rule() {
   # validators run before create_rule is ever called.
 
   if [[ "${SHADOW_MODE}" == "true" ]]; then
-    rule_json=$(revenium guardrails budget-rules create \
+    # Build cmd as positional params (bash-3.2 safe; avoids the one-word-expansion
+    # bug of ${var:+--flag "${var}"} which produces "--flag value" as a single token).
+    set -- \
+      guardrails budget-rules create \
       --output json \
       --name "${rule_name}" \
       --description "" \
       --metric-type TOTAL_COST \
       --window-type "${period}" \
       --action BLOCK \
-      --group-by AGENT \
+      --group-by "${group_by_arg}" \
       --warn-threshold "${warn_threshold}" \
       --hard-limit "${hard_limit}" \
-      --filter "AGENT:IS:${REVENIUM_AGENT_NAME}" \
-      --shadow-mode \
-      2>&1) && RULE_EXIT=0 || RULE_EXIT=$?
+      --filter "AGENT:STARTS_WITH:${REVENIUM_AGENT_PREFIX}"
+    [[ -n "${extra_filter}" ]] && set -- "$@" --filter "${extra_filter}"
+    rule_json=$(revenium "$@" --shadow-mode 2>&1) && RULE_EXIT=0 || RULE_EXIT=$?
   else
     # Pass --shadow-mode=false EXPLICITLY. The Revenium API defaults shadowMode
     # to true on create when the flag is omitted, so simply leaving it off
     # silently produces an observe-only (non-enforcing) rule. The explicit
     # =false forces a genuinely enforcing rule. (Verified against
     # api.revenium.ai: omit -> shadowMode:true; --shadow-mode=false -> false.)
-    rule_json=$(revenium guardrails budget-rules create \
+    set -- \
+      guardrails budget-rules create \
       --output json \
       --name "${rule_name}" \
       --description "" \
       --metric-type TOTAL_COST \
       --window-type "${period}" \
       --action BLOCK \
-      --group-by AGENT \
+      --group-by "${group_by_arg}" \
       --warn-threshold "${warn_threshold}" \
       --hard-limit "${hard_limit}" \
-      --filter "AGENT:IS:${REVENIUM_AGENT_NAME}" \
-      --shadow-mode=false \
-      2>&1) && RULE_EXIT=0 || RULE_EXIT=$?
+      --filter "AGENT:STARTS_WITH:${REVENIUM_AGENT_PREFIX}"
+    [[ -n "${extra_filter}" ]] && set -- "$@" --filter "${extra_filter}"
+    rule_json=$(revenium "$@" --shadow-mode=false 2>&1) && RULE_EXIT=0 || RULE_EXIT=$?
   fi
 
   if [[ "${RULE_EXIT}" -ne 0 ]]; then
@@ -639,7 +662,7 @@ EOF
   period_title=$(period_titled "${period}")
   local rule_name="OpenClaw ${period_title} Budget"
 
-  # Create the single base budget rule
+  # Create the base budget rule (--group-by AGENT; AGENT:STARTS_WITH filter from create_rule)
   create_rule "${rule_name}" "${hard_limit}" "${warn_threshold}" "${period}"
 
   if [[ "${RULE_EXIT}" -ne 0 || -z "${RULE_ID}" ]]; then
@@ -649,8 +672,156 @@ EOF
 
   local base_rule_id="${RULE_ID}"
 
-  # Build JSON array from single rule ID
-  local new_rule_ids_json="[\"${base_rule_id}\"]"
+  # Start the accumulated rule_ids list with the base rule id
+  # Uses newline-separated list for bash-3.2 compatibility (no arrays)
+  local rule_ids_list="${base_rule_id}"
+
+  # --------------------------------------------------------------------------
+  # Per-task-type picker (ROADMAP criterion 5 / D-10 / NP-4)
+  # Capability gate: only offer the picker if the installed CLI supports
+  # TASK_TYPE as a filter dimension. Gate is defense-in-depth; on 1.1.2 the
+  # gate always passes (TASK_TYPE VERIFIED). Fail-open: if absent, the base
+  # rule is still created and recorded. (D-10)
+  # --------------------------------------------------------------------------
+  if revenium guardrails budget-rules create --help 2>/dev/null | grep -q 'TASK_TYPE'; then
+    # Picker is supported — read labels from TAXONOMY_FILE
+    if [[ -f "${TAXONOMY_FILE}" ]]; then
+      local labels_json
+      labels_json=$(TAXONOMY_FILE="${TAXONOMY_FILE}" python3 - <<'PY'
+import json, os, sys
+try:
+    d = json.load(open(os.environ['TAXONOMY_FILE']))
+    labels = list(d.get('labels', {}).keys())
+    print(json.dumps(labels))
+except Exception:
+    print('[]')
+PY
+      )
+
+      local label_count
+      label_count=$(LABELS_JSON="${labels_json}" python3 - <<'PY'
+import json, os
+print(len(json.loads(os.environ['LABELS_JSON'])))
+PY
+      )
+
+      if [[ "${label_count}" -gt 0 ]]; then
+        echo ""
+        echo "Available task types (optional per-task budget rules):"
+        LABELS_JSON="${labels_json}" python3 - <<'PY'
+import json, os
+labels = json.loads(os.environ['LABELS_JSON'])
+for i, label in enumerate(labels, 1):
+    print(f"  {i}) {label}")
+PY
+
+        local task_selection=""
+        read -r -p 'Which to enforce? (comma-separated indices, or "none"): ' task_selection || task_selection=""
+
+        # Parse and validate comma-separated indices (T-04-11: skip out-of-range / non-numeric)
+        local selected_labels
+        selected_labels=$(LABELS_JSON="${labels_json}" TASK_TYPE_SELECTION="${task_selection}" python3 - <<'PY'
+import json, os
+labels = json.loads(os.environ['LABELS_JSON'])
+sel = os.environ['TASK_TYPE_SELECTION'].strip().lower()
+if sel == 'none' or not sel:
+    print('[]')
+else:
+    try:
+        # Validate each token: must be a digit string; skip non-numeric and out-of-range
+        indices = [int(x.strip()) for x in sel.split(',') if x.strip().isdigit()]
+        selected = [labels[i-1] for i in indices if 1 <= i <= len(labels)]
+        print(json.dumps(selected))
+    except Exception:
+        print('[]')
+PY
+        )
+
+        local num_selected
+        num_selected=$(LABELS_JSON="${selected_labels}" python3 - <<'PY'
+import json, os
+print(len(json.loads(os.environ['LABELS_JSON'])))
+PY
+        )
+
+        if [[ "${num_selected}" -gt 0 ]]; then
+          local label_index=0
+          while [[ ${label_index} -lt ${num_selected} ]]; do
+            local label
+            label=$(LABELS_JSON="${selected_labels}" IDX="${label_index}" python3 - <<'PY'
+import json, os
+labels = json.loads(os.environ['LABELS_JSON'])
+print(labels[int(os.environ['IDX'])])
+PY
+            )
+
+            # Prompt for per-task hard limit (T-04-10: reuse validate_hard_limit — ASVS V5)
+            local task_hard_limit="" task_hl_attempt=0
+            while [[ ${task_hl_attempt} -lt 3 ]]; do
+              read -r -p "Hard limit for ${label} (numeric): " task_hard_limit
+              if validate_hard_limit "${task_hard_limit}"; then
+                break
+              fi
+              echo "Invalid input. Must be a positive number."
+              task_hl_attempt=$((task_hl_attempt + 1))
+            done
+            if ! validate_hard_limit "${task_hard_limit}"; then
+              warn "Skipping task-type rule for ${label} (invalid hard-limit after 3 attempts)."
+              label_index=$((label_index + 1))
+              continue
+            fi
+
+            local task_warn
+            task_warn=$(compute_warn_threshold "${task_hard_limit}")
+
+            # Build rule name: "OpenClaw <Label> Budget"
+            # T-04-12: 64-char truncation in log lines (log injection mitigation, 03-PATTERNS)
+            local label_title
+            label_title=$(LABEL="${label}" python3 - <<'PY'
+import os
+s = os.environ['LABEL']
+print(s.replace('_', ' ').title())
+PY
+            )
+            local task_rule_name="OpenClaw ${label_title} Budget"
+
+            # NP-4 FIX: each per-task rule carries TASK_TYPE:IS:<label> filter
+            # AND --group-by TASK_TYPE. The Hermes picker omits these, producing
+            # identical rules with only the base AGENT filter (Pitfall 4).
+            local task_extra_filter="TASK_TYPE:IS:${label}"
+
+            # Log injection mitigation: truncate rule name in log output (T-04-12)
+            local log_rule_name="${task_rule_name:0:64}"
+            info "Creating per-task rule: ${log_rule_name} (filter=${task_extra_filter})"
+
+            create_rule "${task_rule_name}" "${task_hard_limit}" "${task_warn}" "${period}" \
+              "${task_extra_filter}" "TASK_TYPE"
+
+            if [[ "${RULE_EXIT}" -eq 0 && -n "${RULE_ID}" ]]; then
+              rule_ids_list="${rule_ids_list}
+${RULE_ID}"
+            else
+              warn "Failed to create rule for task type ${label} — skipping."
+            fi
+
+            label_index=$((label_index + 1))
+          done
+        fi
+      fi
+    fi
+  else
+    info "revenium CLI lacks TASK_TYPE filter dimension — skipping per-task-type picker (D-10 gate)"
+  fi
+
+  # Build the final ruleIds JSON array from the accumulated newline-separated list
+  local new_rule_ids_json
+  new_rule_ids_json=$(RULE_IDS_LIST="${rule_ids_list}" python3 - <<'PY'
+import json, os
+raw = os.environ['RULE_IDS_LIST'].strip()
+ids = [line.strip() for line in raw.splitlines() if line.strip()]
+print(json.dumps(ids))
+PY
+  )
 
   write_rule_ids_and_config "${new_rule_ids_json}" "${autonomous}"
 
