@@ -35,7 +35,7 @@ This is not optional. This is not guidance. If you output ANYTHING other than th
 
 **MANDATORY — execute before EVERY response, EVERY tool call, EVERY operation.** This applies to ALL tasks — not just Revenium-related ones.
 
-The guardrail status is maintained by a background cron job that checks Revenium every minute and writes the result to `~/.openclaw/skills/revenium/guardrail-status.json`. You read this local file — do NOT call the Revenium API directly.
+The guardrail status is maintained by a background cron job that checks Revenium every 15 minutes and writes the result to `~/.openclaw/skills/revenium/guardrail-status.json`. You read this local file — do NOT call the Revenium API directly.
 
 1. **Read guardrail status.** Read `~/.openclaw/skills/revenium/guardrail-status.json`. If it does not exist, tell the user "Guardrail status not yet available. The metering cron may not be installed. Run `bash ~/.openclaw/skills/revenium/scripts/install-cron.sh` to set it up." Then proceed with the operation.
 
@@ -81,25 +81,30 @@ Follow these steps in order. If any step fails, STOP and explain the failure. Do
    ```
    revenium config show
    ```
-   The sandbox reads credentials from a read-only bind mount of the host's `~/.config/revenium/` (set up by post-install.sh). If `revenium config show` reports a non-empty API Key, skip to step 3. If the CLI is not on PATH, tell the user to install it (`brew install revenium/tap/revenium` on macOS) and STOP.
+   The sandbox is authenticated via `REVENIUM_*` environment variables that post-install.sh injects from the host's `~/.config/revenium/` config — OpenClaw blocks mounting credential paths into the sandbox, so credentials are passed as env vars, not a live mount. If `revenium config show` reports a non-empty API Key, skip to step 3. If the CLI is not on PATH, tell the user to install it (`brew install revenium/tap/revenium` on macOS) and STOP.
 
-2. **If no API key is configured:** credentials must be set on the HOST. The bind mount into the sandbox is read-only, so `revenium config set ...` run from inside the agent session cannot persist.
+2. **If no API key is configured:** credentials must be set on the HOST and then injected into the sandbox by re-running post-install. `revenium config set ...` run from inside the agent session cannot persist or reach the sandbox.
 
    Collect the following from the user:
 
    - **API Key**: "Please provide your Revenium API key."
    - **Team ID**: "Please provide your Revenium Team ID."
    - **Tenant ID**: "Please provide your Revenium Tenant ID."
-   - **User ID** (owner id): "Please provide your Revenium User ID."
+   - **Owner ID**: "Please provide your Revenium Owner ID."
 
    Then instruct the user to run these commands in their HOST terminal (outside the agent session), one at a time:
    ```
    revenium config set key API_KEY
    revenium config set team-id TEAM_ID
    revenium config set tenant-id TENANT_ID
-   revenium config set owner-id USER_ID
+   revenium config set owner-id OWNER_ID
    ```
-   Because the sandbox sees host changes through the bind mount live, no post-install re-run or gateway restart is required — pause the setup flow while the user runs the commands on the host, then re-run `revenium config show` inside the agent session to confirm the API key is now visible. If it is still empty, STOP and tell the user to run `/revenium` when ready.
+   The sandbox does NOT see host credential changes live — they are injected as a snapshot at install time. After the user sets them on the host, they must re-run post-install and restart the gateway so the new credentials reach the sandbox:
+   ```
+   bash ~/.openclaw/skills/revenium/scripts/post-install.sh
+   systemctl --user restart openclaw-gateway.service
+   ```
+   Then re-run `revenium config show` inside the agent session to confirm the API Key is now visible. If it is still empty, STOP and tell the user to run `/revenium` when ready.
 
 3. **Run the setup script:**
    ```
@@ -118,7 +123,7 @@ Follow these steps in order. If any step fails, STOP and explain the failure. Do
    ```
    bash ~/.openclaw/skills/revenium/scripts/install-cron.sh
    ```
-   This registers a background job that ships token usage to Revenium every minute and keeps `guardrail-status.json` current. If the cron is already installed, this is a no-op.
+   This registers a background job that ships token usage to Revenium every 15 minutes and keeps `guardrail-status.json` current. If the cron is already installed, this is a no-op.
 
 ### Error Handling
 
@@ -162,7 +167,7 @@ If `revenium` is not found on PATH:
 
 If `revenium config show` reports no API key or an invalid key:
 - STOP all operations that require guardrail checking
-- Tell the user: "Your Revenium API key is missing or invalid inside the sandbox. The sandbox reads credentials from a read-only bind mount of your host's `~/.config/revenium/`, so fix them on the host: run `revenium config set key <KEY>` (plus `team-id`, `tenant-id`, `owner-id` as needed) in your HOST terminal. The change is picked up live — no post-install re-run or gateway restart needed. Then run `/revenium` to resume setup."
+- Tell the user: "Your Revenium API key is missing or invalid inside the sandbox. The sandbox is authenticated via environment variables injected from your host's `~/.config/revenium/` config — it is NOT a live mount. Fix the credentials on the host: run `revenium config set key <KEY>` (plus `team-id`, `tenant-id`, `owner-id` as needed) in your HOST terminal, then re-run `bash ~/.openclaw/skills/revenium/scripts/post-install.sh` and restart the gateway so the new credentials reach the sandbox. Then run `/revenium` to resume setup."
 
 ### Network Errors
 
