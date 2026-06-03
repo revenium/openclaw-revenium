@@ -8,6 +8,22 @@ A global OpenClaw skill that uses the `revenium` CLI to **enforce token-budget g
 
 Agents never silently blow through token budgets — every turn is guardrail-checked and the user retains control over continuing past a threshold — **and** every completion is metered and attributed (by root session + task type) so spend is observable in Revenium.
 
+## Current Milestone: v1.1 Agentic Job Tracking
+
+**Goal:** Group an OpenClaw agent's work into Revenium *agentic jobs* — every completion attributed to a job, jobs opened and closed with a terminal outcome — so spend and success are observable at the job level, not just per session/task-type.
+
+**Target features:**
+- Job declaration via agent-written `kind:"job"` markers (new SKILL.md directive; mirrors the v1.0 task-type pattern, no native-hook dependency)
+- Full job lifecycle: `jobs create` → `meter completion --agentic-job-*` → `jobs outcome` (SUCCESS / FAILED / CANCELLED)
+- `job-taxonomy.json` — 11 coarse-grained labels ported from the Hermes skill
+- Root-job rollup — subagent completions ship the root session's `agentic_job_id` (extends v1.0 root-session resolution)
+- Halt → CANCELLED — a guardrail halt mid-job closes that job with outcome CANCELLED (`job_type:"interrupted"`)
+- Idempotent job ledger so jobs are created/closed once across cron ticks
+
+**Reference:** `hermes-revenium` skill is the design source; ported and adapted to OpenClaw's agent-marker architecture (Hermes uses an LLM `on_session_end` classifier plugin — deliberately not adopted here per v1.0's unconfirmed-hooks decision).
+
+**Explicitly deferred this milestone:** per-job-type budget rules/guardrails (rely on existing `AGENT:STARTS_WITH` enforcement + server-side job rollup); classifier-plugin job inference (future milestone, gated on confirming OpenClaw session-end hooks).
+
 ## Requirements
 
 ### Validated
@@ -22,12 +38,13 @@ Agents never silently blow through token budgets — every turn is guardrail-che
 
 ### Active
 
-(None — v1.0 shipped. Next milestone requirements defined via `/gsd-new-milestone`.)
+v1.1 Agentic Job Tracking — requirements defined in `.planning/REQUIREMENTS.md` (job declaration, lifecycle, taxonomy, root rollup, halt outcome).
 
 ### Out of Scope
 
-- **Agentic Job tracking** (`--agentic-job-id`/`-name`/`-type`, `job-taxonomy.json`, `kind:"job"` markers) — richer than per-session `--agent` rollup; deliberately deferred from v1.0, candidate for a future milestone
-- Code-side classifier *plugin* + OpenClaw `pre_llm_call`/`pre_tool_call` hooks — agent-driven marker write is used instead (native hook events unconfirmed)
+- ~~**Agentic Job tracking**~~ — promoted into scope for **v1.1** (see Current Milestone)
+- Code-side classifier *plugin* + OpenClaw `pre_llm_call`/`pre_tool_call`/`on_session_end` hooks — agent-driven marker write is used instead (native hook events unconfirmed); job inference via classifier plugin deferred to a future milestone
+- **Per-job-type budget rules/guardrails** — v1.1 job tracking is observability-only; enforcement stays on existing `AGENT:STARTS_WITH` rules with server-side job rollup
 - Tool-event reporting (`meter tool-event`)
 - Mobile/desktop companion app — CLI/agent-level skill only
 - Multi-agent budget splitting — single shared budget per machine; rollup is per root session
@@ -64,7 +81,25 @@ Agents never silently blow through token budgets — every turn is guardrail-che
 | `AGENT:STARTS_WITH:openclaw-` attribution (D-07) | Per-root-session rollup; supersedes static `AGENT:IS:OpenClaw` | ✓ Good (Phase 4) |
 | Agent-driven marker write (not native hooks) | OpenClaw `pre_llm_call` hook events unconfirmed | ⚠️ Revisit — markers land after the turn's completion; correlation reworked to completion_id keying |
 | Task-type correlation by `completion_id` + marker-after fallback | Timestamp-precedence (marker before completion) never matched in practice | ✓ Good (post-Phase-4 debug fix) |
-| Defer Agentic Job tracking to a future milestone | Per-session `--agent` rollup sufficient for v1.0 | — Pending (future milestone) |
+| Defer Agentic Job tracking to a future milestone | Per-session `--agent` rollup sufficient for v1.0 | ✓ Promoted to v1.1 |
+| Agent-written `kind:"job"` markers (not classifier plugin) for v1.1 | Consistent with v1.0 task-type architecture; avoids unconfirmed OpenClaw session-end hook dependency | — Pending (v1.1) |
+
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
 
 ---
-*Last updated: 2026-06-03 after v1.0 milestone*
+*Last updated: 2026-06-03 — started milestone v1.1 Agentic Job Tracking*
