@@ -329,6 +329,63 @@ process_session() {
   root_sid=$(get_root_session_id "${session_id}")
   root_sid="${root_sid:-${session_id}}"
 
+  # Phase 7 (JROLL-01/02/03): resolve root's agentic_job_id ONCE per subagent
+  # session.  Root sessions (root_sid == session_id) skip entirely — Phase 6
+  # path is byte-identical (D-09).  Env-passing heredoc discipline (T-04-09):
+  # ROOT_SID / MARKERS_DIR passed via env, never interpolated into <<'PY'.
+  # Latest kind:job wins (D-05 — linear scan, no sort).
+  # Bash locals only — nothing added to _cleanup_session_tmp (Pitfall 5).
+  local root_aid="" root_job_name="" root_job_type=""
+  if [[ "${root_sid}" != "${session_id}" ]]; then
+    local _root_resolve
+    _root_resolve=$(
+      ROOT_SID="${root_sid}" MARKERS_DIR="${MARKERS_DIR}" python3 - <<'PY' 2>/dev/null || true
+import json, os
+from pathlib import Path
+root_sid = os.environ.get('ROOT_SID', '')
+markers_dir = os.environ.get('MARKERS_DIR', '')
+if root_sid and markers_dir:
+    marker_path = Path(markers_dir) / f"{root_sid}.jsonl"
+    if marker_path.exists():
+        latest_aid = ''
+        latest_name = ''
+        latest_type = ''
+        try:
+            with open(marker_path, 'r', encoding='utf-8') as fh:
+                for line in fh:
+                    line = line.rstrip('\n')
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    if rec.get('kind') == 'job':
+                        aid = rec.get('agentic_job_id') or ''
+                        if isinstance(aid, str) and aid:
+                            # Sanitize pipe / newline / colon (parity with WR-01 / D-08)
+                            for _bad in ('|', '\n', '\r', ':'):
+                                aid = aid.replace(_bad, '_')
+                            latest_aid = aid
+                            latest_name = str(rec.get('job_name', ''))
+                            latest_type = str(rec.get('job_type', ''))
+        except OSError:
+            pass
+        if latest_aid:
+            print(f"{latest_aid}\t{latest_name}\t{latest_type}")
+PY
+    )
+    _root_resolve="${_root_resolve%%$'\n'*}"
+    if [[ -n "${_root_resolve}" ]]; then
+      root_aid="${_root_resolve%%$'\t'*}"
+      local _rr2="${_root_resolve#*$'\t'}"
+      root_job_name="${_rr2%%$'\t'*}"
+      root_job_type="${_rr2#*$'\t'}"
+    fi
+  fi
+
   # Change 2 (METER-03 / NP-1 performance): read+sort markers ONCE per session
   # (not per completion line — Pitfall 3). Cache sorted list in a temp file.
   # Each line: "<ts>\t<task_type>\t<completion_id>" (completion_id may be empty
@@ -686,6 +743,28 @@ PY
       local agentic_job_id_log="${agentic_job_id:0:64}"
       if [[ -n "${agentic_job_id}" ]]; then
         info "Job correlation: tx_id=${tx_id} agentic_job_id=${agentic_job_id_log}"
+      fi
+    fi
+
+    # Phase 7 (JROLL-01/02/03): subagent override — replace same-session
+    # correlation with root's job values.  For root sessions (root_sid ==
+    # session_id) this block is skipped entirely — Phase 6 path is byte-identical.
+    if [[ "${root_sid}" != "${session_id}" ]]; then
+      if [[ -n "${root_aid}" ]]; then
+        # Inherit root's job for this completion (JROLL-01 / D-02)
+        agentic_job_id="${root_aid}"
+        agentic_job_name="${root_job_name}"
+        agentic_job_type="${root_job_type}"
+      else
+        # Race window or orphan subagent — omit entirely (JROLL-02 / D-03 / D-04 / D-07)
+        # NEVER substitute the subagent's own orphan id (D-04 safety invariant).
+        agentic_job_id=""
+        agentic_job_name=""
+        agentic_job_type=""
+      fi
+      if [[ -n "${root_aid}" ]]; then
+        local root_aid_log="${root_aid:0:64}"
+        info "Subagent job rollup: session=${session_id} root=${root_sid} root_aid=${root_aid_log}"
       fi
     fi
 
