@@ -31,6 +31,23 @@
 #     This is the CR-02/D-12 decoupling seam: a jobs-CLI failure must NOT wedge
 #     completion metering or the offset gate.
 #
+# Phase 8 halt-handler additions:
+#
+#   STUB_REVENIUM_HALT_JOBS_FAIL=1
+#     When set, `jobs create` and `jobs outcome` fail with a NON-409 error ONLY
+#     for halt-handler-driven calls — identified by either:
+#       (a) the --agentic-job-id value beginning with "guardrail-halt-" (synthetic
+#           interrupted job created by the halt handler, D-05/D-09), OR
+#       (b) a --result CANCELLED argument present in the call (halt-driven close of
+#           a real open job, D-04).
+#     Normal per-session `jobs create`/`jobs outcome` calls (with regular job ids
+#     and SUCCESS/FAILED results) are UNAFFECTED — GROUP A-H assertions remain
+#     valid when this switch is set alongside a normal session fixture.
+#     This is the D-10 fail-open decoupling seam: a halt-jobs failure must NOT
+#     abort the tick or endanger per-session metering.
+#     Detection uses `printf '%s\n' "$@" | grep -qF --` idiom (same as
+#     STUB_REVENIUM_409_FOR) — no eval, no string interpolation of argv.
+#
 # SECURITY (T-04-09 / V5): this stub only string-COMPAREs positional args and
 # captures them with `printf '%s\n'`. It never `eval`s or string-interpolates
 # captured argv into a command.
@@ -84,6 +101,17 @@ if [[ "$1 $2" == "jobs create" || "$1 $2" == "jobs outcome" ]]; then
   if [[ -n "${STUB_REVENIUM_JOBS_FAIL:-}" ]]; then
     echo "Error: 500 jobs service unavailable" >&2
     exit 1
+  fi
+
+  # Halt-handler jobs-fail switch (Phase 8 D-10 fail-open seam): fails ONLY for
+  # halt-driven calls — guardrail-halt- synthetic id OR --result CANCELLED.
+  # Normal per-session calls (regular ids, SUCCESS/FAILED results) pass through.
+  if [[ -n "${STUB_REVENIUM_HALT_JOBS_FAIL:-}" ]]; then
+    if printf '%s\n' "$@" | grep -qF -- "guardrail-halt-" || \
+       printf '%s\n' "$@" | grep -qF -- "CANCELLED"; then
+      echo "Error: 500 halt jobs service unavailable" >&2
+      exit 1
+    fi
   fi
 fi
 
