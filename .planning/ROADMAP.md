@@ -106,7 +106,7 @@ Plans:
   4. `report.sh` resolves the root session ID and passes `--agent "openclaw-{root_session_id}"` so subagent spend aggregates correctly in Revenium
   5. `setup-guardrails.sh --interactive` offers optional per-task-type budget rules drawn from `task-taxonomy.json`
 
-**Plans:** 1/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 
@@ -115,8 +115,8 @@ Plans:
 - [x] 04-01-PLAN.md — Foundation: task-taxonomy.json + common.sh constants/resolver wrapper + get-root-session-id.py + test harness
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 04-02-PLAN.md — write-marker.sh + report.sh task-type correlation and --agent/--task-type wiring
-- [ ] 04-03-PLAN.md — setup-guardrails.sh STARTS_WITH base filter + per-task-type budget-rule picker
+- [x] 04-02-PLAN.md — write-marker.sh + report.sh task-type correlation and --agent/--task-type wiring
+- [x] 04-03-PLAN.md — setup-guardrails.sh STARTS_WITH base filter + per-task-type budget-rule picker
 **Wave 3** *(blocked on Waves 1-2)*
 
 - [ ] 04-04-PLAN.md — SKILL.md TASK CLASSIFICATION + legacy notice; cron.sh marker prune; post-install wiring
@@ -131,4 +131,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Skill Scaffolding | 1/1 | Complete    | 2026-03-14 |
 | 2. Setup Flow | 1/1 | Complete    | 2026-05-29 |
 | 3. Guardrail Engine | 8/8 | Complete   | 2026-05-31 |
-| 4. Task Metering & Attribution | 1/4 | In Progress|  |
+| 4. Task Metering & Attribution | 3/4 | In Progress|  |
