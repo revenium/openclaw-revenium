@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: milestone_complete
-last_updated: 2026-06-03T14:56:25.345Z
-last_activity: 2026-06-03 -- Phase 04 execution started
+status: Awaiting next milestone
+last_updated: "2026-06-03T14:59:10.968Z"
+last_activity: 2026-06-03 — Milestone v1.0 completed and archived
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 14
   completed_plans: 14
-  percent: 75
-stopped_at: Milestone complete (Phase 04 was final phase)
+  percent: 100
 ---
 
 # Project State
@@ -25,12 +24,10 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 
 ## Current Position
 
-Phase: 04
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-06-03
-
-Progress: [██████████] 100%
+Phase: Milestone v1.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-03 — Milestone v1.0 completed and archived
 
 ## Performance Metrics
 
@@ -85,8 +82,23 @@ None yet.
 - [Phase 3]: `revenium guardrails enforcement-rules get` returns integer ruleIds; `budget-rules list` returns string-hash IDs — name-based join required (confirmed in Hermes guardrail-check.sh)
 - [Phase 4]: OpenClaw subagent session model (parentSessionId field in session JSONL) needs verification before root-session-ID walk can be implemented
 
+## Deferred Items
+
+Items acknowledged and deferred at milestone close on 2026-06-03:
+
+| Category | Item | Status | Note |
+|----------|------|--------|------|
+| uat_gap | 04-HUMAN-UAT | partial | Phase 4 accepted with 2 caveats: in-skill D-08 legacy notice firing unverified (rule fixed directly via CLI); subagent→root spend rollup unverified (no subagents in test session). Neither affects core metering correctness. |
+| verification_gap | 01-VERIFICATION | human_needed | Pre-existing — Phase 1 shipped with human_needed verification never flipped to passed. Skill scaffolding is in production use. |
+| verification_gap | 03-VERIFICATION | human_needed | Pre-existing — Phase 3 shipped with human_needed verification never flipped to passed. Guardrail engine is in production use. |
+| quick_task | 260327-o1o-replace-done-session-skip-with-line-offs | missing | Actually COMPLETE (commit 7481c0c, see Quick Tasks Completed table); audit flagged it only because the task directory was cleaned up. No action needed. |
+
 ## Session Continuity
 
 Last session: 2026-06-03T04:05:10.355Z
 Stopped at: Phase 4 context gathered
 Resume file: .planning/phases/04-task-metering-attribution/04-CONTEXT.md
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone
