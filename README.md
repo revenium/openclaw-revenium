@@ -67,7 +67,7 @@ This will:
 Restart the gateway so the sandbox and credential changes take effect:
 
 ```bash
-systemctl --user restart openclaw-gateway.service   # adjust for your gateway service manager
+openclaw gateway restart
 ```
 
 ### 5. Verify
@@ -127,7 +127,7 @@ revenium config set tenant-id <TENANT_ID>
 revenium config set owner-id <OWNER_ID>
 
 bash ~/.openclaw/skills/revenium/scripts/post-install.sh
-systemctl --user restart openclaw-gateway.service
+openclaw gateway restart
 ```
 
 ### 3. Verify it loads and the agent can run
@@ -144,7 +144,7 @@ git pull
 # Re-run post-install ONLY if the sandbox config, credentials, or AGENTS.md
 # injection changed; otherwise the running skill picks up script changes directly.
 bash scripts/post-install.sh   # if needed
-systemctl --user restart openclaw-gateway.service   # if post-install was re-run
+openclaw gateway restart   # if post-install was re-run
 ```
 
 > Runtime state files (`config.json`, `guardrail-status.json`, `*.log`, `*.lock`) are written into the skill directory at runtime. They are ignored by git, so they will not dirty the clone or block `git pull`.

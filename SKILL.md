@@ -102,7 +102,7 @@ Follow these steps in order. If any step fails, STOP and explain the failure. Do
    The sandbox does NOT see host credential changes live — they are injected as a snapshot at install time. After the user sets them on the host, they must re-run post-install and restart the gateway so the new credentials reach the sandbox:
    ```
    bash ~/.openclaw/skills/revenium/scripts/post-install.sh
-   systemctl --user restart openclaw-gateway.service
+   openclaw gateway restart
    ```
    Then re-run `revenium config show` inside the agent session to confirm the API Key is now visible. If it is still empty, STOP and tell the user to run `/revenium` when ready.
 
