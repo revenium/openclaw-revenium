@@ -572,12 +572,208 @@ fi
 rm -f "${ARGV_FILE_E1}" "${ARGV_FILE_E2}" "${ARGV_FILE_E_MERGED}"
 
 # ===========================================================================
+# GROUP F: Subagent inherits root's agentic_job_id (JROLL-01)
+#   ROOT session has a sessions_spawn link to CHILD session.
+#   ROOT marker declares a job (root-job-1a2b).
+#   CHILD marker has its OWN job id (child-job-9z9z) — proves it is NOT shipped.
+#   After report.sh runs:
+#     - child's completion ships --agentic-job-id == root-job-1a2b (inherited)
+#     - child's own id (child-job-9z9z) never appears in argv
+#     - exactly one ^create$ token (root only — child must NOT create)
+#     - one JOB:root-job-1a2b:created: line in jobs ledger
+# ===========================================================================
+ROOT_UUID_F="f0000000-aaaa-aaaa-aaaa-000000000001"
+CHILD_UUID_F="f0000000-cccc-cccc-cccc-000000000002"
+JOB_ID_ROOT_F="root-job-1a2b"
+JOB_NAME_ROOT_F="Root Job"
+JOB_TYPE_ROOT_F="feature_development"
+
+TMP_HOME_F=$(make_openclaw_home)
+ARGV_FILE_F=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-f.XXXXXX")
+
+# Root session JSONL with sessions_spawn tool result — required so
+# get-root-session-id.py resolves CHILD_UUID_F -> ROOT_UUID_F.
+# toolName must be literally "sessions_spawn"; details.childSessionKey must use
+# "agent:main:subagent:<UUID>" prefix (resolver strips prefix via rsplit(":", 1)[-1]).
+cat > "${TMP_HOME_F}/agents/main/sessions/${ROOT_UUID_F}.jsonl" <<JSONL
+{"type":"session","version":3,"id":"${ROOT_UUID_F}","timestamp":"2026-03-01T10:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"spawn-msg-f1","parentId":"00000000","timestamp":"2026-03-01T10:01:00.000Z","message":{"role":"toolResult","toolName":"sessions_spawn","content":[{"type":"text","text":"{}"}],"details":{"status":"accepted","childSessionKey":"agent:main:subagent:${CHILD_UUID_F}","runId":"run-f001"}}}
+{"type":"message","id":"comp-root-f001","parentId":"spawn-msg-f1","timestamp":"2026-03-01T10:04:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Root work done"}],"usage":{"input":100,"output":50,"cacheRead":0,"cacheWrite":0,"totalTokens":150}}}
+JSONL
+
+# Child session JSONL with one assistant completion
+cat > "${TMP_HOME_F}/agents/main/sessions/${CHILD_UUID_F}.jsonl" <<JSONL
+{"type":"session","version":3,"id":"${CHILD_UUID_F}","timestamp":"2026-03-01T10:02:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-child-f1","parentId":"00000000","timestamp":"2026-03-01T10:02:30.000Z","message":{"role":"user","content":[{"type":"text","text":"Subagent task"}]}}
+{"type":"message","id":"comp-child-f001","parentId":"user-child-f1","timestamp":"2026-03-01T10:03:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Subagent work done"}],"usage":{"input":80,"output":40,"cacheRead":0,"cacheWrite":0,"totalTokens":120}}}
+JSONL
+
+# Root job marker — root declares its job (enable JROLL-01 inherit path)
+printf '%s\n' '{"kind":"job","ts":"2026-03-01T10:05:00Z","sid":"'"${ROOT_UUID_F}"'","agentic_job_id":"'"${JOB_ID_ROOT_F}"'","job_name":"'"${JOB_NAME_ROOT_F}"'","job_type":"'"${JOB_TYPE_ROOT_F}"'","status":"SUCCESS","completion_id":"comp-root-f001"}' \
+  > "${TMP_HOME_F}/skills/revenium/markers/${ROOT_UUID_F}.jsonl"
+
+# Child marker with a DIFFERENT job id — proves it is NOT shipped (JROLL-01 / D-04)
+printf '%s\n' '{"kind":"job","ts":"2026-03-01T10:03:30Z","sid":"'"${CHILD_UUID_F}"'","agentic_job_id":"child-job-9z9z","job_name":"Child Own Job","job_type":"bug_fix","status":"SUCCESS","completion_id":"comp-child-f001"}' \
+  > "${TMP_HOME_F}/skills/revenium/markers/${CHILD_UUID_F}.jsonl"
+
+# Run report.sh for GROUP F
+run_report "${TMP_HOME_F}" "${ARGV_FILE_F}"
+JOBS_LEDGER_F="${TMP_HOME_F}/revenium-jobs.ledger"
+
+# ---------------------------------------------------------------------------
+# GROUP F assertions
+# ---------------------------------------------------------------------------
+
+# JROLL-01 F: child's completion ships the ROOT's agentic_job_id, not child's own
+all_stamped_ids_f=$(awk '/^--agentic-job-id$/{getline; print}' "${ARGV_FILE_F}" 2>/dev/null || true)
+if echo "${all_stamped_ids_f}" | grep -qx "${JOB_ID_ROOT_F}"; then
+  pass "JROLL-01 F: --agentic-job-id ${JOB_ID_ROOT_F} found in argv (root's id inherited by child)"
+else
+  fail "JROLL-01 F: expected --agentic-job-id ${JOB_ID_ROOT_F}, got '$(echo "${all_stamped_ids_f}" | tr '\n' '|')' (RED — rollup not yet in report.sh)"
+fi
+
+# JROLL-01 F: child's own id must NOT appear as a stamped agentic_job_id
+if echo "${all_stamped_ids_f}" | grep -qx "child-job-9z9z"; then
+  fail "JROLL-01 F: child's own id 'child-job-9z9z' leaked into --agentic-job-id (must NOT happen)"
+else
+  pass "JROLL-01 F: child's own id 'child-job-9z9z' NOT in stamped --agentic-job-id (correct)"
+fi
+
+# JROLL-01 F: --agentic-job-name value is the root's job name
+all_stamped_names_f=$(awk '/^--agentic-job-name$/{getline; print}' "${ARGV_FILE_F}" 2>/dev/null || true)
+if echo "${all_stamped_names_f}" | grep -qx "${JOB_NAME_ROOT_F}"; then
+  pass "JROLL-01 F: --agentic-job-name '${JOB_NAME_ROOT_F}' found (root's name inherited)"
+else
+  fail "JROLL-01 F: expected --agentic-job-name '${JOB_NAME_ROOT_F}', got '$(echo "${all_stamped_names_f}" | tr '\n' '|')' (RED)"
+fi
+
+# JROLL-01 F: --agentic-job-type value is the root's job type
+all_stamped_types_f=$(awk '/^--agentic-job-type$/{getline; print}' "${ARGV_FILE_F}" 2>/dev/null || true)
+if echo "${all_stamped_types_f}" | grep -qx "${JOB_TYPE_ROOT_F}"; then
+  pass "JROLL-01 F: --agentic-job-type '${JOB_TYPE_ROOT_F}' found (root's type inherited)"
+else
+  fail "JROLL-01 F: expected --agentic-job-type '${JOB_TYPE_ROOT_F}', got '$(echo "${all_stamped_types_f}" | tr '\n' '|')' (RED)"
+fi
+
+# JROLL-01 F: exactly 1 ^create$ token (only root creates — child must NOT create)
+create_count_f=$(count_grep "^create$" "${ARGV_FILE_F}")
+if [[ "${create_count_f}" -eq 1 ]]; then
+  pass "JROLL-01 F: exactly 1 ^create$ token (root creates once; child skips create)"
+else
+  fail "JROLL-01 F: expected 1 ^create$ token, got ${create_count_f} (RED)"
+fi
+
+# JROLL-01 F: jobs ledger has exactly one JOB:root-job-1a2b:created: line
+created_count_f=$(count_grep "^JOB:${JOB_ID_ROOT_F}:created:" "${JOBS_LEDGER_F}")
+if [[ "${created_count_f}" -eq 1 ]]; then
+  pass "JROLL-01 F: exactly 1 JOB:${JOB_ID_ROOT_F}:created: in jobs ledger"
+else
+  fail "JROLL-01 F: expected 1 JOB:${JOB_ID_ROOT_F}:created: ledger row, got ${created_count_f} (RED)"
+fi
+
+rm -f "${ARGV_FILE_F}"
+
+# ===========================================================================
+# GROUP G: Race window / orphan-drop — root has NO job marker yet (JROLL-02 / D-07)
+#   ROOT session has a sessions_spawn link to CHILD session.
+#   NO root job marker written (root has not declared its job — the race).
+#   CHILD has its OWN orphan job marker (orphan-job-7x7x) — proves it is NOT shipped.
+#   After report.sh runs:
+#     - NO --agentic-job-id in argv (race → omit entirely)
+#     - --agent IS present (v1.0 rollup still works)
+#     - --task-type IS present (metering byte-identical)
+#     - 0 ^create$ tokens (no job created)
+#     - 0 ^outcome$ tokens (no job outcome)
+#     - completion IS reported (a TX: line exists in revenium-reported.ledger)
+# ===========================================================================
+ROOT_UUID_G="g0000000-aaaa-aaaa-aaaa-000000000001"
+CHILD_UUID_G="g0000000-cccc-cccc-cccc-000000000002"
+
+TMP_HOME_G=$(make_openclaw_home)
+ARGV_FILE_G=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-g.XXXXXX")
+
+# Root session JSONL with sessions_spawn link — resolver needs this to identify CHILD as subagent
+cat > "${TMP_HOME_G}/agents/main/sessions/${ROOT_UUID_G}.jsonl" <<JSONL
+{"type":"session","version":3,"id":"${ROOT_UUID_G}","timestamp":"2026-03-02T10:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"spawn-msg-g1","parentId":"00000000","timestamp":"2026-03-02T10:01:00.000Z","message":{"role":"toolResult","toolName":"sessions_spawn","content":[{"type":"text","text":"{}"}],"details":{"status":"accepted","childSessionKey":"agent:main:subagent:${CHILD_UUID_G}","runId":"run-g001"}}}
+JSONL
+
+# Child session JSONL with one assistant completion
+cat > "${TMP_HOME_G}/agents/main/sessions/${CHILD_UUID_G}.jsonl" <<JSONL
+{"type":"session","version":3,"id":"${CHILD_UUID_G}","timestamp":"2026-03-02T10:02:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-child-g1","parentId":"00000000","timestamp":"2026-03-02T10:02:30.000Z","message":{"role":"user","content":[{"type":"text","text":"Subagent task"}]}}
+{"type":"message","id":"comp-child-g001","parentId":"user-child-g1","timestamp":"2026-03-02T10:03:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Subagent work done"}],"usage":{"input":80,"output":40,"cacheRead":0,"cacheWrite":0,"totalTokens":120}}}
+JSONL
+
+# NO root job marker — root has NOT declared a job yet (race window)
+# Child has its OWN orphan marker — proves the orphan id is dropped, not shipped (D-04/D-07)
+printf '%s\n' '{"kind":"job","ts":"2026-03-02T10:03:30Z","sid":"'"${CHILD_UUID_G}"'","agentic_job_id":"orphan-job-7x7x","job_name":"Orphan Job","job_type":"bug_fix","status":"SUCCESS","completion_id":"comp-child-g001"}' \
+  > "${TMP_HOME_G}/skills/revenium/markers/${CHILD_UUID_G}.jsonl"
+
+# Run report.sh for GROUP G
+run_report "${TMP_HOME_G}" "${ARGV_FILE_G}"
+COMPLETION_LEDGER_G="${TMP_HOME_G}/revenium-reported.ledger"
+
+# ---------------------------------------------------------------------------
+# GROUP G assertions
+# ---------------------------------------------------------------------------
+
+# JROLL-02 G: NO --agentic-job-id in argv (race → omit entirely; orphan id never leaks)
+job_id_count_g=$(count_grep "^--agentic-job-id$" "${ARGV_FILE_G}")
+if [[ "${job_id_count_g}" -eq 0 ]]; then
+  pass "JROLL-02 G: zero --agentic-job-id tokens (race → omit; orphan id not leaked)"
+else
+  fail "JROLL-02 G: expected 0 --agentic-job-id tokens, got ${job_id_count_g} (RED — orphan id must never ship)"
+fi
+
+# JROLL-02 G: --agent IS present (v1.0 openclaw- attribution still works)
+if grep -q "^--agent$" "${ARGV_FILE_G}" 2>/dev/null; then
+  pass "JROLL-02 G: --agent present in argv (v1.0 rollup unaffected)"
+else
+  fail "JROLL-02 G: --agent NOT present in argv (RED — v1.0 metering must not break)"
+fi
+
+# JROLL-02 G: --task-type IS present (metering byte-identical)
+if grep -q "^--task-type$" "${ARGV_FILE_G}" 2>/dev/null; then
+  pass "JROLL-02 G: --task-type present in argv (metering byte-identical)"
+else
+  fail "JROLL-02 G: --task-type NOT present in argv (RED)"
+fi
+
+# JROLL-02 G: 0 ^create$ tokens (no job created in race scenario)
+create_count_g=$(count_grep "^create$" "${ARGV_FILE_G}")
+if [[ "${create_count_g}" -eq 0 ]]; then
+  pass "JROLL-02 G: 0 ^create$ tokens (no job create in race/orphan scenario)"
+else
+  fail "JROLL-02 G: expected 0 ^create$ tokens, got ${create_count_g} (RED)"
+fi
+
+# JROLL-02 G: 0 ^outcome$ tokens (no job outcome in race scenario)
+outcome_count_g=$(count_grep "^outcome$" "${ARGV_FILE_G}")
+if [[ "${outcome_count_g}" -eq 0 ]]; then
+  pass "JROLL-02 G: 0 ^outcome$ tokens (no job outcome in race/orphan scenario)"
+else
+  fail "JROLL-02 G: expected 0 ^outcome$ tokens, got ${outcome_count_g} (RED)"
+fi
+
+# JROLL-02 G (D-07): completion IS still reported (TX: line exists in revenium-reported.ledger)
+tx_count_g=$(count_grep "^TX:comp-child-g001$" "${COMPLETION_LEDGER_G}")
+if [[ "${tx_count_g}" -ge 1 ]]; then
+  pass "JROLL-02 G (D-07): completion comp-child-g001 IS reported (TX: ledger line exists)"
+else
+  fail "JROLL-02 G (D-07): comp-child-g001 NOT in revenium-reported.ledger (RED — spend must still ship)"
+fi
+
+rm -f "${ARGV_FILE_G}"
+
+# ===========================================================================
 # GROUP A cleanup
 # ===========================================================================
 # (tmp homes cleaned up by EXIT trap below or manually here)
 
 cleanup_all() {
-  rm -rf "${TMP_HOME_A}" "${TMP_HOME_B}" "${TMP_HOME_C}" "${TMP_HOME_D}" "${TMP_HOME_E}" 2>/dev/null || true
+  rm -rf "${TMP_HOME_A}" "${TMP_HOME_B}" "${TMP_HOME_C}" "${TMP_HOME_D}" "${TMP_HOME_E}" \
+    "${TMP_HOME_F}" "${TMP_HOME_G}" 2>/dev/null || true
   cleanup
 }
 trap cleanup_all EXIT
