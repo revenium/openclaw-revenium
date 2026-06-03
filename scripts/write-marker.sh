@@ -4,8 +4,10 @@
 #
 # Called by SKILL.md TASK CLASSIFICATION section. Validates <task_type> against
 # the taxonomy allowlist, resolves the current session id (newest non-cron
-# session file), and appends {"ts":"<ISO8601Z>","task_type":"<label>"} under
-# fcntl.LOCK_EX + O_APPEND.
+# session file), and appends {"ts":"<ISO8601Z>","task_type":"<label>","completion_id":"<id>"}
+# under fcntl.LOCK_EX + O_APPEND. completion_id is the .id of the most recent
+# assistant completion in the session; omitted if not resolvable (so report.sh
+# falls back to Approach D timestamp correlation).
 #
 # Usage:
 #   bash ~/.openclaw/skills/revenium/scripts/write-marker.sh <task_type>
@@ -98,8 +100,13 @@ non_cron = [f for f in all_files if f[:-len('.jsonl')] not in cron_sids]
 # lost to `unclassified`. Prefer the non-cron session that most recently
 # appended an assistant *completion* (the conversation this marker describes);
 # fall back to non-cron mtime. Never fall back to cron sessions.
-def last_completion_ts(fname):
-    """Return the ts of the last assistant-message line, or None.
+#
+# Also capture the .id of the most recent assistant completion so report.sh can
+# correlate by exact id match (Approach A) before falling back to timestamp
+# ordering (Approach D). The id is the top-level .id field on the JSONL record,
+# NOT the nested message id.
+def last_completion_info(fname):
+    """Return (ts, completion_id) of the last assistant-message line, or (None, None).
     Reads only the tail to stay cheap on large session logs."""
     path = os.path.join(sessions_dir, fname)
     try:
@@ -111,8 +118,9 @@ def last_completion_ts(fname):
             fh.seek(size - window)
             chunk = fh.read().decode('utf-8', 'replace')
     except OSError:
-        return None
-    best = None
+        return None, None
+    best_ts = None
+    best_id = None
     for line in chunk.splitlines():
         line = line.strip()
         if not line:
@@ -126,27 +134,39 @@ def last_completion_ts(fname):
         msg = rec.get('message')
         if rec.get('type') == 'message' and isinstance(msg, dict) and msg.get('role') == 'assistant':
             ts = rec.get('timestamp') or ''
-            if ts and (best is None or ts > best):
-                best = ts
-    return best
+            if ts and (best_ts is None or ts > best_ts):
+                best_ts = ts
+                # .id at the top-level record is the stable completion identifier
+                best_id = rec.get('id') or None
+    return best_ts, best_id
+
+# Keep backward-compatible helper for session selection (uses ts only)
+def last_completion_ts(fname):
+    ts, _ = last_completion_info(fname)
+    return ts
 
 sid = None
+completion_id = None
 if non_cron:
     # First choice: session with the most recent assistant completion.
-    annotated = [(f, last_completion_ts(f)) for f in non_cron]
-    with_completion = [(f, ts) for f, ts in annotated if ts is not None]
+    annotated = [(f, last_completion_info(f)) for f in non_cron]
+    with_completion = [(f, ts, cid) for f, (ts, cid) in annotated if ts is not None]
     if with_completion:
-        newest = max(with_completion, key=lambda pair: pair[1])[0]
+        newest_entry = max(with_completion, key=lambda t: t[1])
+        newest = newest_entry[0]
+        completion_id = newest_entry[2]  # may be None if .id absent on that record
     else:
         # No completions yet in any non-cron session — fall back to mtime,
         # still restricted to non-cron files.
         newest = max(non_cron, key=lambda f: os.path.getmtime(os.path.join(sessions_dir, f)))
+        completion_id = None
     sid = newest[:-len('.jsonl')]
 else:
     # No non-cron session files at all — use a pseudo sid. We deliberately do
     # NOT fall back to cron sessions: filing a marker under a cron session id
     # guarantees it is never correlated to a real user turn.
     sid = f"pseudo-{int(time.time())}"
+    completion_id = None
 
 # --- Path-traversal guard (ASVS V5 / T-04-06) ---
 if not re.fullmatch(r'[0-9a-fA-F-]+|pseudo-[0-9]+', sid):
@@ -156,11 +176,16 @@ if not re.fullmatch(r'[0-9a-fA-F-]+|pseudo-[0-9]+', sid):
 os.makedirs(markers_dir, mode=0o700, exist_ok=True)
 
 # --- Build the marker record with ISO8601 ts (Pitfall 2 / NP-1) ---
+# completion_id: id of the most recent assistant completion (Approach A key).
+# Omit the field entirely when not resolvable so report.sh can detect its
+# absence and apply the Approach D fallback without inspecting an empty string.
 marker_path = os.path.join(markers_dir, f"{sid}.jsonl")
 rec = {
     "ts": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
     "task_type": tt
 }
+if completion_id:
+    rec["completion_id"] = completion_id
 
 # --- Append under fcntl.LOCK_EX + O_APPEND (T-04-07) ---
 # Use json.dumps with compact separators so no raw label bytes hit the file

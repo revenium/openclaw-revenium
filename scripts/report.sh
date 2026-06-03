@@ -318,7 +318,8 @@ process_session() {
 
   # Change 2 (METER-03 / NP-1 performance): read+sort markers ONCE per session
   # (not per completion line — Pitfall 3). Cache sorted list in a temp file.
-  # Each line: "<ts>\t<task_type>"
+  # Each line: "<ts>\t<task_type>\t<completion_id>" (completion_id may be empty
+  # for legacy markers written before id-stamping was added).
   # WR-01: declare all per-iteration temp files up front and clean them with a
   # single function-scoped helper. A bare `trap ... EXIT` would be overwritten
   # by the second trap (and by every loop iteration), leaking temp files every
@@ -330,9 +331,10 @@ process_session() {
   }
   local marker_file="${MARKERS_DIR}/${session_id}.jsonl"
   if [[ -f "${marker_file}" ]]; then
-    # Parse marker JSONL into tab-separated "ts<TAB>task_type", sorted by ts.
-    # Per-line try/except for malformed lines (T-04-05). Sort is lexicographic
-    # on ISO8601 UTC ts strings (Pitfall 2 / NP-1).
+    # Parse marker JSONL into tab-separated "ts<TAB>task_type<TAB>completion_id",
+    # sorted by ts. Per-line try/except for malformed lines (T-04-05). Sort is
+    # lexicographic on ISO8601 UTC ts strings (Pitfall 2 / NP-1).
+    # Backward-compatible: old markers without completion_id emit an empty 3rd field.
     # Env-passing heredoc discipline: no ${VAR} interpolation inside <<'PY' (T-04-09).
     _MARKER_FILE="${marker_file}" python3 - <<'PY' 2>/dev/null >> "${markers_cache_file}" || true
 import json, os, sys
@@ -348,12 +350,12 @@ try:
             except Exception:
                 continue
             if isinstance(r, dict) and r.get('ts') and r.get('task_type'):
-                rows.append((r['ts'], r['task_type']))
+                rows.append((r['ts'], r['task_type'], r.get('completion_id', '')))
 except Exception:
     pass
 rows.sort(key=lambda x: x[0])
-for ts, tt in rows:
-    sys.stdout.write(f"{ts}\t{tt}\n")
+for ts, tt, cid in rows:
+    sys.stdout.write(f"{ts}\t{tt}\t{cid}\n")
 PY
   fi
 
@@ -471,17 +473,25 @@ PY
     tx_id=$(echo "${line}" | jq -r '.id // empty' 2>/dev/null || echo "${session_id}-$(date +%s%N)")
     stop_reason=$(map_stop_reason "$(echo "${line}" | jq -r '.message.stopReason // "stop"')")
 
-    # Change 3 (METER-03 / NP-1): timestamp-precedence task_type lookup.
-    # Use the markers_cache_file (sorted ts<TAB>task_type lines) built once per
-    # session above. For each completion, pick the latest marker where marker_ts
-    # <= completion_ts. Default unclassified (A4). Never aborts the tick (T-04-05).
+    # Change 3 (METER-03 / NP-1 fix): two-phase task_type lookup.
+    # Phase A (exact): if any marker in the session carries completion_id matching
+    #   this completion's .id, use that marker's task_type immediately.
+    # Phase D (fallback): if no id-match (legacy marker without completion_id, or
+    #   no marker references this completion), pick the EARLIEST marker whose
+    #   marker_ts >= completion_ts (the first marker written after the completion).
+    #   This models the real OpenClaw lifecycle where write-marker.sh runs AFTER
+    #   the turn's LLM completion, making the marker's ts always later than the
+    #   completion it classifies.
+    # Default: unclassified when no marker qualifies (A4).
+    # Never aborts the tick (T-04-05). Backward-compatible with legacy markers.
     local task_type="unclassified"
     if [[ -s "${markers_cache_file}" ]]; then
-      task_type=$(_MARKERS_CACHE="${markers_cache_file}" COMPLETION_TS="${timestamp}" python3 - <<'PY' 2>/dev/null || echo "unclassified"
+      task_type=$(_MARKERS_CACHE="${markers_cache_file}" COMPLETION_TS="${timestamp}" COMPLETION_ID="${tx_id}" python3 - <<'PY' 2>/dev/null || echo "unclassified"
 import os
 from datetime import datetime, timezone
 mc = os.environ.get('_MARKERS_CACHE', '')
 cts_raw = os.environ.get('COMPLETION_TS', '')
+cid = os.environ.get('COMPLETION_ID', '')
 chosen = 'unclassified'
 
 # WR-02: compare parsed datetimes, not raw strings. Markers are written with
@@ -496,31 +506,47 @@ def parse_ts(s):
         except Exception: pass
     return None
 
-cts = parse_ts(cts_raw)
+rows = []
 try:
     with open(mc, encoding='utf-8') as fh:
         for line in fh:
             line = line.strip()
             if not line: continue
-            parts = line.split('\t', 1)
-            if len(parts) != 2: continue
-            ts, tt = parts
-            mts = parse_ts(ts)
-            # Cache is sorted ascending; once a marker is strictly after the
-            # completion we can stop. If either side fails to parse, fall back
-            # to the raw lexicographic compare so behavior degrades gracefully.
-            if mts is not None and cts is not None:
-                if mts <= cts:
-                    chosen = tt
-                else:
-                    break
-            else:
-                if ts <= cts_raw:
-                    chosen = tt
-                else:
-                    break
+            parts = line.split('\t', 2)
+            if len(parts) < 2: continue
+            ts = parts[0]
+            tt = parts[1]
+            marker_cid = parts[2] if len(parts) > 2 else ''
+            rows.append((ts, tt, marker_cid))
 except Exception:
     pass
+
+# --- Phase A: exact completion_id match ---
+if cid:
+    for ts, tt, marker_cid in rows:
+        if marker_cid and marker_cid == cid:
+            chosen = tt
+            break
+
+# --- Phase D: earliest marker at or after completion ts (fallback) ---
+if chosen == 'unclassified':
+    cts = parse_ts(cts_raw)
+    for ts, tt, marker_cid in rows:
+        # Skip markers that have a completion_id: they belong to a specific
+        # completion and should not bleed into others via timestamp fallback.
+        if marker_cid:
+            continue
+        mts = parse_ts(ts)
+        if mts is not None and cts is not None:
+            if mts >= cts:
+                chosen = tt
+                break
+        else:
+            # Graceful degradation: raw string compare
+            if ts >= cts_raw:
+                chosen = tt
+                break
+
 print(chosen)
 PY
       )

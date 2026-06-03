@@ -4,11 +4,24 @@
 # (METER-03 / TRACE-01 / TRACE-02)
 #
 # Strategy:
-#   - Build a tmp OPENCLAW_HOME with two session JSONL fixtures:
-#       session A: has two markers (research@T1, generation@T2); two completions:
-#                  comp1 between T1 and T2 → should tag --task-type research
-#                  comp2 after T2 → should tag --task-type generation
-#       session B: no marker file → every completion tagged --task-type unclassified
+#   Build a tmp OPENCLAW_HOME with four session JSONL fixtures:
+#
+#   Session A (Phase D — marker-after-completion, no completion_id):
+#     Two completions each followed by a marker WITHOUT a completion_id.
+#     comp1 → marker1(research) written AFTER comp1  → Phase D picks research
+#     comp2 → marker2(generation) written AFTER comp2 → Phase D picks generation
+#     Encodes the REAL OpenClaw lifecycle: write-marker.sh fires after the turn.
+#
+#   Session B (no marker file):
+#     Every completion tagged --task-type unclassified.
+#
+#   Session C (Phase A — exact completion_id match):
+#     Marker carries completion_id = comp's .id → exact match → tagged correctly.
+#
+#   Session D (anti-bleed — id-keyed marker does NOT steal label for other turns):
+#     comp1 has a matching marker (completion_id=comp1_id) → tagged
+#     comp2 has NO marker referencing it → unclassified (must not steal comp1's)
+#
 #   - Place stub-revenium.sh on PATH capturing all argv to STUB_REVENIUM_ARGV_FILE
 #   - Run report.sh
 #   - Assert captured argv contains --task-type with correct labels and
@@ -51,34 +64,40 @@ CONFIG_FILE="${TMP_SKILL_DIR}/config.json"
 echo '{"organizationName":"TestOrg"}' > "${CONFIG_FILE}"
 
 # ---------------------------------------------------------------------------
-# Session A: two completions at different timestamps (with markers)
+# Session A: Phase D — marker-after-completion ordering (REAL lifecycle)
+#
+# In the real OpenClaw lifecycle, write-marker.sh is called AFTER the LLM
+# completion is produced, so the marker's ts is always LATER than the
+# completion it classifies. Phase D correlation picks the earliest marker
+# whose marker_ts >= completion_ts.
+#
+# Timestamps:
+#   T1: comp1 response    2026-01-01T10:06:00Z
+#   T2: marker research   2026-01-01T10:07:00Z  → marker after comp1 → research
+#   T3: comp2 response    2026-01-01T10:09:00Z
+#   T4: marker generation 2026-01-01T10:10:00Z  → marker after comp2 → generation
+#
+# Markers for Session A have NO completion_id (legacy/Phase-D path).
 # ---------------------------------------------------------------------------
 SID_A="aaaaaaaa-1111-1111-1111-000000000001"
 SESSION_A="${TMP_SESSIONS}/${SID_A}.jsonl"
 
-# Timestamps:
-#   T0: session start     2026-01-01T10:00:00Z
-#   T1: marker research   2026-01-01T10:05:00Z
-#   T2: comp1 response    2026-01-01T10:06:00Z  → research (T1 <= T2)
-#   T3: marker generation 2026-01-01T10:08:00Z
-#   T4: comp2 response    2026-01-01T10:10:00Z  → generation (T3 <= T4)
-#
-# Session JSONL lines: session header, user msg, two assistant completions
 cat > "${SESSION_A}" <<'JSONL'
 {"type":"session","version":3,"id":"aaaaaaaa-1111-1111-1111-000000000001","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
 {"type":"message","id":"user-A-001","parentId":"00000000","timestamp":"2026-01-01T10:04:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Research task"}]}}
 {"type":"message","id":"comp-A-001","parentId":"user-A-001","timestamp":"2026-01-01T10:06:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Research response"}],"usage":{"input":100,"output":50,"cacheRead":0,"cacheWrite":0,"totalTokens":150}}}
-{"type":"message","id":"user-A-002","parentId":"comp-A-001","timestamp":"2026-01-01T10:09:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Generation task"}]}}
-{"type":"message","id":"comp-A-002","parentId":"user-A-002","timestamp":"2026-01-01T10:10:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Generation response"}],"usage":{"input":120,"output":60,"cacheRead":0,"cacheWrite":0,"totalTokens":180}}}
+{"type":"message","id":"user-A-002","parentId":"comp-A-001","timestamp":"2026-01-01T10:08:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Generation task"}]}}
+{"type":"message","id":"comp-A-002","parentId":"user-A-002","timestamp":"2026-01-01T10:09:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Generation response"}],"usage":{"input":120,"output":60,"cacheRead":0,"cacheWrite":0,"totalTokens":180}}}
 JSONL
 
-# Marker file for session A: two markers
+# Marker file for session A: two markers WITHOUT completion_id (legacy Phase D markers).
+# Markers are written AFTER their respective completions.
 MARKER_A="${TMP_MARKERS}/${SID_A}.jsonl"
-echo '{"ts":"2026-01-01T10:05:00Z","task_type":"research"}' > "${MARKER_A}"
-echo '{"ts":"2026-01-01T10:08:00Z","task_type":"generation"}' >> "${MARKER_A}"
+echo '{"ts":"2026-01-01T10:07:00Z","task_type":"research"}' > "${MARKER_A}"
+echo '{"ts":"2026-01-01T10:10:00Z","task_type":"generation"}' >> "${MARKER_A}"
 
 # ---------------------------------------------------------------------------
-# Session B: one completion, no marker file (should be unclassified)
+# Session B: no marker file (should be unclassified)
 # ---------------------------------------------------------------------------
 SID_B="bbbbbbbb-2222-2222-2222-000000000002"
 SESSION_B="${TMP_SESSIONS}/${SID_B}.jsonl"
@@ -90,6 +109,51 @@ cat > "${SESSION_B}" <<'JSONL'
 JSONL
 
 # No marker file for SID_B
+
+# ---------------------------------------------------------------------------
+# Session C: Phase A — exact completion_id match
+#
+# The marker carries completion_id = comp-C-001 (the completion's .id).
+# Phase A should match it regardless of timestamp ordering.
+# The marker ts is AFTER the completion ts (real lifecycle).
+# ---------------------------------------------------------------------------
+SID_C="cccccccc-3333-3333-3333-000000000003"
+SESSION_C="${TMP_SESSIONS}/${SID_C}.jsonl"
+
+cat > "${SESSION_C}" <<'JSONL'
+{"type":"session","version":3,"id":"cccccccc-3333-3333-3333-000000000003","timestamp":"2026-01-01T12:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-C-001","parentId":"00000000","timestamp":"2026-01-01T12:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Analysis task"}]}}
+{"type":"message","id":"comp-C-001","parentId":"user-C-001","timestamp":"2026-01-01T12:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Analysis response"}],"usage":{"input":90,"output":45,"cacheRead":0,"cacheWrite":0,"totalTokens":135}}}
+JSONL
+
+# Marker for session C: includes completion_id → Phase A exact match.
+MARKER_C="${TMP_MARKERS}/${SID_C}.jsonl"
+echo '{"ts":"2026-01-01T12:03:00Z","task_type":"analysis","completion_id":"comp-C-001"}' > "${MARKER_C}"
+
+# ---------------------------------------------------------------------------
+# Session D: anti-bleed — id-keyed marker must NOT steal label from other turns
+#
+# comp-D-001 has a matching marker (completion_id=comp-D-001) → tagged "debugging"
+# comp-D-002 has NO marker referencing it → must be unclassified
+#   (the id-keyed marker for comp-D-001 must not bleed onto comp-D-002 via
+#    timestamp fallback, because markers with a completion_id are excluded from
+#    Phase D according to the contract: they belong to a specific completion).
+# ---------------------------------------------------------------------------
+SID_D="dddddddd-4444-4444-4444-000000000004"
+SESSION_D="${TMP_SESSIONS}/${SID_D}.jsonl"
+
+cat > "${SESSION_D}" <<'JSONL'
+{"type":"session","version":3,"id":"dddddddd-4444-4444-4444-000000000004","timestamp":"2026-01-01T13:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-D-001","parentId":"00000000","timestamp":"2026-01-01T13:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Debug task"}]}}
+{"type":"message","id":"comp-D-001","parentId":"user-D-001","timestamp":"2026-01-01T13:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Debug response"}],"usage":{"input":70,"output":35,"cacheRead":0,"cacheWrite":0,"totalTokens":105}}}
+{"type":"message","id":"user-D-002","parentId":"comp-D-001","timestamp":"2026-01-01T13:04:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Follow-up with no marker"}]}}
+{"type":"message","id":"comp-D-002","parentId":"user-D-002","timestamp":"2026-01-01T13:05:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Follow-up response"}],"usage":{"input":60,"output":30,"cacheRead":0,"cacheWrite":0,"totalTokens":90}}}
+JSONL
+
+# Marker for session D: only comp-D-001 has a marker (id-keyed).
+# comp-D-002 has no corresponding marker.
+MARKER_D="${TMP_MARKERS}/${SID_D}.jsonl"
+echo '{"ts":"2026-01-01T13:03:00Z","task_type":"debugging","completion_id":"comp-D-001"}' > "${MARKER_D}"
 
 # ---------------------------------------------------------------------------
 # Stub revenium: place in a fake HOME/.local/bin so it wins after report.sh's
@@ -122,39 +186,72 @@ report_output=$(
 ) || true
 
 # ---------------------------------------------------------------------------
-# Assert: --task-type research for comp-A-001 (marker research@T1, comp@T2)
+# Helper: extract all --task-type values from the captured argv
 # ---------------------------------------------------------------------------
-# Captured argv: each arg is on its own line; look for a --task-type line
-# followed (within a few lines) by 'research'. Actually the stub records each
-# arg on its own line, so we look for adjacent --task-type / research pairs.
 task_type_values=$(awk '/^--task-type$/{getline; print}' "${ARGV_FILE}" 2>/dev/null || true)
+agent_values=$(awk '/^--agent$/{getline; print}' "${ARGV_FILE}" 2>/dev/null || true)
 
+# ---------------------------------------------------------------------------
+# Session A assertions (Phase D — marker-after-completion ordering)
+# ---------------------------------------------------------------------------
+
+# comp-A-001 at 10:06 → earliest marker with marker_ts >= 10:06 is research@10:07
 if echo "${task_type_values}" | grep -q "^research$"; then
-  pass "--task-type research found in captured argv (comp-A-001 tagged correctly)"
+  pass "Phase D: --task-type research found (comp-A-001 classified by marker after completion)"
 else
-  fail "--task-type research NOT found in captured argv (task_type_values: $(echo "${task_type_values}" | tr '\n' '|'))"
+  fail "Phase D: --task-type research NOT found (task_type_values: $(echo "${task_type_values}" | tr '\n' '|'))"
   echo "--- report output ---"
   echo "${report_output}" | tail -20
   echo "--- captured argv ---"
-  cat "${ARGV_FILE}" 2>/dev/null | head -60
+  cat "${ARGV_FILE}" 2>/dev/null | head -80
 fi
 
-# ---------------------------------------------------------------------------
-# Assert: --task-type generation for comp-A-002 (marker generation@T3, comp@T4)
-# ---------------------------------------------------------------------------
+# comp-A-002 at 10:09 → earliest marker with marker_ts >= 10:09 is generation@10:10
 if echo "${task_type_values}" | grep -q "^generation$"; then
-  pass "--task-type generation found in captured argv (comp-A-002 tagged correctly)"
+  pass "Phase D: --task-type generation found (comp-A-002 classified by marker after completion)"
 else
-  fail "--task-type generation NOT found in captured argv"
+  fail "Phase D: --task-type generation NOT found"
 fi
 
 # ---------------------------------------------------------------------------
-# Assert: --task-type unclassified for comp-B-001 (no marker file)
+# Session B assertions (no marker → unclassified)
 # ---------------------------------------------------------------------------
 if echo "${task_type_values}" | grep -q "^unclassified$"; then
-  pass "--task-type unclassified found in captured argv (comp-B-001 has no marker)"
+  pass "--task-type unclassified found (session with no marker file)"
 else
   fail "--task-type unclassified NOT found in captured argv"
+fi
+
+# ---------------------------------------------------------------------------
+# Session C assertions (Phase A — exact completion_id match)
+# ---------------------------------------------------------------------------
+if echo "${task_type_values}" | grep -q "^analysis$"; then
+  pass "Phase A: --task-type analysis found (comp-C-001 matched by completion_id)"
+else
+  fail "Phase A: --task-type analysis NOT found — exact completion_id match not working"
+  echo "--- report output ---"
+  echo "${report_output}" | tail -20
+fi
+
+# ---------------------------------------------------------------------------
+# Session D assertions (anti-bleed)
+# ---------------------------------------------------------------------------
+# comp-D-001 should be tagged debugging via Phase A exact match
+if echo "${task_type_values}" | grep -q "^debugging$"; then
+  pass "anti-bleed: --task-type debugging found for comp-D-001 (id-keyed marker match)"
+else
+  fail "anti-bleed: --task-type debugging NOT found for comp-D-001"
+fi
+
+# comp-D-002 should be unclassified (marker for comp-D-001 must not bleed onto it).
+# We check by counting: there should be at least 2 unclassified entries total
+# (comp-B-001 and comp-D-002). We already verified unclassified is present above;
+# verify count >= 2 to confirm bleed protection.
+unclassified_count=$(echo "${task_type_values}" | grep -c "^unclassified$" || echo 0)
+if [[ "${unclassified_count}" -ge 2 ]]; then
+  pass "anti-bleed: comp-D-002 correctly unclassified (id-keyed marker did not bleed)"
+else
+  fail "anti-bleed: expected >=2 unclassified entries (got ${unclassified_count}) — marker may be bleeding onto comp-D-002"
 fi
 
 # ---------------------------------------------------------------------------
@@ -176,8 +273,6 @@ fi
 # ---------------------------------------------------------------------------
 # Assert: --agent with openclaw- prefix present
 # ---------------------------------------------------------------------------
-agent_values=$(awk '/^--agent$/{getline; print}' "${ARGV_FILE}" 2>/dev/null || true)
-
 if echo "${agent_values}" | grep -q "^openclaw-"; then
   pass "--agent with 'openclaw-' prefix found in captured argv"
 else

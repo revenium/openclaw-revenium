@@ -6,6 +6,8 @@
 #   1. Valid taxonomy label appends an ISO8601 marker line and exits 0
 #   2. Unknown label exits non-zero and writes no marker line
 #   3. Two rapid invocations yield two lines (flock + O_APPEND, no corruption)
+#   4. Session with an assistant completion: marker includes completion_id
+#   5. Session with no assistant completion: marker omits completion_id field
 # =============================================================================
 
 set -uo pipefail
@@ -168,6 +170,95 @@ if [[ "${two_count}" -ge 1 ]]; then
   else
     fail "only ${valid_lines} of ${two_count} lines are valid JSON"
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# Test 4: Session with an assistant completion — marker includes completion_id
+#
+# The real OpenClaw lifecycle: write-marker.sh is called AFTER the turn's LLM
+# completion is appended to the session JSONL. The marker should record the
+# .id of that completion so report.sh can do an exact id-keyed match (Phase A).
+# ---------------------------------------------------------------------------
+SID_WITH_COMP="ccddee11-0002-0002-0002-000000000002"
+SESSION_WITH_COMP="${TMP_SESSIONS}/${SID_WITH_COMP}.jsonl"
+
+# Append a session header and an assistant completion with a known .id.
+# The session must also have a more recent mtime than FAKE_SESSION so that
+# write-marker.sh picks this session as the active one.
+EXPECTED_COMP_ID="comp-id-abcdef-123456"
+printf '%s\n' \
+  '{"type":"session","id":"ccddee11-0002-0002-0002-000000000002","timestamp":"2026-06-01T00:00:00.000Z"}' \
+  '{"type":"message","id":"user-001","parentId":"","timestamp":"2026-06-01T12:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}' \
+  "{\"type\":\"message\",\"id\":\"${EXPECTED_COMP_ID}\",\"parentId\":\"user-001\",\"timestamp\":\"2026-06-01T12:01:00.000Z\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"stopReason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"usage\":{\"input\":10,\"output\":5,\"totalTokens\":15}}}" \
+  > "${SESSION_WITH_COMP}"
+# Touch with a newer timestamp so last_completion_info selects this session
+touch "${SESSION_WITH_COMP}"
+
+MARKER_FILE_C="${TMP_MARKERS}/${SID_WITH_COMP}.jsonl"
+rm -f "${MARKER_FILE_C}"
+
+run_marker "generation" 2>&1 >/dev/null
+
+if [[ -f "${MARKER_FILE_C}" ]]; then
+  marker_line_c=$(head -1 "${MARKER_FILE_C}")
+  if echo "${marker_line_c}" | python3 -c "
+import json, sys
+rec = json.loads(sys.stdin.read().strip())
+assert rec.get('completion_id') == '${EXPECTED_COMP_ID}', f'completion_id mismatch: {rec}'
+assert rec.get('task_type') == 'generation', f'task_type mismatch: {rec}'
+" 2>/dev/null; then
+    pass "marker includes correct completion_id when session has an assistant completion"
+  else
+    fail "marker missing or wrong completion_id (line: ${marker_line_c})"
+  fi
+else
+  fail "no marker file written for session-with-completion test"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 5: Session with no assistant completion — marker omits completion_id
+#
+# When there is no assistant completion yet (e.g., the agent is still in the
+# first turn), write-marker.sh must not emit an empty string for completion_id.
+# The field must be absent entirely so report.sh applies Phase D fallback.
+# ---------------------------------------------------------------------------
+SID_NO_COMP="eeff2233-0003-0003-0003-000000000003"
+SESSION_NO_COMP="${TMP_SESSIONS}/${SID_NO_COMP}.jsonl"
+
+# Session file with only a session header and a user message (no assistant reply yet).
+# Newer mtime than SESSION_WITH_COMP so write-marker.sh would pick it IF it were
+# the one with most-recent assistant completion — but it has none, so mtime tie-
+# breaking applies among files with no completion. To force selection of this
+# session, we delete the older sessions and leave only this one.
+rm -f "${FAKE_SESSION}" "${SESSION_WITH_COMP}"
+# Also remove any earlier marker for WITH_COMP session to avoid cross-contamination.
+rm -f "${MARKER_FILE_C}"
+
+printf '%s\n' \
+  '{"type":"session","id":"eeff2233-0003-0003-0003-000000000003","timestamp":"2026-06-02T00:00:00.000Z"}' \
+  '{"type":"message","id":"user-only-001","parentId":"","timestamp":"2026-06-02T09:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"task"}]}}' \
+  > "${SESSION_NO_COMP}"
+touch "${SESSION_NO_COMP}"
+
+MARKER_FILE_NC="${TMP_MARKERS}/${SID_NO_COMP}.jsonl"
+rm -f "${MARKER_FILE_NC}"
+
+run_marker "research" 2>&1 >/dev/null
+
+if [[ -f "${MARKER_FILE_NC}" ]]; then
+  marker_line_nc=$(head -1 "${MARKER_FILE_NC}")
+  if echo "${marker_line_nc}" | python3 -c "
+import json, sys
+rec = json.loads(sys.stdin.read().strip())
+assert 'completion_id' not in rec, f'completion_id should be absent: {rec}'
+assert rec.get('task_type') == 'research', f'task_type mismatch: {rec}'
+" 2>/dev/null; then
+    pass "marker omits completion_id when session has no assistant completion"
+  else
+    fail "marker should not have completion_id field (line: ${marker_line_nc})"
+  fi
+else
+  fail "no marker file written for session-without-completion test"
 fi
 
 # ---------------------------------------------------------------------------
