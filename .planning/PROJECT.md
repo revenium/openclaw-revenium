@@ -36,10 +36,11 @@ Agents never silently blow through token budgets — every turn is guardrail-che
 - ✓ Root-session attribution: `report.sh` resolves the root session and passes `--agent "openclaw-<root_session_id>"`; budget rules scope via `AGENT:STARTS_WITH:openclaw-` (D-07) — v1.0 (Phase 4, TRACE-01..02)
 - ✓ Optional per-task-type budget rules offered by `setup-guardrails.sh --interactive` — v1.0 (Phase 4)
 - ✓ Job declaration foundation: 11-label `job-taxonomy.json` (snake_case, installed + seeded via `post-install.sh`), `scripts/write-job-marker.sh` validated `kind:"job"` marker writer (sanitize-before-allowlist, flock+O_APPEND, completion_id correlation, safe kebab+4-hex job IDs), and the arc-boundary JOB DECLARATION directive in SKILL.md + `references/job-declaration.md` — v1.1 (Phase 5, JOBDEC-01..04)
+- ✓ Job lifecycle wiring: `report.sh` opens each declared job once via `revenium jobs create`, stamps `--agentic-job-id/-name/-type` on every belonging `meter completion`, and closes it once via `revenium jobs outcome --result SUCCESS|FAILED|CANCELLED` — all ledger-gated (idempotent), 409-as-success, and fully fail-open behind a `JOBS_CLI_CAPABLE` capability probe so existing task-type metering is never endangered — v1.1 (Phase 6, JLIFE-01..05). Two human-verification follow-ups open: live 409 conflict-string confirmation and the CR-01 transient-failure retry-durability decision (see `06-HUMAN-UAT.md`).
 
 ### Active
 
-v1.1 Agentic Job Tracking — requirements defined in `.planning/REQUIREMENTS.md`. Phase 5 (job declaration) validated; remaining: lifecycle wiring (Phase 6), root rollup (Phase 7), halt → CANCELLED outcome (Phase 8).
+v1.1 Agentic Job Tracking — requirements defined in `.planning/REQUIREMENTS.md`. Phases 5 (job declaration) and 6 (lifecycle wiring) validated; remaining: root rollup (Phase 7), halt → CANCELLED outcome (Phase 8).
 
 ### Out of Scope
 
@@ -104,4 +105,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-03 — Phase 5 (Job Declaration Foundation) complete; v1.1 in progress*
+*Last updated: 2026-06-03 — Phase 6 (Job Lifecycle Wiring) complete; v1.1 in progress*
