@@ -598,10 +598,10 @@ PY
 
     # Per-completion job correlation (JLIFE-02 / D-01).
     # Reuses the SAME completion_id-exact → ts-fallback engine as task_type.
-    # Scans jobs_cache_file (from Task 2); resolves agentic_job_id/name/type.
+    # Scans jobs_cache_file (from Task 2); resolves agentic_job_id/name/type/status/failure_reason.
     # All fields default empty when no job row matches (fail-open, D-12).
     # Prior-tick already-TX:-ledgered completions never reach here (continue above).
-    local agentic_job_id="" agentic_job_name="" agentic_job_type=""
+    local agentic_job_id="" agentic_job_name="" agentic_job_type="" job_status="" failure_reason=""
     if [[ "${JOBS_CLI_CAPABLE}" == "true" && -s "${jobs_cache_file}" ]]; then
       local job_resolve_result
       job_resolve_result=$(_JOBS_CACHE="${jobs_cache_file}" COMPLETION_TS="${timestamp}" COMPLETION_ID="${tx_id}" python3 - <<'PY' 2>/dev/null || true
@@ -663,23 +663,66 @@ if chosen is None:
                 break
 
 if chosen is not None:
-    jid   = chosen[1] if len(chosen) > 1 else ''
-    jname = chosen[2] if len(chosen) > 2 else ''
-    jtype = chosen[3] if len(chosen) > 3 else ''
-    print(f"{jid}\t{jname}\t{jtype}")
+    jid    = chosen[1] if len(chosen) > 1 else ''
+    jname  = chosen[2] if len(chosen) > 2 else ''
+    jtype  = chosen[3] if len(chosen) > 3 else ''
+    status = chosen[4] if len(chosen) > 4 else ''
+    fr     = chosen[5] if len(chosen) > 5 else ''
+    print(f"{jid}\t{jname}\t{jtype}\t{status}\t{fr}")
 else:
-    print('\t\t')
+    print('\t\t\t\t')
 PY
 )
-      # Parse tab-separated result (job_id, job_name, job_type)
+      # Parse tab-separated result (job_id, job_name, job_type, status, failure_reason)
       agentic_job_id="${job_resolve_result%%$'\t'*}"
-      local _rest="${job_resolve_result#*$'\t'}"
-      agentic_job_name="${_rest%%$'\t'*}"
-      agentic_job_type="${_rest#*$'\t'}"
+      local _jrest="${job_resolve_result#*$'\t'}"
+      agentic_job_name="${_jrest%%$'\t'*}"
+      _jrest="${_jrest#*$'\t'}"
+      agentic_job_type="${_jrest%%$'\t'*}"
+      _jrest="${_jrest#*$'\t'}"
+      job_status="${_jrest%%$'\t'*}"
+      failure_reason="${_jrest#*$'\t'}"
       # 64-char truncation for log injection mitigation (T-06-06 / T-04-08)
       local agentic_job_id_log="${agentic_job_id:0:64}"
       if [[ -n "${agentic_job_id}" ]]; then
         info "Job correlation: tx_id=${tx_id} agentic_job_id=${agentic_job_id_log}"
+      fi
+    fi
+
+    # ---------------------------------------------------------------------------
+    # jobs create — in-loop, ledger-gated, 409-as-success, fail-open (JLIFE-01/05)
+    # Fires whenever a closing job marker exists for this session (non-empty
+    # agentic_job_id resolved above). Gated on JOBS_CLI_CAPABLE (D-11).
+    # CRITICAL (D-12 / Pitfall 1): own exit locals; NEVER touch failed_count/
+    # reported_count; NEVER return/exit process_session; NEVER reach CR-02 gate.
+    # ---------------------------------------------------------------------------
+    if [[ "${JOBS_CLI_CAPABLE}" == "true" && -n "${agentic_job_id}" ]]; then
+      if grep -q "^JOB:${agentic_job_id}:created:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
+        :   # already created — idempotent skip (D-06)
+      else
+        local jobs_cmd=( revenium jobs create --agentic-job-id "${agentic_job_id}" --quiet )
+        [[ -n "${agentic_job_name}" ]] && jobs_cmd+=(--name "${agentic_job_name}")
+        [[ -n "${agentic_job_type}" ]] && jobs_cmd+=(--type "${agentic_job_type}")
+        # D-04: NO --environment
+
+        local jobs_cmd_output jobs_cmd_exit
+        jobs_cmd_output=$("${jobs_cmd[@]}" 2>&1) && jobs_cmd_exit=0 || jobs_cmd_exit=$?
+
+        local jobs_success=false
+        if [[ "${jobs_cmd_exit}" -eq 0 ]]; then
+          jobs_success=true
+        elif echo "${jobs_cmd_output}" | grep -qi "409\|already.exist\|conflict"; then
+          jobs_success=true   # 409-as-success backstop (D-06)
+        fi
+
+        if [[ "${jobs_success}" == "true" ]]; then
+          local jobs_now_ts
+          jobs_now_ts=$(python3 -c "import time; print(f'{time.time():.3f}')" 2>/dev/null || date +%s)
+          echo "JOB:${agentic_job_id}:created:${jobs_now_ts}" >> "${JOBS_LEDGER_FILE}"
+          info "Job created: agentic_job_id=${agentic_job_id_log}"
+        else
+          warn "jobs create failed: id=${agentic_job_id_log} exit=${jobs_cmd_exit} — metering continues"
+        fi
       fi
     fi
 
