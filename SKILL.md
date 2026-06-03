@@ -188,6 +188,53 @@ When the user invokes `/revenium`:
 
 ### If Setup Is Complete (config.json has a non-empty `ruleIds` array)
 
+**Before displaying status, check for legacy filter rules (D-08, one-time):**
+
+Phase 3 introduced `--agent "openclaw-{root_session_id}"` per-session naming (D-07). Any budget rules created before this migration still filter `AGENT:IS:OpenClaw`, which now matches nothing — spend from all sessions is silently dropped.
+
+1. **Read `~/.openclaw/skills/revenium/config.json`.** Check for a `_legacyNoticeShown` field.
+   - If `_legacyNoticeShown` is `true`: skip the legacy detection entirely (notice already delivered).
+   - If absent or `false`: proceed to step 2.
+
+2. **Detect legacy rules.** Run:
+
+   ```
+   revenium guardrails budget-rules list --output json
+   ```
+
+   Parse the JSON response. If any rule contains a filter with `AGENT:IS:OpenClaw` (exact string match, case-sensitive), a legacy rule is present.
+
+   Alternatively, if the CLI call fails (network error, auth failure), check whether `config.json` has a `schemaVersion` field — a missing `schemaVersion` indicates a pre-D-07 install. Either detection mechanism is acceptable; the live rule list is preferred when available.
+
+3. **If a legacy rule is detected:** surface EXACTLY ONCE the following notice — byte-for-byte, including the em-dash (—) and the apostrophe in "won't":
+
+   > Your budget rules use the old filter and won't track spend — run reconfigure.
+
+   Then tell the user: "To fix this, choose **reconfigure** below, which will delete and recreate your rules using the current `AGENT:STARTS_WITH:openclaw-` filter."
+
+   **Why this matters:** After the D-07 migration, the agent ships `--agent "openclaw-<session-id>"` on every transaction. The Revenium server matches budget rules by their `AGENT` filter dimension. Rules that filter `AGENT:IS:OpenClaw` look for an agent named exactly `OpenClaw`, but no transactions carry that name anymore — so the rules never fire, spend is never tracked, and budget enforcement is silently disabled. The user MUST reconfigure (via `setup-guardrails.sh --interactive`) to recreate rules with the new `AGENT:STARTS_WITH:openclaw-` filter. Repo edits cannot fix server-side rules.
+
+   **Do NOT act unilaterally.** Do NOT call `setup-guardrails.sh` without user request, do NOT delete or recreate any rule without explicit user action, and do NOT modify any rule in `config.json`. The user must choose to reconfigure (honors Phase 3 D-02, per D-08).
+
+4. **Persist the one-time flag.** After surfacing the notice (or confirming no legacy rules exist), write `"_legacyNoticeShown": true` into `~/.openclaw/skills/revenium/config.json` using an atomic temp-then-rename write so the notice does not repeat on subsequent `/revenium` invocations. Atomic write pattern (03-PATTERNS "Atomic JSON Write"):
+
+   ```python
+   import json, os, tempfile
+   path = os.path.expanduser("~/.openclaw/skills/revenium/config.json")
+   with open(path, "r") as f:
+       cfg = json.load(f)
+   cfg["_legacyNoticeShown"] = True
+   tmp = path + ".tmp"
+   with open(tmp, "w") as f:
+       json.dump(cfg, f, indent=2)
+       f.write("\n")
+   os.replace(tmp, path)
+   ```
+
+   Run this via a bash `python3 -c` invocation or `execute_code` — do NOT write the file with a text editor or cat/echo (not atomic).
+
+---
+
 1. **Show rule IDs and per-rule state.** Read `ruleIds` from `~/.openclaw/skills/revenium/config.json`, then read per-rule state from `~/.openclaw/skills/revenium/guardrail-status.json`. For each rule in `rules[]`, display:
    - Rule name
    - `state` (ok / warn / block)
