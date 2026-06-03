@@ -175,32 +175,35 @@ get_offset() {
     echo 0
     return
   fi
-  python3 -c "
-import json, sys
+  # Env-passing heredoc discipline (T-04-09): pass path + sid via env, never
+  # interpolate (sid is a session filename; OFFSETS_FILE path may contain a quote).
+  OFFSETS_FILE="${OFFSETS_FILE}" SID="${sid}" python3 - <<'PY' 2>/dev/null || echo 0
+import json, os
 try:
-    d = json.load(open('${OFFSETS_FILE}'))
-    print(d.get('${sid}', 0))
-except:
+    d = json.load(open(os.environ['OFFSETS_FILE']))
+    print(d.get(os.environ['SID'], 0))
+except Exception:
     print(0)
-" 2>/dev/null || echo 0
+PY
 }
 
 set_offset() {
   local sid="$1"
   local count="$2"
-  python3 -c "
+  # Env-passing heredoc discipline (T-04-09): pass path, sid, count via env.
+  OFFSETS_FILE="${OFFSETS_FILE}" SID="${sid}" COUNT="${count}" python3 - <<'PY' 2>/dev/null || true
 import json, os, tempfile
-path = '${OFFSETS_FILE}'
+path = os.environ['OFFSETS_FILE']
 try:
     d = json.load(open(path))
-except:
+except Exception:
     d = {}
-d['${sid}'] = int('${count}')
+d[os.environ['SID']] = int(os.environ['COUNT'])
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or '.')
 with os.fdopen(fd, 'w') as f:
     json.dump(d, f)
 os.rename(tmp, path)
-" 2>/dev/null || true
+PY
 }
 
 # ---------------------------------------------------------------------------
@@ -484,22 +487,26 @@ PY
       parent_ts=$(meta_lookup "${parent_id_for_ts}" 4)
       if [[ -n "${parent_ts}" ]]; then
         request_time="${parent_ts}"
-        duration_ms=$(python3 -c "
+        # Env-passing heredoc discipline (T-04-09): session timestamps are
+        # untrusted; never interpolate them into the python program string.
+        duration_ms=$(REQ_TS="${request_time}" RESP_TS="${timestamp}" python3 - <<'PY' 2>/dev/null || echo 0
+import os
 from datetime import datetime, timezone
 def parse_ts(s):
     try: return datetime.fromisoformat(s.replace('Z', '+00:00'))
-    except: pass
+    except Exception: pass
     for fmt in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ'):
         try: return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
-        except: pass
+        except Exception: pass
     return None
-t1 = parse_ts('${request_time}')
-t2 = parse_ts('${timestamp}')
+t1 = parse_ts(os.environ.get('REQ_TS', ''))
+t2 = parse_ts(os.environ.get('RESP_TS', ''))
 if t1 and t2:
     print(max(0, int((t2 - t1).total_seconds() * 1000)))
 else:
     print(0)
-" 2>/dev/null || echo 0)
+PY
+)
       fi
     fi
 
