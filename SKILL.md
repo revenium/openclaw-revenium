@@ -60,6 +60,59 @@ The guardrail status is maintained by a background cron job that checks Revenium
 - Tell the user: "Guardrail status unavailable. Proceeding with caution."
 - Proceed with the operation — fail open, do not block the user.
 
+## TASK CLASSIFICATION
+
+**MANDATORY — NON-NEGOTIABLE. Execute before EVERY yield back to the user on a substantive turn.** Skipping leaves the metering pipeline blind and pollutes attribution with `unclassified` rows.
+
+### Trigger (binary — no judgment calls)
+
+Classify the turn if ANY of these are true:
+
+- You called any tool other than read-only file inspection. Reading a file alone does not count. Bash commands, writes, edits, searches, and any other tool ALL count.
+- You produced > 200 words of new content in your response.
+- The user asked a question that required multi-step reasoning to answer.
+
+Skip ONLY when ALL of the following are true:
+- Your entire response is ≤ 2 sentences.
+- You called zero tools.
+
+There is no "borderline / when in doubt skip" path. If you can argue either side, you have already triggered rule (a), (b), or (c) — classify.
+
+### Required action
+
+**Step 1 — pick a `task_type` label.** Choose the closest-fitting label from the fixed 8-label taxonomy:
+
+| Label | When to use |
+|-------|-------------|
+| `research` | Reading docs, exploring code, searching to learn before acting |
+| `analysis` | Diagnosing a problem, profiling, or characterizing a system |
+| `generation` | Writing new code, tests, configuration, or documentation from scratch |
+| `review` | Reviewing docs, designs, or diffs for correctness or fit |
+| `code_review` | Reviewing code for correctness, style, or architectural fit |
+| `refactor` | Restructuring existing code without changing observable behavior |
+| `planning` | Producing a plan, roadmap, design doc, or task breakdown |
+| `debugging` | Reproducing and fixing a defect or unexpected behavior |
+
+Default to `unclassified` only when no label fits and the marker write fails or is skipped on a non-substantive turn.
+
+**Step 2 — call write-marker.sh.** Run:
+
+```
+bash ~/.openclaw/skills/revenium/scripts/write-marker.sh <task_type>
+```
+
+Replace `<task_type>` with the label you chose in Step 1.
+
+- **Confirmation:** `marker written: <path>` — the marker was appended successfully.
+- **Non-zero exit or no `marker written:` output:** protocol error — log the error but do not block your response.
+- **Attribution when no marker is written:** `unclassified` (the cron defaults to this if no marker precedes the completion timestamp).
+
+See `references/task-classification.md` for the full trigger rules, worked examples, and the blocklist of read-only tools.
+
+### Why this matters
+
+The background cron (`cron.sh`) ships each conversation completion line to Revenium with a `--task-type` flag derived from the marker that most recently preceded the completion's timestamp. Without a marker, every completion is attributed as `unclassified`, making per-task-type budget rules and spend analytics meaningless.
+
 ## Path Resolution
 
 All file paths in this skill use `~/.openclaw/skills/revenium/` as both the skill directory and the runtime state directory. When using file tools (read, write, edit), pass paths with `~/` — the tool resolves `~` to `$HOME` automatically. When running shell commands via exec/bash, use the explicit `$HOME/.openclaw/skills/revenium/` form so the shell expands `$HOME` correctly.
