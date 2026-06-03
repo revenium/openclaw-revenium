@@ -858,13 +858,470 @@ fi
 rm -f "${ARGV_FILE_H}"
 
 # ===========================================================================
+# Phase 8 halt-handler fixture helper
+# ---------------------------------------------------------------------------
+# write_halt_fixture <openclaw_home> <halted_at>
+#   Writes a halted guardrail-status.json into the given OPENCLAW_HOME.
+#   JSON is built via printf/quoting only — no eval (T-08-01).
+# ---------------------------------------------------------------------------
+write_halt_fixture() {
+  local home="$1"
+  local halted_at="$2"
+  printf '%s\n' \
+    '{"halted":true,"haltedAt":"'"${halted_at}"'","autonomousMode":true,"haltedRule":{"name":"token-budget","ruleId":"test-rule-id","metricType":"TOKEN","windowType":"ROLLING","currentValue":1000,"hardLimit":500}}' \
+    > "${home}/skills/revenium/guardrail-status.json"
+}
+
+# ===========================================================================
+# GROUP I: JHALT-01 / D-04 — single open real job -> CANCELLED
+#   Pre-seed ledger with one open job (add-auth-9f3c:created).
+#   Write halted guardrail-status.json fixture.
+#   Assert:
+#     - argv contains exactly 1 `outcome add-auth-9f3c` + `CANCELLED` pair
+#     - ledger gains exactly 1 JOB:add-auth-9f3c:outcome:.*:CANCELLED line
+#     - NO guardrail-halt- token appears (open-count was 1, no synthetic)
+#     - exactly 1 JOB:halt:<haltedAt> line appended
+# ===========================================================================
+TMP_HOME_I=$(make_openclaw_home)
+ARGV_FILE_I=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-i.XXXXXX")
+
+HALTED_AT_I="2026-06-03T10:00:00.000Z"
+OPEN_JOB_ID_I="add-auth-9f3c"
+
+SID_I1="aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa"
+SESSION_I1="${TMP_HOME_I}/agents/main/sessions/${SID_I1}.jsonl"
+cat > "${SESSION_I1}" <<JSONL
+{"type":"session","version":3,"id":"${SID_I1}","timestamp":"2026-06-01T09:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-I1-001","parentId":"00000000","timestamp":"2026-06-01T09:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Add auth"}]}}
+{"type":"message","id":"comp-I1-001","parentId":"user-I1-001","timestamp":"2026-06-01T09:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Auth added"}],"usage":{"input":60,"output":30,"cacheRead":0,"cacheWrite":0,"totalTokens":90}}}
+JSONL
+
+# Pre-seed the jobs ledger with the open job (created, no outcome)
+printf '%s\n' "JOB:${OPEN_JOB_ID_I}:created:1700000000.000" \
+  >> "${TMP_HOME_I}/revenium-jobs.ledger"
+
+# Write the halt fixture
+write_halt_fixture "${TMP_HOME_I}" "${HALTED_AT_I}"
+
+# Run report.sh
+run_report "${TMP_HOME_I}" "${ARGV_FILE_I}"
+JOBS_LEDGER_I="${TMP_HOME_I}/revenium-jobs.ledger"
+
+# ---------------------------------------------------------------------------
+# GROUP I assertions
+# ---------------------------------------------------------------------------
+
+# JHALT-01: argv contains add-auth-9f3c token (outcome call for the open job)
+if grep -q "^${OPEN_JOB_ID_I}$" "${ARGV_FILE_I}" 2>/dev/null; then
+  pass "GROUP I JHALT-01: ${OPEN_JOB_ID_I} token present in argv (halt CANCELLED close)"
+else
+  fail "GROUP I JHALT-01: ${OPEN_JOB_ID_I} token NOT in argv (RED — halt handler not in report.sh)"
+fi
+
+# JHALT-01: argv contains CANCELLED result token (halt drove the outcome)
+if grep -q "^CANCELLED$" "${ARGV_FILE_I}" 2>/dev/null; then
+  pass "GROUP I JHALT-01: CANCELLED token present in argv (halt-driven close)"
+else
+  fail "GROUP I JHALT-01: CANCELLED token NOT in argv (RED)"
+fi
+
+# JHALT-01: ledger gains a JOB:add-auth-9f3c:outcome:.*:CANCELLED line
+if grep -q "^JOB:${OPEN_JOB_ID_I}:outcome:.*:CANCELLED$" "${JOBS_LEDGER_I}" 2>/dev/null; then
+  pass "GROUP I JHALT-01: JOB:${OPEN_JOB_ID_I}:outcome:.*:CANCELLED in jobs ledger"
+else
+  fail "GROUP I JHALT-01: no JOB:${OPEN_JOB_ID_I}:outcome:.*:CANCELLED in jobs ledger (RED)"
+fi
+
+# D-08: NO guardrail-halt- synthetic token (open-count was 1, no synthetic)
+if grep -q "guardrail-halt-" "${ARGV_FILE_I}" 2>/dev/null; then
+  fail "GROUP I D-08: guardrail-halt- token found in argv (must NOT appear when open job exists)"
+else
+  pass "GROUP I D-08: no guardrail-halt- token in argv (correct — real job was open)"
+fi
+
+# D-03: exactly one JOB:halt:<haltedAt> line appended
+halt_gate_count_i=$(count_grep "^JOB:halt:${HALTED_AT_I}$" "${JOBS_LEDGER_I}")
+if [[ "${halt_gate_count_i}" -eq 1 ]]; then
+  pass "GROUP I D-03: exactly 1 JOB:halt:${HALTED_AT_I} line in jobs ledger"
+else
+  fail "GROUP I D-03: expected 1 JOB:halt:${HALTED_AT_I} line, got ${halt_gate_count_i} (RED)"
+fi
+
+rm -f "${ARGV_FILE_I}"
+
+# ===========================================================================
+# GROUP J: JHALT-02 / D-05 / D-09 — zero open jobs -> synthetic interrupted job
+#   Empty/no-open ledger; haltedAt chosen so test can predict synthetic id.
+#   Compute expected hex in-test via env-passing python3 sha1 (not hard-coded).
+#   Assert:
+#     - argv contains jobs create --agentic-job-id guardrail-halt-<hex> --type interrupted
+#     - argv contains jobs outcome guardrail-halt-<hex> --result CANCELLED
+#     - ledger gains JOB:guardrail-halt-<hex>:created: and :outcome:.*:CANCELLED
+#     - JOB:halt:<haltedAt> appended
+# ===========================================================================
+TMP_HOME_J=$(make_openclaw_home)
+ARGV_FILE_J=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-j.XXXXXX")
+
+HALTED_AT_J="2026-06-03T11:00:00.000Z"
+
+SID_J_HALT="bbbbbbbb-2222-2222-2222-bbbbbbbbbbbb"
+SESSION_JJ="${TMP_HOME_J}/agents/main/sessions/${SID_J_HALT}.jsonl"
+cat > "${SESSION_JJ}" <<JSONL
+{"type":"session","version":3,"id":"${SID_J_HALT}","timestamp":"2026-06-01T10:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-JJ-001","parentId":"00000000","timestamp":"2026-06-01T10:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Some work"}]}}
+{"type":"message","id":"comp-JJ-001","parentId":"user-JJ-001","timestamp":"2026-06-01T10:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Done"}],"usage":{"input":50,"output":25,"cacheRead":0,"cacheWrite":0,"totalTokens":75}}}
+JSONL
+
+# No open jobs in the ledger (it was already empty from make_openclaw_home)
+
+# Write the halt fixture
+write_halt_fixture "${TMP_HOME_J}" "${HALTED_AT_J}"
+
+# Compute expected hex via env-passing python3 sha1 (same algorithm as implementation)
+EXPECTED_HEX_J=$(
+  HALTED_AT="${HALTED_AT_J}" \
+  python3 - <<'PY'
+import hashlib, os
+halted_at = os.environ.get('HALTED_AT', '')
+h = hashlib.sha1(halted_at.encode('utf-8')).hexdigest()
+print(h[:4])
+PY
+)
+EXPECTED_SYNTH_ID_J="guardrail-halt-${EXPECTED_HEX_J}"
+
+# Run report.sh
+run_report "${TMP_HOME_J}" "${ARGV_FILE_J}"
+JOBS_LEDGER_J="${TMP_HOME_J}/revenium-jobs.ledger"
+
+# ---------------------------------------------------------------------------
+# GROUP J assertions
+# ---------------------------------------------------------------------------
+
+# JHALT-02 / D-09: argv contains synthetic id (guardrail-halt-<hex>)
+if grep -qF "${EXPECTED_SYNTH_ID_J}" "${ARGV_FILE_J}" 2>/dev/null; then
+  pass "GROUP J JHALT-02: ${EXPECTED_SYNTH_ID_J} token present in argv (synthetic interrupted job)"
+else
+  fail "GROUP J JHALT-02: ${EXPECTED_SYNTH_ID_J} token NOT in argv (RED — halt handler not in report.sh)"
+fi
+
+# JHALT-02: argv contains --type interrupted (synthetic job type)
+if grep -q "^interrupted$" "${ARGV_FILE_J}" 2>/dev/null; then
+  pass "GROUP J JHALT-02: 'interrupted' job type token in argv (D-05)"
+else
+  fail "GROUP J JHALT-02: 'interrupted' job type token NOT in argv (RED)"
+fi
+
+# JHALT-02: argv contains CANCELLED result for synthetic job
+if grep -q "^CANCELLED$" "${ARGV_FILE_J}" 2>/dev/null; then
+  pass "GROUP J JHALT-02: CANCELLED token present in argv (synthetic job closed CANCELLED)"
+else
+  fail "GROUP J JHALT-02: CANCELLED token NOT in argv (RED)"
+fi
+
+# JHALT-02: ledger has JOB:guardrail-halt-<hex>:created: line
+if grep -q "^JOB:${EXPECTED_SYNTH_ID_J}:created:" "${JOBS_LEDGER_J}" 2>/dev/null; then
+  pass "GROUP J JHALT-02: JOB:${EXPECTED_SYNTH_ID_J}:created: in jobs ledger"
+else
+  fail "GROUP J JHALT-02: no JOB:${EXPECTED_SYNTH_ID_J}:created: in jobs ledger (RED)"
+fi
+
+# JHALT-02: ledger has JOB:guardrail-halt-<hex>:outcome:.*:CANCELLED line
+if grep -q "^JOB:${EXPECTED_SYNTH_ID_J}:outcome:.*:CANCELLED$" "${JOBS_LEDGER_J}" 2>/dev/null; then
+  pass "GROUP J JHALT-02: JOB:${EXPECTED_SYNTH_ID_J}:outcome:.*:CANCELLED in jobs ledger"
+else
+  fail "GROUP J JHALT-02: no JOB:${EXPECTED_SYNTH_ID_J}:outcome:.*:CANCELLED in jobs ledger (RED)"
+fi
+
+# D-03: JOB:halt:<haltedAt> appended
+halt_gate_count_j=$(count_grep "^JOB:halt:${HALTED_AT_J}$" "${JOBS_LEDGER_J}")
+if [[ "${halt_gate_count_j}" -eq 1 ]]; then
+  pass "GROUP J D-03: exactly 1 JOB:halt:${HALTED_AT_J} line in jobs ledger"
+else
+  fail "GROUP J D-03: expected 1 JOB:halt:${HALTED_AT_J} line, got ${halt_gate_count_j} (RED)"
+fi
+
+rm -f "${ARGV_FILE_J}"
+
+# ===========================================================================
+# GROUP K: D-08 — multiple open jobs -> all closed CANCELLED, no synthetic
+#   Pre-seed ledger with two open jobs (add-auth-9f3c, refactor-api-1b1b).
+#   Assert both are closed CANCELLED; no guardrail-halt- synthetic created.
+# ===========================================================================
+TMP_HOME_K=$(make_openclaw_home)
+ARGV_FILE_K=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-k.XXXXXX")
+
+HALTED_AT_K="2026-06-03T12:00:00.000Z"
+OPEN_JOB_ID_K1="add-auth-9f3c"
+OPEN_JOB_ID_K2="refactor-api-1b1b"
+
+SID_K1="cccccccc-3333-3333-3333-cccccccccccc"
+SESSION_K1="${TMP_HOME_K}/agents/main/sessions/${SID_K1}.jsonl"
+cat > "${SESSION_K1}" <<JSONL
+{"type":"session","version":3,"id":"${SID_K1}","timestamp":"2026-06-01T11:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-K1-001","parentId":"00000000","timestamp":"2026-06-01T11:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Multi job work"}]}}
+{"type":"message","id":"comp-K1-001","parentId":"user-K1-001","timestamp":"2026-06-01T11:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Done"}],"usage":{"input":50,"output":25,"cacheRead":0,"cacheWrite":0,"totalTokens":75}}}
+JSONL
+
+# Pre-seed ledger with two open jobs (no outcome lines for either)
+printf '%s\n' \
+  "JOB:${OPEN_JOB_ID_K1}:created:1700000000.000" \
+  "JOB:${OPEN_JOB_ID_K2}:created:1700000001.000" \
+  >> "${TMP_HOME_K}/revenium-jobs.ledger"
+
+# Write the halt fixture
+write_halt_fixture "${TMP_HOME_K}" "${HALTED_AT_K}"
+
+# Run report.sh
+run_report "${TMP_HOME_K}" "${ARGV_FILE_K}"
+JOBS_LEDGER_K="${TMP_HOME_K}/revenium-jobs.ledger"
+
+# ---------------------------------------------------------------------------
+# GROUP K assertions
+# ---------------------------------------------------------------------------
+
+# D-08: both open jobs closed CANCELLED in argv
+if grep -q "^${OPEN_JOB_ID_K1}$" "${ARGV_FILE_K}" 2>/dev/null; then
+  pass "GROUP K D-08: ${OPEN_JOB_ID_K1} token in argv (CANCELLED close)"
+else
+  fail "GROUP K D-08: ${OPEN_JOB_ID_K1} NOT in argv (RED)"
+fi
+
+if grep -q "^${OPEN_JOB_ID_K2}$" "${ARGV_FILE_K}" 2>/dev/null; then
+  pass "GROUP K D-08: ${OPEN_JOB_ID_K2} token in argv (CANCELLED close)"
+else
+  fail "GROUP K D-08: ${OPEN_JOB_ID_K2} NOT in argv (RED)"
+fi
+
+# D-08: both get :outcome:.*:CANCELLED in the ledger
+if grep -q "^JOB:${OPEN_JOB_ID_K1}:outcome:.*:CANCELLED$" "${JOBS_LEDGER_K}" 2>/dev/null; then
+  pass "GROUP K D-08: JOB:${OPEN_JOB_ID_K1}:outcome:.*:CANCELLED in jobs ledger"
+else
+  fail "GROUP K D-08: no JOB:${OPEN_JOB_ID_K1}:outcome:.*:CANCELLED in jobs ledger (RED)"
+fi
+
+if grep -q "^JOB:${OPEN_JOB_ID_K2}:outcome:.*:CANCELLED$" "${JOBS_LEDGER_K}" 2>/dev/null; then
+  pass "GROUP K D-08: JOB:${OPEN_JOB_ID_K2}:outcome:.*:CANCELLED in jobs ledger"
+else
+  fail "GROUP K D-08: no JOB:${OPEN_JOB_ID_K2}:outcome:.*:CANCELLED in jobs ledger (RED)"
+fi
+
+# D-08: NO guardrail-halt- synthetic (open-count was 2, not 0)
+if grep -q "guardrail-halt-" "${ARGV_FILE_K}" 2>/dev/null; then
+  fail "GROUP K D-08: guardrail-halt- token found (must NOT appear when open jobs exist)"
+else
+  pass "GROUP K D-08: no guardrail-halt- token in argv (correct — 2 real jobs were open)"
+fi
+
+# Count of CANCELLED results == 2 (one per open job)
+cancelled_count_k=$(count_grep "^CANCELLED$" "${ARGV_FILE_K}")
+if [[ "${cancelled_count_k}" -eq 2 ]]; then
+  pass "GROUP K D-08: exactly 2 CANCELLED tokens in argv (one per open job)"
+else
+  fail "GROUP K D-08: expected 2 CANCELLED tokens, got ${cancelled_count_k} (RED)"
+fi
+
+rm -f "${ARGV_FILE_K}"
+
+# ===========================================================================
+# GROUP L: D-03 idempotency across ticks — same OPENCLAW_HOME, same haltedAt
+#   Same fixture as GROUP I (single open real job).
+#   Run report.sh TWICE without resetting the ledger (mirror GROUP E pattern).
+#   Assert across both runs: halt-driven CANCELLED outcome for the open job
+#   appears exactly 1 time total, and JOB:halt:<haltedAt> appears exactly once.
+# ===========================================================================
+TMP_HOME_L=$(make_openclaw_home)
+ARGV_FILE_L1=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-l1.XXXXXX")
+ARGV_FILE_L2=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-l2.XXXXXX")
+
+HALTED_AT_L="2026-06-03T13:00:00.000Z"
+OPEN_JOB_ID_L="add-auth-9f3c"
+
+SID_L1="dddddddd-4444-4444-4444-dddddddddddd"
+SESSION_L1="${TMP_HOME_L}/agents/main/sessions/${SID_L1}.jsonl"
+cat > "${SESSION_L1}" <<JSONL
+{"type":"session","version":3,"id":"${SID_L1}","timestamp":"2026-06-01T12:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-L1-001","parentId":"00000000","timestamp":"2026-06-01T12:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Idempotent halt work"}]}}
+{"type":"message","id":"comp-L1-001","parentId":"user-L1-001","timestamp":"2026-06-01T12:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Done"}],"usage":{"input":50,"output":25,"cacheRead":0,"cacheWrite":0,"totalTokens":75}}}
+JSONL
+
+# Pre-seed the jobs ledger with the open job (created, no outcome)
+printf '%s\n' "JOB:${OPEN_JOB_ID_L}:created:1700000000.000" \
+  >> "${TMP_HOME_L}/revenium-jobs.ledger"
+
+# Write the halt fixture (stays halted across both ticks — same haltedAt)
+write_halt_fixture "${TMP_HOME_L}" "${HALTED_AT_L}"
+
+# First run
+run_report "${TMP_HOME_L}" "${ARGV_FILE_L1}"
+# Second run — same OPENCLAW_HOME, no reset (mirrors GROUP E pattern)
+run_report "${TMP_HOME_L}" "${ARGV_FILE_L2}"
+
+JOBS_LEDGER_L="${TMP_HOME_L}/revenium-jobs.ledger"
+
+# Merge both argv files for cross-run token counts
+ARGV_FILE_L_MERGED=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-l-merged.XXXXXX")
+cat "${ARGV_FILE_L1}" "${ARGV_FILE_L2}" > "${ARGV_FILE_L_MERGED}"
+
+# D-03: halt-driven CANCELLED outcome for the open job appears exactly 1 time
+# across both runs (second tick hits the JOB:halt:<haltedAt> gate and skips)
+cancelled_count_l=$(count_grep "^CANCELLED$" "${ARGV_FILE_L_MERGED}")
+if [[ "${cancelled_count_l}" -eq 1 ]]; then
+  pass "GROUP L D-03: exactly 1 CANCELLED token across 2 runs (idempotent — halt gate worked)"
+else
+  fail "GROUP L D-03: expected 1 CANCELLED token across 2 runs, got ${cancelled_count_l} (RED)"
+fi
+
+# D-03: JOB:halt:<haltedAt> appears exactly once in the jobs ledger
+halt_gate_count_l=$(count_grep "^JOB:halt:${HALTED_AT_L}$" "${JOBS_LEDGER_L}")
+if [[ "${halt_gate_count_l}" -eq 1 ]]; then
+  pass "GROUP L D-03: exactly 1 JOB:halt:${HALTED_AT_L} line in jobs ledger across 2 runs"
+else
+  fail "GROUP L D-03: expected 1 JOB:halt:${HALTED_AT_L} line, got ${halt_gate_count_l} (RED)"
+fi
+
+# D-03: outcome ledger entry for the open job appears exactly once
+outcome_ledger_count_l=$(count_grep "^JOB:${OPEN_JOB_ID_L}:outcome:.*:CANCELLED$" "${JOBS_LEDGER_L}")
+if [[ "${outcome_ledger_count_l}" -eq 1 ]]; then
+  pass "GROUP L D-03: exactly 1 JOB:${OPEN_JOB_ID_L}:outcome:.*:CANCELLED in ledger across 2 runs"
+else
+  fail "GROUP L D-03: expected 1 outcome ledger line, got ${outcome_ledger_count_l} (RED)"
+fi
+
+rm -f "${ARGV_FILE_L1}" "${ARGV_FILE_L2}" "${ARGV_FILE_L_MERGED}"
+
+# ===========================================================================
+# GROUP M: D-10 fail-open — halt handler never endangers metering
+#
+# M1: JOBS_CLI_CAPABLE=false via STUB_REVENIUM_NO_JOBS=1
+#     Assert: zero guardrail-halt- tokens, zero halt-driven CANCELLED tokens,
+#     report.sh exits 0.
+#
+# M2: Open job present; STUB_REVENIUM_HALT_JOBS_FAIL=1 (halt jobs calls fail).
+#     Uses GROUP D exit-code-capture pattern (|| report_rc_m2=$?) NOT GROUP B
+#     "|| true" form, so the exit-code assertion is reachable.
+#     Assert: report.sh exits 0 (fail-open), per-session metering tokens still
+#     present, NO JOB:halt:<haltedAt> line appended (failed halt not gated as done).
+# ===========================================================================
+
+# --- M1: JOBS_CLI_CAPABLE=false (STUB_REVENIUM_NO_JOBS) ---
+TMP_HOME_M1=$(make_openclaw_home)
+ARGV_FILE_M1=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-m1.XXXXXX")
+
+HALTED_AT_M1="2026-06-03T14:00:00.000Z"
+
+SID_M1="eeeeeeee-5555-5555-5555-eeeeeeeeeeee"
+SESSION_M1="${TMP_HOME_M1}/agents/main/sessions/${SID_M1}.jsonl"
+cat > "${SESSION_M1}" <<JSONL
+{"type":"session","version":3,"id":"${SID_M1}","timestamp":"2026-06-01T13:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-M1-001","parentId":"00000000","timestamp":"2026-06-01T13:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Fail open work"}]}}
+{"type":"message","id":"comp-M1-001","parentId":"user-M1-001","timestamp":"2026-06-01T13:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Done"}],"usage":{"input":50,"output":25,"cacheRead":0,"cacheWrite":0,"totalTokens":75}}}
+JSONL
+
+# Write halt fixture (halted, but JOBS_CLI_CAPABLE=false should skip the whole handler)
+write_halt_fixture "${TMP_HOME_M1}" "${HALTED_AT_M1}"
+
+# Run with STUB_REVENIUM_NO_JOBS=1 — probe fails → JOBS_CLI_CAPABLE=false
+# Capture exit code using GROUP D pattern
+report_rc_m1=0
+STUB_REVENIUM_NO_JOBS=1 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_M1}" \
+  OPENCLAW_HOME="${TMP_HOME_M1}" HOME="${TMP_FAKE_HOME}" \
+  bash "${REPORT_SH}" 2>&1 || report_rc_m1=$?
+
+# M1: zero guardrail-halt- tokens (halt handler skipped)
+if grep -q "guardrail-halt-" "${ARGV_FILE_M1}" 2>/dev/null; then
+  fail "GROUP M M1 D-10: guardrail-halt- token found (halt handler must be skipped when JOBS_CLI_CAPABLE=false)"
+else
+  pass "GROUP M M1 D-10: zero guardrail-halt- tokens (halt handler skipped — JOBS_CLI_CAPABLE=false)"
+fi
+
+# M1: zero halt-driven CANCELLED tokens (no halt jobs calls at all)
+if grep -q "^CANCELLED$" "${ARGV_FILE_M1}" 2>/dev/null; then
+  fail "GROUP M M1 D-10: CANCELLED token found (must be zero when halt handler is skipped)"
+else
+  pass "GROUP M M1 D-10: zero CANCELLED tokens (no halt jobs calls — correct)"
+fi
+
+# M1: report.sh exits 0 (fail-open — JOBS_CLI_CAPABLE=false must not abort)
+if [[ "${report_rc_m1}" -eq 0 ]]; then
+  pass "GROUP M M1 D-10: report.sh exits 0 when JOBS_CLI_CAPABLE=false (fail-open)"
+else
+  fail "GROUP M M1 D-10: report.sh exited ${report_rc_m1} (should be 0 — fail-open violated)"
+fi
+
+rm -f "${ARGV_FILE_M1}"
+
+# --- M2: STUB_REVENIUM_HALT_JOBS_FAIL=1 (halt jobs CLI fails mid-tick) ---
+TMP_HOME_M2=$(make_openclaw_home)
+ARGV_FILE_M2=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-m2.XXXXXX")
+
+HALTED_AT_M2="2026-06-03T15:00:00.000Z"
+OPEN_JOB_ID_M2="add-auth-9f3c"
+
+SID_M2="ffffffff-6666-6666-6666-ffffffffffff"
+SESSION_M2="${TMP_HOME_M2}/agents/main/sessions/${SID_M2}.jsonl"
+cat > "${SESSION_M2}" <<JSONL
+{"type":"session","version":3,"id":"${SID_M2}","timestamp":"2026-06-01T14:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-M2-001","parentId":"00000000","timestamp":"2026-06-01T14:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Halt jobs fail work"}]}}
+{"type":"message","id":"comp-M2-001","parentId":"user-M2-001","timestamp":"2026-06-01T14:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Done"}],"usage":{"input":50,"output":25,"cacheRead":0,"cacheWrite":0,"totalTokens":75}}}
+JSONL
+
+# Pre-seed the jobs ledger with an open job (halt handler will try to close it)
+printf '%s\n' "JOB:${OPEN_JOB_ID_M2}:created:1700000000.000" \
+  >> "${TMP_HOME_M2}/revenium-jobs.ledger"
+
+# Write the halt fixture
+write_halt_fixture "${TMP_HOME_M2}" "${HALTED_AT_M2}"
+
+# Run with STUB_REVENIUM_HALT_JOBS_FAIL=1 — halt jobs calls fail, normal jobs pass.
+# Use GROUP D exit-code-capture pattern (NOT "|| true") so exit-0 assertion is reachable.
+report_rc_m2=0
+STUB_REVENIUM_HALT_JOBS_FAIL=1 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_M2}" \
+  OPENCLAW_HOME="${TMP_HOME_M2}" HOME="${TMP_FAKE_HOME}" \
+  bash "${REPORT_SH}" 2>&1 || report_rc_m2=$?
+
+JOBS_LEDGER_M2="${TMP_HOME_M2}/revenium-jobs.ledger"
+
+# M2: report.sh exits 0 (halt jobs failure must not abort the tick — D-10)
+if [[ "${report_rc_m2}" -eq 0 ]]; then
+  pass "GROUP M M2 D-10: report.sh exits 0 when halt jobs CLI fails (fail-open)"
+else
+  fail "GROUP M M2 D-10: report.sh exited ${report_rc_m2} (should be 0 — halt jobs failure must not abort tick)"
+fi
+
+# M2: per-session metering tokens still present (--task-type and --agent unaffected)
+if grep -q "^--task-type$" "${ARGV_FILE_M2}" 2>/dev/null; then
+  pass "GROUP M M2 D-10: --task-type present in argv (per-session metering unaffected)"
+else
+  fail "GROUP M M2 D-10: --task-type NOT in argv (RED — metering must survive halt jobs failure)"
+fi
+
+if grep -q "^--agent$" "${ARGV_FILE_M2}" 2>/dev/null; then
+  pass "GROUP M M2 D-10: --agent present in argv (v1.0 metering unaffected)"
+else
+  fail "GROUP M M2 D-10: --agent NOT in argv (RED)"
+fi
+
+# M2: NO JOB:halt:<haltedAt> line appended (failed halt close is not gated as done;
+# retried next tick — the gate must only be written on successful processing)
+halt_gate_count_m2=$(count_grep "^JOB:halt:${HALTED_AT_M2}$" "${JOBS_LEDGER_M2}")
+if [[ "${halt_gate_count_m2}" -eq 0 ]]; then
+  pass "GROUP M M2 D-10: no JOB:halt:${HALTED_AT_M2} in ledger (failed halt not gated — will retry next tick)"
+else
+  fail "GROUP M M2 D-10: JOB:halt:${HALTED_AT_M2} found in ledger (must NOT be written on failure — RED)"
+fi
+
+rm -f "${ARGV_FILE_M2}"
+
+# ===========================================================================
 # GROUP A/F/G/H cleanup
 # ===========================================================================
 # (tmp homes cleaned up by EXIT trap below or manually here)
 
 cleanup_all() {
   rm -rf "${TMP_HOME_A}" "${TMP_HOME_B}" "${TMP_HOME_C}" "${TMP_HOME_D}" "${TMP_HOME_E}" \
-    "${TMP_HOME_F}" "${TMP_HOME_G}" "${TMP_HOME_H}" 2>/dev/null || true
+    "${TMP_HOME_F}" "${TMP_HOME_G}" "${TMP_HOME_H}" \
+    "${TMP_HOME_I}" "${TMP_HOME_J}" "${TMP_HOME_K}" "${TMP_HOME_L}" \
+    "${TMP_HOME_M1}" "${TMP_HOME_M2}" 2>/dev/null || true
   cleanup
 }
 trap cleanup_all EXIT
