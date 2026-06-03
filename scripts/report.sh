@@ -326,22 +326,33 @@ process_session() {
   # single function-scoped helper. A bare `trap ... EXIT` would be overwritten
   # by the second trap (and by every loop iteration), leaking temp files every
   # tick under cron. Instead we rm explicitly on every return path.
-  local markers_cache_file msg_meta_file="" user_msgs_file=""
+  local markers_cache_file jobs_cache_file msg_meta_file="" user_msgs_file=""
   markers_cache_file=$(mktemp "${TMPDIR:-/tmp}/rv-markers.XXXXXX")
+  jobs_cache_file=$(mktemp "${TMPDIR:-/tmp}/rv-jobs.XXXXXX")
   _cleanup_session_tmp() {
-    rm -f "${markers_cache_file}" "${msg_meta_file}" "${user_msgs_file}"
+    rm -f "${markers_cache_file}" "${jobs_cache_file}" "${msg_meta_file}" "${user_msgs_file}"
   }
   local marker_file="${MARKERS_DIR}/${session_id}.jsonl"
   if [[ -f "${marker_file}" ]]; then
-    # Parse marker JSONL into tab-separated "ts<TAB>task_type<TAB>completion_id",
-    # sorted by ts. Per-line try/except for malformed lines (T-04-05). Sort is
-    # lexicographic on ISO8601 UTC ts strings (Pitfall 2 / NP-1).
-    # Backward-compatible: old markers without completion_id emit an empty 3rd field.
+    # Parse marker JSONL: branch on kind.
+    #   Task markers (no kind, has task_type): emit to markers_cache_file as
+    #     "ts<TAB>task_type<TAB>completion_id", sorted by ts (existing format).
+    #   Job markers (kind=="job", has agentic_job_id): emit to jobs_cache_file as
+    #     "ts<TAB>agentic_job_id<TAB>job_name<TAB>job_type<TAB>status<TAB>failure_reason<TAB>completion_id",
+    #     sorted by ts (Pitfall 2 / NP-1).
+    # Per-line try/except for malformed lines (T-04-05).
     # Env-passing heredoc discipline: no ${VAR} interpolation inside <<'PY' (T-04-09).
-    _MARKER_FILE="${marker_file}" python3 - <<'PY' 2>/dev/null >> "${markers_cache_file}" || true
+    # Separate cache files keep the existing task correlation engine untouched (NP-1).
+    _MARKER_FILE="${marker_file}" \
+    _TASKS_CACHE="${markers_cache_file}" \
+    _JOBS_CACHE="${jobs_cache_file}" \
+    python3 - <<'PY' 2>/dev/null || true
 import json, os, sys
 mf = os.environ.get('_MARKER_FILE', '')
-rows = []
+tasks_out = os.environ.get('_TASKS_CACHE', '')
+jobs_out  = os.environ.get('_JOBS_CACHE', '')
+task_rows = []
+job_rows  = []
 try:
     with open(mf, encoding='utf-8') as fh:
         for line in fh:
@@ -351,13 +362,31 @@ try:
                 r = json.loads(line)
             except Exception:
                 continue
-            if isinstance(r, dict) and r.get('ts') and r.get('task_type'):
-                rows.append((r['ts'], r['task_type'], r.get('completion_id', '')))
+            if not isinstance(r, dict): continue
+            if r.get('kind') == 'job' and r.get('agentic_job_id'):
+                # Job marker — emit to jobs cache
+                job_rows.append((
+                    r.get('ts', ''),
+                    r.get('agentic_job_id', ''),
+                    r.get('job_name', ''),
+                    r.get('job_type', ''),
+                    r.get('status', ''),
+                    r.get('failure_reason', ''),
+                    r.get('completion_id', ''),
+                ))
+            elif r.get('ts') and r.get('task_type'):
+                # Task marker — emit to tasks cache (existing format)
+                task_rows.append((r['ts'], r['task_type'], r.get('completion_id', '')))
 except Exception:
     pass
-rows.sort(key=lambda x: x[0])
-for ts, tt, cid in rows:
-    sys.stdout.write(f"{ts}\t{tt}\t{cid}\n")
+task_rows.sort(key=lambda x: x[0])
+job_rows.sort(key=lambda x: x[0])
+with open(tasks_out, 'a', encoding='utf-8') as f:
+    for ts, tt, cid in task_rows:
+        f.write(f"{ts}\t{tt}\t{cid}\n")
+with open(jobs_out, 'a', encoding='utf-8') as f:
+    for ts, jid, jname, jtype, status, fr, cid in job_rows:
+        f.write(f"{ts}\t{jid}\t{jname}\t{jtype}\t{status}\t{fr}\t{cid}\n")
 PY
   fi
 
