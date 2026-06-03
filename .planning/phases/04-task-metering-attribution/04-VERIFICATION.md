@@ -1,7 +1,8 @@
 ---
 phase: 04-task-metering-attribution
 verified: 2026-06-03T00:00:00Z
-status: human_needed
+status: passed
+human_verification_outcome: "User accepted 2026-06-03. SC3 (task-type end-to-end) live-confirmed working after correlation fix 48f7e44. SC1 (legacy notice) and SC2 (subagent rollup) accepted with caveats tracked in 04-HUMAN-UAT.md Gaps — notice path unverified (rule fixed directly via CLI); subagent->root rollup unverified (no subagents in test session). Neither caveat affects core metering correctness."
 score: 5/5 must-haves verified
 overrides_applied: 0
 human_verification:
