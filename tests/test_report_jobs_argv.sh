@@ -48,7 +48,13 @@ fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 make_openclaw_home() {
   local d
   d=$(mktemp -d "${TMPDIR:-/tmp}/test-rpt-jobs-home.XXXXXX")
-  mkdir -p "${d}/agents/main/sessions" "${d}/skills/revenium/markers"
+  mkdir -p "${d}/agents/main/sessions" "${d}/skills/revenium/markers" \
+            "${d}/skills/revenium/scripts"
+  # Symlink get-root-session-id.py so report.sh can resolve subagent->root
+  # for GROUP F/G/H tests.  Groups A-E use single root sessions and never
+  # invoke the resolver; the symlink is harmless for them.
+  ln -sf "${REPO_ROOT}/scripts/get-root-session-id.py" \
+         "${d}/skills/revenium/scripts/get-root-session-id.py"
   echo '{}' > "${d}/revenium-offsets.json"
   touch "${d}/revenium-reported.ledger"
   touch "${d}/revenium-jobs.ledger"

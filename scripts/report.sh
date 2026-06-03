@@ -775,7 +775,8 @@ PY
     # CRITICAL (D-12 / Pitfall 1): own exit locals; NEVER touch failed_count/
     # reported_count; NEVER return/exit process_session; NEVER reach CR-02 gate.
     # ---------------------------------------------------------------------------
-    if [[ "${JOBS_CLI_CAPABLE}" == "true" && -n "${agentic_job_id}" ]]; then
+    if [[ "${JOBS_CLI_CAPABLE}" == "true" && -n "${agentic_job_id}" \
+       && "${root_sid}" == "${session_id}" ]]; then
       if grep -q "^JOB:${agentic_job_id}:created:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
         :   # already created — idempotent skip (D-06)
       else
@@ -940,7 +941,8 @@ print(json.dumps([{'role': 'user', 'content': text}]))
     # reported_count; NEVER return/exit process_session; NEVER reach CR-02 gate.
     # D-07: NO --outcome-type ever. D-08: failure_reason via --metadata FAILED-only.
     # ---------------------------------------------------------------------------
-    if [[ "${JOBS_CLI_CAPABLE}" == "true" && -n "${agentic_job_id}" ]]; then
+    if [[ "${JOBS_CLI_CAPABLE}" == "true" && -n "${agentic_job_id}" \
+       && "${root_sid}" == "${session_id}" ]]; then
       if grep -q "^JOB:${agentic_job_id}:outcome:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
         :   # already closed — idempotent skip (D-09)
       elif ! grep -q "^JOB:${agentic_job_id}:created:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
