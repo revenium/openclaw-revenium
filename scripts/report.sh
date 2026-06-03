@@ -360,7 +360,13 @@ PY
   # Get last processed line offset for this session
   local offset total_lines
   offset=$(get_offset "${session_id}")
-  total_lines=$(wc -l < "${session_file}" | tr -d ' ')
+  # WR-05: count lines the way `tail -n +N` / `read` actually consume them.
+  # `wc -l` counts newline characters, so it undercounts by one when the final
+  # line has no trailing newline — leaving the offset short and re-yielding a
+  # processed line once it later gets terminated. `grep -c ''` counts the final
+  # unterminated line too. (Ledger dedup still protects against double-billing,
+  # but the offset arithmetic itself must be correct.)
+  total_lines=$(grep -c '' "${session_file}" 2>/dev/null || echo 0)
 
   # Nothing new to process — replaces the old DONE: skip
   if [[ "${offset}" -ge "${total_lines}" ]]; then
