@@ -24,7 +24,7 @@ Full details archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.
 **Milestone Goal:** Group an OpenClaw agent's work into Revenium *agentic jobs* — every completion attributed to a job, jobs opened and closed with a terminal outcome — so spend and success are observable at the job level, not just per session/task-type. Ports the `hermes-revenium` job model onto OpenClaw's agent-written-marker architecture (no native-hook dependency).
 
 - [x] **Phase 5: Job Declaration Foundation** - Agent declares jobs via validated `kind:"job"` markers backed by an 11-label job taxonomy (completed 2026-06-03)
-- [ ] **Phase 6: Job Lifecycle Wiring** - `report.sh` opens, meters under, and closes each declared job idempotently via the jobs ledger
+- [x] **Phase 6: Job Lifecycle Wiring** - `report.sh` opens, meters under, and closes each declared job idempotently via the jobs ledger (completed 2026-06-03)
 - [ ] **Phase 7: Root-Session Job Rollup** - Subagent completions roll up under the root session's job so one job spans the whole agent tree
 - [ ] **Phase 8: Halt → CANCELLED Outcome** - A guardrail halt closes the in-progress job CANCELLED with a terminal interrupted job record
 
@@ -79,7 +79,7 @@ Full details archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.
 
 **Wave 3** *(blocked on Wave 2)*
 
-  - [ ] 06-03-PLAN.md — report.sh lifecycle calls: in-loop jobs create + jobs outcome, ledger-gated + 409-as-success, fail-open (JLIFE-01, JLIFE-03, JLIFE-05)
+  - [x] 06-03-PLAN.md — report.sh lifecycle calls: in-loop jobs create + jobs outcome, ledger-gated + 409-as-success, fail-open (JLIFE-01, JLIFE-03, JLIFE-05)
 
 ### Phase 7: Root-Session Job Rollup
 
@@ -118,6 +118,6 @@ Phases execute in numeric order: 5 → 6 → 7 → 8
 | 3. Guardrail Engine | v1.0 | 8/8 | Complete | 2026-05-31 |
 | 4. Task Metering & Attribution | v1.0 | 4/4 | Complete | 2026-06-03 |
 | 5. Job Declaration Foundation | v1.1 | 3/3 | Complete    | 2026-06-03 |
-| 6. Job Lifecycle Wiring | v1.1 | 2/3 | In Progress|  |
+| 6. Job Lifecycle Wiring | v1.1 | 3/3 | Complete   | 2026-06-03 |
 | 7. Root-Session Job Rollup | v1.1 | 0/TBD | Not started | - |
 | 8. Halt → CANCELLED Outcome | v1.1 | 0/TBD | Not started | - |
