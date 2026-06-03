@@ -39,8 +39,8 @@ OPTIONS:
   --help              Show this usage block and exit.
 
 DEFAULT FILTER SCOPING:
-  Created rules default-scope to --filter AGENT:IS:${REVENIUM_AGENT_NAME:-OpenClaw}
-  so the rule evaluates against meter completions shipped by this skill.
+  Created rules default-scope to --filter AGENT:STARTS_WITH:${REVENIUM_AGENT_PREFIX:-openclaw-}
+  so the rule matches all openclaw-{root_sid} and openclaw-{sid} completions (D-07).
 
 EXAMPLES:
   # Fresh install — interactive mode:
@@ -239,7 +239,9 @@ period_titled() {
 # --shadow-mode=false to get a genuinely enforcing rule. After create, the rule
 # is read back and shadowMode is asserted to match intent — on mismatch the rule
 # is cleaned up and RULE_ID is cleared so callers do NOT record a bad ruleId.
-# Filter defaults to AGENT:IS:${REVENIUM_AGENT_NAME} (D-23).
+# Base filter: AGENT:STARTS_WITH:<prefix> using REVENIUM_AGENT_PREFIX (D-07).
+# Optional 5th arg EXTRA_FILTER: additional --filter value (e.g. TASK_TYPE:IS:<label>).
+# Optional 6th arg GROUP_BY_OVERRIDE: overrides --group-by (default AGENT) when non-empty.
 # Bash 3.2: RULE_JSON passed via env to python3 heredoc.
 # ---------------------------------------------------------------------------
 RULE_EXIT=0
@@ -250,6 +252,10 @@ create_rule() {
   local hard_limit="$2"
   local warn_threshold="$3"
   local period="$4"
+  local extra_filter="${5:-}"        # optional: e.g. "TASK_TYPE:IS:research" (NP-4)
+  local group_by_override="${6:-}"   # optional: override --group-by (e.g. TASK_TYPE)
+
+  local group_by_arg="${group_by_override:-AGENT}"
 
   local rule_json
   # T-03-09 mitigation: validate_hard_limit and validate_period enforce input
@@ -264,10 +270,11 @@ create_rule() {
       --metric-type TOTAL_COST \
       --window-type "${period}" \
       --action BLOCK \
-      --group-by AGENT \
+      --group-by "${group_by_arg}" \
       --warn-threshold "${warn_threshold}" \
       --hard-limit "${hard_limit}" \
-      --filter "AGENT:IS:${REVENIUM_AGENT_NAME}" \
+      --filter "AGENT:STARTS_WITH:${REVENIUM_AGENT_PREFIX}" \
+      ${extra_filter:+--filter "${extra_filter}"} \
       --shadow-mode \
       2>&1) && RULE_EXIT=0 || RULE_EXIT=$?
   else
@@ -283,10 +290,11 @@ create_rule() {
       --metric-type TOTAL_COST \
       --window-type "${period}" \
       --action BLOCK \
-      --group-by AGENT \
+      --group-by "${group_by_arg}" \
       --warn-threshold "${warn_threshold}" \
       --hard-limit "${hard_limit}" \
-      --filter "AGENT:IS:${REVENIUM_AGENT_NAME}" \
+      --filter "AGENT:STARTS_WITH:${REVENIUM_AGENT_PREFIX}" \
+      ${extra_filter:+--filter "${extra_filter}"} \
       --shadow-mode=false \
       2>&1) && RULE_EXIT=0 || RULE_EXIT=$?
   fi
