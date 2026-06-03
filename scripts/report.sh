@@ -394,13 +394,17 @@ PY
 
   # Helper: look up a field from msg_meta_file by message ID
   # Usage: meta_lookup ID FIELD_NUM  (2=parentId, 3=role, 4=timestamp)
+  # WR-04: match the ID as a literal string (awk $1==id), not a grep regex.
+  # IDs from .id/.parentId could contain regex metacharacters; a grep BRE would
+  # match the wrong rows and corrupt parent-ts lookups, the trace-id walk, and
+  # duration computation.
   meta_lookup() {
-    grep "^${1}	" "${msg_meta_file}" 2>/dev/null | head -1 | cut -f"${2}"
+    awk -F'\t' -v id="$1" -v f="$2" '$1==id{print $f; exit}' "${msg_meta_file}" 2>/dev/null
   }
 
   # Helper: look up user message text by ID
   user_msg_lookup() {
-    grep "^${1}	" "${user_msgs_file}" 2>/dev/null | head -1 | cut -f2-
+    awk -F'\t' -v id="$1" '$1==id{sub(/^[^\t]*\t/, ""); print; exit}' "${user_msgs_file}" 2>/dev/null
   }
 
   local reported_count=0
