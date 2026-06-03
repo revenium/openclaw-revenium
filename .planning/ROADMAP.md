@@ -92,7 +92,15 @@ Full details archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.
   2. When the root job ID can't yet be resolved (marker race), the completion omits `--agentic-job-id` and is retried on the next cron tick rather than shipping a wrong or sub-session ID
   3. Only the root session's declared job is shipped as a job; a subagent's internally-declared job markers are not shipped as separate jobs
 
-**Plans**: TBD
+**Plans**: 2 plans
+
+**Wave 1**
+
+  - [ ] 07-01-PLAN.md — Wave 0 RED tests: add GROUP F/G/H to test_report_jobs_argv.sh with inline sessions_spawn + root/child markers (inherit / race-omit+orphan-drop / suppress) covering JROLL-01/02/03
+
+**Wave 2** *(blocked on Wave 1)*
+
+  - [ ] 07-02-PLAN.md — report.sh rollup: root_aid cross-session resolver + subagent override (or omit on race) + root-only gates on jobs create/outcome; turns GROUP F/G/H green (JROLL-01, JROLL-02, JROLL-03)
 
 ### Phase 8: Halt → CANCELLED Outcome
 
@@ -119,5 +127,5 @@ Phases execute in numeric order: 5 → 6 → 7 → 8
 | 4. Task Metering & Attribution | v1.0 | 4/4 | Complete | 2026-06-03 |
 | 5. Job Declaration Foundation | v1.1 | 3/3 | Complete    | 2026-06-03 |
 | 6. Job Lifecycle Wiring | v1.1 | 3/3 | Complete    | 2026-06-03 |
-| 7. Root-Session Job Rollup | v1.1 | 0/TBD | Not started | - |
+| 7. Root-Session Job Rollup | v1.1 | 0/2 | Not started | - |
 | 8. Halt → CANCELLED Outcome | v1.1 | 0/TBD | Not started | - |
