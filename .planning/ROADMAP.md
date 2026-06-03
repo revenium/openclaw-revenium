@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Skill Scaffolding** - Valid SKILL.md that loads in OpenClaw and gates on revenium binary (completed 2026-03-14)
 - [x] **Phase 2: Setup Flow** - Agent-guided first-time config of API key, budget, and anomaly ID persistence (completed 2026-05-29)
 - [x] **Phase 3: Guardrail Engine** - Replace legacy budget-alert enforcement with guardrails-native rules: common infrastructure, setup-guardrails.sh, guardrail-check.sh, updated SKILL.md and cron pipeline (completed 2026-05-31)
-- [ ] **Phase 4: Task Metering & Attribution** - Task-type taxonomy, mandatory TASK CLASSIFICATION in SKILL.md, --task-type on every meter completion, and subagent trace correlation via root session ID
+- [x] **Phase 4: Task Metering & Attribution** - Task-type taxonomy, mandatory TASK CLASSIFICATION in SKILL.md, --task-type on every meter completion, and subagent trace correlation via root session ID (completed 2026-06-03)
 
 ## Phase Details
 
@@ -106,7 +106,7 @@ Plans:
   4. `report.sh` resolves the root session ID and passes `--agent "openclaw-{root_session_id}"` so subagent spend aggregates correctly in Revenium
   5. `setup-guardrails.sh --interactive` offers optional per-task-type budget rules drawn from `task-taxonomy.json`
 
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 
@@ -119,7 +119,7 @@ Plans:
 - [x] 04-03-PLAN.md — setup-guardrails.sh STARTS_WITH base filter + per-task-type budget-rule picker
 **Wave 3** *(blocked on Waves 1-2)*
 
-- [ ] 04-04-PLAN.md — SKILL.md TASK CLASSIFICATION + legacy notice; cron.sh marker prune; post-install wiring
+- [x] 04-04-PLAN.md — SKILL.md TASK CLASSIFICATION + legacy notice; cron.sh marker prune; post-install wiring
 
 ## Progress
 
@@ -131,4 +131,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Skill Scaffolding | 1/1 | Complete    | 2026-03-14 |
 | 2. Setup Flow | 1/1 | Complete    | 2026-05-29 |
 | 3. Guardrail Engine | 8/8 | Complete   | 2026-05-31 |
-| 4. Task Metering & Attribution | 3/4 | In Progress|  |
+| 4. Task Metering & Attribution | 4/4 | Complete   | 2026-06-03 |
