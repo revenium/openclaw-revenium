@@ -1007,6 +1007,204 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# handle_halt — Account-level halt handler (Phase 8 / JHALT-01/02 / D-02).
+# Runs ONCE per tick, after the per-session loop, inside main().
+# Whole function runs only when JOBS_CLI_CAPABLE==true (D-10).
+# Non-fatal: any failure is warn-logged; main() always continues.
+#
+# Steps:
+#   1. Read halt state from guardrail-status.json (fail-open on error).
+#   2. Short-circuit when not halted or haltedAt is empty.
+#   3. Exactly-once gate: JOB:halt:<haltedAt> in jobs ledger -> skip (D-03).
+#   4. Derive deterministic synthetic id: sha1(haltedAt)[:4] (D-09).
+#   5. Resolve open jobs from ledger only (created but no outcome) (D-06).
+#   6. CANCELLED-close loop: for each open job, outcome CANCELLED (JHALT-01).
+#      OR synthetic fallback when open-count was zero (JHALT-02 / D-05 / D-08).
+#   7. On success, append JOB:halt:<haltedAt> gate (D-03).
+# ---------------------------------------------------------------------------
+handle_halt() {
+  # --- Step 1: Read halt state from guardrail-status.json (fail-open) ---
+  # Env-passing python3 heredoc discipline (T-04-09 / T-08-04):
+  # GUARDRAIL_STATUS_FILE is passed via env; <<'PY' single-quoted delimiter
+  # prevents any bash expansion inside the heredoc.
+  local HALT_STATUS
+  HALT_STATUS=$(
+    GUARDRAIL_STATUS_FILE="${SKILL_DIR}/guardrail-status.json" \
+    python3 - <<'PY' 2>/dev/null || true
+import json, os
+status_file = os.environ.get('GUARDRAIL_STATUS_FILE', '')
+try:
+    data = json.load(open(status_file, encoding='utf-8'))
+    halted = 'true' if data.get('halted') else 'false'
+    halted_at = data.get('haltedAt', '')
+    halted_rule = data.get('haltedRule') or {}
+    halted_rule_name = halted_rule.get('name', '') if isinstance(halted_rule, dict) else ''
+    print(f"HALTED={halted}")
+    print(f"HALTED_AT={halted_at}")
+    print(f"HALTED_RULE_NAME={halted_rule_name}")
+except Exception:
+    print("HALTED=false")
+    print("HALTED_AT=")
+    print("HALTED_RULE_NAME=")
+PY
+  ) || true
+
+  local HALTED HALTED_AT HALTED_RULE_NAME
+  HALTED=$(echo "${HALT_STATUS}" | sed -n 's/^HALTED=//p')
+  HALTED_AT=$(echo "${HALT_STATUS}" | sed -n 's/^HALTED_AT=//p')
+  HALTED_RULE_NAME=$(echo "${HALT_STATUS}" | sed -n 's/^HALTED_RULE_NAME=//p')
+
+  # --- Step 2: Short-circuit when not halted or haltedAt is empty ---
+  if [[ "${HALTED}" != "true" || -z "${HALTED_AT}" ]]; then
+    return 0
+  fi
+
+  # --- Step 3: Exactly-once gate (D-03) ---
+  if grep -q "^JOB:halt:${HALTED_AT}$" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
+    return 0   # halt already processed this haltedAt — idempotent skip
+  fi
+
+  # --- Step 4: Derive deterministic synthetic id (D-09 / T-08-05) ---
+  # haltedAt passes through env; sha1 hex slice is always [a-f0-9]{4} (injection-safe).
+  local HALT_HEX
+  HALT_HEX=$(
+    HALTED_AT="${HALTED_AT}" \
+    python3 - <<'PY' 2>/dev/null || true
+import hashlib, os
+halted_at = os.environ.get('HALTED_AT', '')
+h = hashlib.sha1(halted_at.encode('utf-8')).hexdigest()
+print(h[:4])
+PY
+  ) || true
+  local synth_id="guardrail-halt-${HALT_HEX}"
+
+  # --- Step 5: Resolve open jobs from ledger only (D-06 / D-07) ---
+  # Open job = JOB:<id>:created: line with no matching JOB:<id>:outcome: line.
+  # Env-passing heredoc discipline; fail-open on exception (prints nothing).
+  # Do NOT read MARKERS_DIR for this (markers can lead the ledger — D-06).
+  local OPEN_JOBS
+  OPEN_JOBS=$(
+    JOBS_LEDGER_FILE="${JOBS_LEDGER_FILE}" \
+    python3 - <<'PY' 2>/dev/null || true
+import os, re
+ledger = os.environ.get('JOBS_LEDGER_FILE', '')
+created = set()
+closed = set()
+try:
+    for line in open(ledger, encoding='utf-8'):
+        line = line.strip()
+        m = re.match(r'^JOB:([^:]+):created:', line)
+        if m: created.add(m.group(1))
+        m = re.match(r'^JOB:([^:]+):outcome:', line)
+        if m: closed.add(m.group(1))
+except Exception:
+    pass
+for jid in sorted(created - closed):
+    print(jid)
+PY
+  ) || true
+
+  local open_count=0
+  local open_job_id
+  while IFS= read -r open_job_id; do
+    [[ -n "${open_job_id}" ]] && ((open_count++)) || true
+  done <<< "${OPEN_JOBS}"
+
+  # --- Step 6a: CANCELLED-close loop (JHALT-01 / D-04 / D-08) ---
+  # Close ALL open jobs CANCELLED. Synthetic fallback ONLY when open-count was 0.
+  local halt_ok=true
+  if [[ "${open_count}" -gt 0 ]]; then
+    while IFS= read -r open_job_id; do
+      [[ -z "${open_job_id}" ]] && continue
+      # Per-job outcome idempotency gate (mirrors Phase 6 line 946)
+      if grep -q "^JOB:${open_job_id}:outcome:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
+        continue   # already closed — idempotent skip
+      fi
+      local halt_outcome_cmd=( revenium jobs outcome "${open_job_id}" --result CANCELLED --quiet )
+      local halt_outcome_output halt_outcome_exit
+      halt_outcome_output=$("${halt_outcome_cmd[@]}" 2>&1) && halt_outcome_exit=0 || halt_outcome_exit=$?
+      local halt_outcome_success=false
+      if [[ "${halt_outcome_exit}" -eq 0 ]]; then
+        halt_outcome_success=true
+      elif echo "${halt_outcome_output}" | grep -qi "409\|already.exist\|conflict"; then
+        halt_outcome_success=true   # 409-as-success backstop
+      fi
+      if [[ "${halt_outcome_success}" == "true" ]]; then
+        local halt_outcome_ts
+        halt_outcome_ts=$(python3 -c "import time; print(f'{time.time():.3f}')" 2>/dev/null || date +%s)
+        echo "JOB:${open_job_id}:outcome:${halt_outcome_ts}:CANCELLED" >> "${JOBS_LEDGER_FILE}"
+        info "Halt: closed job CANCELLED: id=${open_job_id}"
+      else
+        warn "Halt: outcome CANCELLED failed: id=${open_job_id} exit=${halt_outcome_exit} — will retry next tick"
+        halt_ok=false
+      fi
+    done <<< "${OPEN_JOBS}"
+
+  else
+    # --- Step 6b: Synthetic fallback (JHALT-02 / D-05 / D-08 / D-09) ---
+    # ONLY when open-count was 0 — never both paths (D-05/D-08).
+    local synth_name="Interrupted by guardrail halt${HALTED_RULE_NAME:+ (${HALTED_RULE_NAME})}"
+
+    # Synthetic create — ledger-gated (idempotent on tick-interrupted create)
+    if ! grep -q "^JOB:${synth_id}:created:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
+      local synth_create_cmd=( revenium jobs create --agentic-job-id "${synth_id}" \
+        --name "${synth_name}" --type "interrupted" --quiet )
+      local synth_create_output synth_create_exit
+      synth_create_output=$("${synth_create_cmd[@]}" 2>&1) && synth_create_exit=0 || synth_create_exit=$?
+      local synth_create_success=false
+      if [[ "${synth_create_exit}" -eq 0 ]]; then
+        synth_create_success=true
+      elif echo "${synth_create_output}" | grep -qi "409\|already.exist\|conflict"; then
+        synth_create_success=true
+      fi
+      if [[ "${synth_create_success}" == "true" ]]; then
+        local synth_create_ts
+        synth_create_ts=$(python3 -c "import time; print(f'{time.time():.3f}')" 2>/dev/null || date +%s)
+        echo "JOB:${synth_id}:created:${synth_create_ts}" >> "${JOBS_LEDGER_FILE}"
+        info "Halt: synthetic interrupted job created: id=${synth_id}"
+      else
+        warn "Halt: synthetic create failed: id=${synth_id} exit=${synth_create_exit} — will retry next tick"
+        halt_ok=false
+      fi
+    fi
+
+    # Synthetic outcome — ledger-gated (idempotent on tick-interrupted outcome)
+    if [[ "${halt_ok}" == "true" ]] && \
+       grep -q "^JOB:${synth_id}:created:" "${JOBS_LEDGER_FILE}" 2>/dev/null && \
+       ! grep -q "^JOB:${synth_id}:outcome:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
+      local synth_outcome_cmd=( revenium jobs outcome "${synth_id}" --result CANCELLED --quiet )
+      local synth_outcome_output synth_outcome_exit
+      synth_outcome_output=$("${synth_outcome_cmd[@]}" 2>&1) && synth_outcome_exit=0 || synth_outcome_exit=$?
+      local synth_outcome_success=false
+      if [[ "${synth_outcome_exit}" -eq 0 ]]; then
+        synth_outcome_success=true
+      elif echo "${synth_outcome_output}" | grep -qi "409\|already.exist\|conflict"; then
+        synth_outcome_success=true
+      fi
+      if [[ "${synth_outcome_success}" == "true" ]]; then
+        local synth_outcome_ts
+        synth_outcome_ts=$(python3 -c "import time; print(f'{time.time():.3f}')" 2>/dev/null || date +%s)
+        echo "JOB:${synth_id}:outcome:${synth_outcome_ts}:CANCELLED" >> "${JOBS_LEDGER_FILE}"
+        info "Halt: synthetic interrupted job closed CANCELLED: id=${synth_id}"
+      else
+        warn "Halt: synthetic outcome CANCELLED failed: id=${synth_id} exit=${synth_outcome_exit} — will retry next tick"
+        halt_ok=false
+      fi
+    fi
+  fi
+
+  # --- Step 7: Append halt gate (D-03) ---
+  # ONLY on success (all terminal records written or 409-confirmed).
+  # On hard failure, do NOT append so halt retries next tick.
+  if [[ "${halt_ok}" == "true" ]]; then
+    echo "JOB:halt:${HALTED_AT}" >> "${JOBS_LEDGER_FILE}"
+    info "Halt: processed halt at haltedAt=${HALTED_AT} (gate written)"
+  else
+    warn "Halt: one or more jobs calls failed — JOB:halt gate NOT written (will retry next tick)"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -1027,6 +1225,13 @@ main() {
     ((total_files++)) || true
     process_session "${session_file}"
   done < <(find "${SESSIONS_DIR}" -name "*.jsonl" -print0 2>/dev/null)
+
+  # Account-level halt handler (Phase 8 / D-02): runs once per tick, after the
+  # per-session loop. Non-fatal: any error is warn-logged; main() continues.
+  # The entire handler is inside the JOBS_CLI_CAPABLE guard (D-10).
+  if [[ "${JOBS_CLI_CAPABLE}" == "true" ]]; then
+    handle_halt || warn "Halt handler encountered an unexpected error — metering unaffected"
+  fi
 
   info "=== Done. Processed ${total_files} session file(s). ==="
 }
