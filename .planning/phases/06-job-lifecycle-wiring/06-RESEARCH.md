@@ -444,19 +444,19 @@ Argv assertions then use the same one-token-per-line grep the existing tests use
 
 **Note:** A1 and A3 are server-behavior assumptions inherited from the Hermes port and Phase 4; they are not bash-level risks. The local ledger gates (D-06/D-09) make the common path correct regardless; the 409 net (A1) only matters in the rare crash-between-API-and-ledger window.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Exact conflict-string the live Revenium CLI emits on duplicate create/outcome (A1).**
+1. **RESOLVED: Exact conflict-string the live Revenium CLI emits on duplicate create/outcome (A1).**
    - What we know: Hermes greps `409\|already.exist\|conflict` and it works in Hermes production.
    - What's unclear: Whether the OpenClaw-targeted Revenium instance/CLI version emits an identical string.
    - Recommendation: Port the same grep; verify with one live duplicate call during UAT. The local ledger already covers the common case, so this is non-blocking.
 
-2. **Test-suite invariant flip (Pitfall 4).**
+2. **RESOLVED: Test-suite invariant flip (Pitfall 4).**
    - What we know: `test_report_argv.sh:283-289` asserts no `--agentic-job-*`. Its Sessions A–D carry no job markers, so it stays green if left alone.
    - What's unclear: Whether the planner wants to add job markers to those fixtures (breaking the assertion) or add a sibling test.
    - Recommendation: Add a NEW `test_report_jobs_argv.sh`; leave the task-type regression test untouched. Planner must state this explicitly.
 
-3. **In-loop vs pre-scan for create (Claude's discretion).**
+3. **RESOLVED: In-loop vs pre-scan for create (Claude's discretion).**
    - What we know: Hermes does both (pre-guard scan + in-loop). OpenClaw is single-session arc-close.
    - What's unclear: Whether any job marker could appear in a session that has zero new completions this tick (e.g., the closing marker lands but its correlated completion was already shipped — D-03's "no stampable same-tick completion" case).
    - Recommendation: The D-03 case (marker present, correlated completion already TX:-ledgered) means the in-loop completion path may `continue` past that completion (skipped as already-reported at report.sh:659). So create/outcome must NOT be gated behind "we are about to ship a completion" — they must fire whenever a closing job marker exists for the session, independent of whether a same-tick completion is stamped. Plan the create/outcome as a per-session step keyed on the presence of job markers, with stamping as an independent best-effort overlay on whatever completion (if any) correlates.
