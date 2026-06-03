@@ -88,7 +88,7 @@ Items acknowledged and deferred at milestone close on 2026-06-03:
 
 | Category | Item | Status | Note |
 |----------|------|--------|------|
-| uat_gap | 04-HUMAN-UAT | partial | Phase 4 accepted with 2 caveats: in-skill D-08 legacy notice firing unverified (rule fixed directly via CLI); subagent→root spend rollup unverified (no subagents in test session). Neither affects core metering correctness. |
+| uat_gap | 04-HUMAN-UAT | RESOLVED 2026-06-03 | Both caveats verified by user: in-skill D-08 legacy notice fires as designed; subagent→root spend rollup confirmed end-to-end (child completions roll up under `openclaw-<parent_session_id>`). 04-HUMAN-UAT.md now 3/3 passed, status complete. |
 | verification_gap | 01-VERIFICATION | human_needed | Pre-existing — Phase 1 shipped with human_needed verification never flipped to passed. Skill scaffolding is in production use. |
 | verification_gap | 03-VERIFICATION | human_needed | Pre-existing — Phase 3 shipped with human_needed verification never flipped to passed. Guardrail engine is in production use. |
 | quick_task | 260327-o1o-replace-done-session-skip-with-line-offs | missing | Actually COMPLETE (commit 7481c0c, see Quick Tasks Completed table); audit flagged it only because the task directory was cleaned up. No action needed. |
