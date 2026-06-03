@@ -31,8 +31,8 @@
 
 ### Halt → Outcome (JHALT)
 
-- [ ] **JHALT-01**: When a guardrail halt interrupts an in-progress job, that job is closed with outcome `CANCELLED`, wired into the existing halt flow
-- [ ] **JHALT-02**: An interrupted job is recorded with `job_type:"interrupted"` and a synthetic `agentic_job_id` (e.g. `guardrail-halt-<hex>`) so halted work still produces a terminal job record
+- [x] **JHALT-01**: When a guardrail halt interrupts an in-progress job, that job is closed with outcome `CANCELLED`, wired into the existing halt flow
+- [x] **JHALT-02**: An interrupted job is recorded with `job_type:"interrupted"` and a synthetic `agentic_job_id` (e.g. `guardrail-halt-<hex>`) so halted work still produces a terminal job record
 
 ## Future Requirements (deferred)
 
@@ -67,8 +67,8 @@ Which phases cover which requirements. Filled during roadmap creation.
 | JROLL-01 | Phase 7 | Complete |
 | JROLL-02 | Phase 7 | Complete |
 | JROLL-03 | Phase 7 | Complete |
-| JHALT-01 | Phase 8 | Pending |
-| JHALT-02 | Phase 8 | Pending |
+| JHALT-01 | Phase 8 | Complete |
+| JHALT-02 | Phase 8 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 14 total

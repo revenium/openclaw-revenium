@@ -136,4 +136,4 @@ Phases execute in numeric order: 5 → 6 → 7 → 8
 | 5. Job Declaration Foundation | v1.1 | 3/3 | Complete    | 2026-06-03 |
 | 6. Job Lifecycle Wiring | v1.1 | 3/3 | Complete    | 2026-06-03 |
 | 7. Root-Session Job Rollup | v1.1 | 2/2 | Complete    | 2026-06-03 |
-| 8. Halt → CANCELLED Outcome | v1.1 | 2/2 | Complete   | 2026-06-03 |
+| 8. Halt → CANCELLED Outcome | v1.1 | 2/2 | Complete    | 2026-06-03 |
