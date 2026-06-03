@@ -17,11 +17,11 @@
 
 ### Job Lifecycle (JLIFE)
 
-- [ ] **JLIFE-01**: `report.sh` opens each declared job via `revenium jobs create --agentic-job-id --name --type --environment` exactly once, ledger-gated and idempotent across cron ticks
-- [ ] **JLIFE-02**: Every metered completion belonging to a job is stamped with `--agentic-job-id`, `--agentic-job-name`, and `--agentic-job-type` on `revenium meter completion`
-- [ ] **JLIFE-03**: `report.sh` reports a terminal outcome via `revenium jobs outcome <id> --result SUCCESS|FAILED|CANCELLED` once per job (ledger-gated), reading the result from the job marker's `status`
-- [ ] **JLIFE-04**: Job tracking fails open — any `jobs` CLI error or absent subcommand is caught and logged without blocking task-type metering or guardrail checks
-- [ ] **JLIFE-05**: A jobs ledger persists created/closed job IDs so re-runs never duplicate `create` or `outcome` calls
+- [x] **JLIFE-01**: `report.sh` opens each declared job via `revenium jobs create --agentic-job-id --name --type --environment` exactly once, ledger-gated and idempotent across cron ticks
+- [x] **JLIFE-02**: Every metered completion belonging to a job is stamped with `--agentic-job-id`, `--agentic-job-name`, and `--agentic-job-type` on `revenium meter completion`
+- [x] **JLIFE-03**: `report.sh` reports a terminal outcome via `revenium jobs outcome <id> --result SUCCESS|FAILED|CANCELLED` once per job (ledger-gated), reading the result from the job marker's `status`
+- [x] **JLIFE-04**: Job tracking fails open — any `jobs` CLI error or absent subcommand is caught and logged without blocking task-type metering or guardrail checks
+- [x] **JLIFE-05**: A jobs ledger persists created/closed job IDs so re-runs never duplicate `create` or `outcome` calls
 
 ### Root-Session Job Rollup (JROLL)
 
@@ -59,11 +59,11 @@ Which phases cover which requirements. Filled during roadmap creation.
 | JOBDEC-02 | Phase 5 | Complete |
 | JOBDEC-03 | Phase 5 | Complete |
 | JOBDEC-04 | Phase 5 | Complete |
-| JLIFE-01 | Phase 6 | Pending |
-| JLIFE-02 | Phase 6 | Pending |
-| JLIFE-03 | Phase 6 | Pending |
-| JLIFE-04 | Phase 6 | Pending |
-| JLIFE-05 | Phase 6 | Pending |
+| JLIFE-01 | Phase 6 | Complete |
+| JLIFE-02 | Phase 6 | Complete |
+| JLIFE-03 | Phase 6 | Complete |
+| JLIFE-04 | Phase 6 | Complete |
+| JLIFE-05 | Phase 6 | Complete |
 | JROLL-01 | Phase 7 | Pending |
 | JROLL-02 | Phase 7 | Pending |
 | JROLL-03 | Phase 7 | Pending |
