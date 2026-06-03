@@ -155,7 +155,12 @@ PY
 # Helpers: input validation
 # ---------------------------------------------------------------------------
 validate_hard_limit() {
-  [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]]
+  # WR-06: the prompts/errors promise a "positive number", so reject 0, 0.00,
+  # and other non-positive values. A zero hard limit produces a budget rule
+  # whose warn threshold is also 0, which can block immediately / behave
+  # nonsensically.
+  [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 1
+  awk -v n="$1" 'BEGIN{exit !(n+0 > 0)}'
 }
 
 validate_period() {
