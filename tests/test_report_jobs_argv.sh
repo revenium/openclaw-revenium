@@ -1,0 +1,582 @@
+#!/usr/bin/env bash
+# =============================================================================
+# test_report_jobs_argv.sh — Integration tests for report.sh agentic-job wiring
+# (JLIFE-01..05)
+#
+# Strategy:
+#   Build a tmp OPENCLAW_HOME with session JSONL fixtures that contain
+#   kind:"job" markers correlating to completions.  Place stub-revenium.sh on
+#   PATH capturing all argv to STUB_REVENIUM_ARGV_FILE.  Run report.sh and
+#   assert the captured argv and revenium-jobs.ledger contain the expected
+#   tokens.
+#
+# EXPECTED RESULT THIS PLAN (Wave 0 / Plan 01):
+#   This test FAILS RED — report.sh has no job wiring yet (no create/outcome/
+#   --agentic-job-id tokens are produced).  The test turns green across Plans
+#   02 (probe + ledger + stamping) and 03 (create/outcome + CR-02/D-12 fixture).
+#   Do NOT stub report.sh or weaken assertions to make it pass now.
+#
+# Pitfall 4 (RECORDED): test_report_argv.sh is left UNTOUCHED and job-free.
+#   All Phase 6 job fixtures live here.  Adding job markers to Sessions A-D in
+#   the old test would silently break its no-agentic-job assertion (line 285).
+#
+# SECURITY (T-06-01 / T-06-02):
+#   - This test never `eval`s or string-interpolates captured argv.
+#   - --metadata JSON values are parsed via env-passing python3 json.loads.
+# =============================================================================
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPORT_SH="${REPO_ROOT}/scripts/report.sh"
+STUB_SH="${SCRIPT_DIR}/stub-revenium.sh"
+
+PASS=0
+FAIL=0
+
+pass() { echo "PASS: $1"; ((PASS++)) || true; }
+fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
+
+# ---------------------------------------------------------------------------
+# Helper: build a fresh tmp OPENCLAW_HOME and return the path.
+# Usage: TMP_HOME=$(make_openclaw_home)
+# Creates:  agents/main/sessions, skills/revenium/markers,
+#           revenium-offsets.json ({}), revenium-reported.ledger (empty),
+#           revenium-jobs.ledger (empty), skills/revenium/config.json
+# ---------------------------------------------------------------------------
+make_openclaw_home() {
+  local d
+  d=$(mktemp -d "${TMPDIR:-/tmp}/test-rpt-jobs-home.XXXXXX")
+  mkdir -p "${d}/agents/main/sessions" "${d}/skills/revenium/markers"
+  echo '{}' > "${d}/revenium-offsets.json"
+  touch "${d}/revenium-reported.ledger"
+  touch "${d}/revenium-jobs.ledger"
+  echo '{"organizationName":"TestOrg"}' > "${d}/skills/revenium/config.json"
+  echo "${d}"
+}
+
+# ---------------------------------------------------------------------------
+# Fake HOME setup: stub on PATH via fake HOME/.local/bin/revenium
+# All test runs share a single fake HOME so HOME= is always settable.
+# ---------------------------------------------------------------------------
+TMP_FAKE_HOME=$(mktemp -d "${TMPDIR:-/tmp}/test-rpt-jobs-fakehome.XXXXXX")
+TMP_LOCAL_BIN="${TMP_FAKE_HOME}/.local/bin"
+mkdir -p "${TMP_LOCAL_BIN}"
+ln -sf "${STUB_SH}" "${TMP_LOCAL_BIN}/revenium"
+
+cleanup() {
+  rm -rf "${TMP_FAKE_HOME}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# ---------------------------------------------------------------------------
+# count_grep <pattern> <file>
+#   Returns the count of matching lines in <file>.
+#   Returns 0 if file is missing or pattern does not match.
+#   Does NOT use `|| echo 0` which causes "0\n0" double-output when grep -c
+#   exits 1 (no match but file exists).
+# ---------------------------------------------------------------------------
+count_grep() {
+  local pattern="$1" file="${2:-/dev/null}"
+  local r
+  r=$(grep -c "${pattern}" "${file}" 2>/dev/null; exit 0)
+  echo "${r:-0}"
+}
+
+# ---------------------------------------------------------------------------
+# run_report <OPENCLAW_HOME> <ARGV_FILE> [extra env vars...]
+#   Runs report.sh with the stub on PATH; returns its exit code.
+#   Caller already exported STUB_REVENIUM_ARGV_FILE=<ARGV_FILE>.
+# ---------------------------------------------------------------------------
+run_report() {
+  local openclaw_home="$1"
+  local _argv_file="$2"
+  shift 2
+  local -a extra_env=("$@")
+  STUB_REVENIUM_ARGV_FILE="${_argv_file}" \
+  OPENCLAW_HOME="${openclaw_home}" \
+  HOME="${TMP_FAKE_HOME}" \
+  "${extra_env[@]+"${extra_env[@]}"}" \
+  bash "${REPORT_SH}" 2>&1 || true
+}
+
+# ===========================================================================
+# FIXTURE SESSIONS
+# ===========================================================================
+# We use isolated OPENCLAW_HOMEs for each fixture group so ledgers don't
+# interfere.  Shared session IDs across groups use distinct hexes.
+
+# ---------------------------------------------------------------------------
+# Session J1: SUCCESS job (JLIFE-01/02/03/05)
+#   - completion comp-J1-001 at T1
+#   - job marker kind:"job" status:"SUCCESS" completion_id="comp-J1-001"
+#     (marker ts AFTER completion ts — real lifecycle)
+# ---------------------------------------------------------------------------
+SID_J1="11111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+JOB_ID_J1="add-feature-1ab2"
+JOB_NAME_J1="Add Feature"
+JOB_TYPE_J1="feature_development"
+
+# ---------------------------------------------------------------------------
+# Session J2: FAILED job (JLIFE-03 + D-08)
+#   - completion comp-J2-001
+#   - job marker status:"FAILED" with failure_reason
+# ---------------------------------------------------------------------------
+SID_J2="22222222-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+JOB_ID_J2="fix-bug-2cd3"
+JOB_NAME_J2="Fix Bug"
+JOB_TYPE_J2="bug_fix"
+FAILURE_REASON_J2="test suite failing: 3 assertions red"
+
+# ---------------------------------------------------------------------------
+# Session J3: CANCELLED job (JLIFE-03 + D-07)
+#   - completion comp-J3-001
+#   - job marker status:"CANCELLED"
+# ---------------------------------------------------------------------------
+SID_J3="33333333-cccc-cccc-cccc-cccccccccccc"
+JOB_ID_J3="review-docs-3ef4"
+JOB_NAME_J3="Review Docs"
+JOB_TYPE_J3="documentation"
+
+# ===========================================================================
+# GROUP A: SUCCESS + FAILED + CANCELLED fixtures (shared OPENCLAW_HOME)
+# ===========================================================================
+TMP_HOME_A=$(make_openclaw_home)
+ARGV_FILE_A=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-a.XXXXXX")
+
+# Session J1 — SUCCESS
+SESSION_J1="${TMP_HOME_A}/agents/main/sessions/${SID_J1}.jsonl"
+cat > "${SESSION_J1}" <<JSONL
+{"type":"session","version":3,"id":"${SID_J1}","timestamp":"2026-02-01T10:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-J1-001","parentId":"00000000","timestamp":"2026-02-01T10:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Build the feature"}]}}
+{"type":"message","id":"comp-J1-001","parentId":"user-J1-001","timestamp":"2026-02-01T10:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Feature implemented"}],"usage":{"input":100,"output":50,"cacheRead":0,"cacheWrite":0,"totalTokens":150}}}
+JSONL
+
+MARKER_J1="${TMP_HOME_A}/skills/revenium/markers/${SID_J1}.jsonl"
+printf '%s\n' '{"kind":"job","ts":"2026-02-01T10:03:00Z","sid":"'"${SID_J1}"'","agentic_job_id":"'"${JOB_ID_J1}"'","job_name":"'"${JOB_NAME_J1}"'","job_type":"'"${JOB_TYPE_J1}"'","status":"SUCCESS","completion_id":"comp-J1-001"}' > "${MARKER_J1}"
+
+# Session J2 — FAILED
+SESSION_J2="${TMP_HOME_A}/agents/main/sessions/${SID_J2}.jsonl"
+cat > "${SESSION_J2}" <<JSONL
+{"type":"session","version":3,"id":"${SID_J2}","timestamp":"2026-02-01T11:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-J2-001","parentId":"00000000","timestamp":"2026-02-01T11:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Fix the bug"}]}}
+{"type":"message","id":"comp-J2-001","parentId":"user-J2-001","timestamp":"2026-02-01T11:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Bug investigated"}],"usage":{"input":80,"output":40,"cacheRead":0,"cacheWrite":0,"totalTokens":120}}}
+JSONL
+
+MARKER_J2="${TMP_HOME_A}/skills/revenium/markers/${SID_J2}.jsonl"
+printf '%s\n' '{"kind":"job","ts":"2026-02-01T11:03:00Z","sid":"'"${SID_J2}"'","agentic_job_id":"'"${JOB_ID_J2}"'","job_name":"'"${JOB_NAME_J2}"'","job_type":"'"${JOB_TYPE_J2}"'","status":"FAILED","failure_reason":"'"${FAILURE_REASON_J2}"'","completion_id":"comp-J2-001"}' > "${MARKER_J2}"
+
+# Session J3 — CANCELLED
+SESSION_J3="${TMP_HOME_A}/agents/main/sessions/${SID_J3}.jsonl"
+cat > "${SESSION_J3}" <<JSONL
+{"type":"session","version":3,"id":"${SID_J3}","timestamp":"2026-02-01T12:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-J3-001","parentId":"00000000","timestamp":"2026-02-01T12:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Review the docs"}]}}
+{"type":"message","id":"comp-J3-001","parentId":"user-J3-001","timestamp":"2026-02-01T12:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Docs reviewed"}],"usage":{"input":60,"output":30,"cacheRead":0,"cacheWrite":0,"totalTokens":90}}}
+JSONL
+
+MARKER_J3="${TMP_HOME_A}/skills/revenium/markers/${SID_J3}.jsonl"
+printf '%s\n' '{"kind":"job","ts":"2026-02-01T12:03:00Z","sid":"'"${SID_J3}"'","agentic_job_id":"'"${JOB_ID_J3}"'","job_name":"'"${JOB_NAME_J3}"'","job_type":"'"${JOB_TYPE_J3}"'","status":"CANCELLED","completion_id":"comp-J3-001"}' > "${MARKER_J3}"
+
+# Run report.sh for group A
+run_report "${TMP_HOME_A}" "${ARGV_FILE_A}"
+JOBS_LEDGER_A="${TMP_HOME_A}/revenium-jobs.ledger"
+
+# ---------------------------------------------------------------------------
+# GROUP A assertions
+# ---------------------------------------------------------------------------
+
+# --- JLIFE-01: jobs create fires for J1 (exactly one ^create$ token)
+create_count_a=$(count_grep "^create$" "${ARGV_FILE_A}")
+if [[ "${create_count_a}" -eq 3 ]]; then
+  pass "JLIFE-01: exactly 3 ^create$ tokens (one per job)"
+else
+  fail "JLIFE-01: expected 3 ^create$ tokens, got ${create_count_a} (RED — job wiring not yet in report.sh)"
+fi
+
+# --- JLIFE-01/05: J1 job ledger has a :created: entry
+if grep -q "^JOB:${JOB_ID_J1}:created:" "${JOBS_LEDGER_A}" 2>/dev/null; then
+  pass "JLIFE-01: revenium-jobs.ledger has JOB:${JOB_ID_J1}:created: entry"
+else
+  fail "JLIFE-01: no JOB:${JOB_ID_J1}:created: in jobs ledger (RED)"
+fi
+
+# --- JLIFE-02: correlated completion ships --agentic-job-id for J1
+stamped_job_id=$(awk '/^--agentic-job-id$/{getline; print}' "${ARGV_FILE_A}" 2>/dev/null | head -1 || true)
+if [[ "${stamped_job_id}" == "${JOB_ID_J1}" ]]; then
+  pass "JLIFE-02: --agentic-job-id ${JOB_ID_J1} found in stamped completion argv"
+else
+  fail "JLIFE-02: expected --agentic-job-id ${JOB_ID_J1}, got '${stamped_job_id}' (RED)"
+fi
+
+# --- JLIFE-02: --agentic-job-name present
+if grep -q "^--agentic-job-name$" "${ARGV_FILE_A}" 2>/dev/null; then
+  pass "JLIFE-02: --agentic-job-name present in argv"
+else
+  fail "JLIFE-02: --agentic-job-name NOT present in argv (RED)"
+fi
+
+# --- JLIFE-02: --agentic-job-type present
+if grep -q "^--agentic-job-type$" "${ARGV_FILE_A}" 2>/dev/null; then
+  pass "JLIFE-02: --agentic-job-type present in argv"
+else
+  fail "JLIFE-02: --agentic-job-type NOT present in argv (RED)"
+fi
+
+# --- JLIFE-03: jobs outcome fires for J1 (^outcome$ token)
+outcome_count_a=$(count_grep "^outcome$" "${ARGV_FILE_A}")
+if [[ "${outcome_count_a}" -eq 3 ]]; then
+  pass "JLIFE-03: exactly 3 ^outcome$ tokens (one per job)"
+else
+  fail "JLIFE-03: expected 3 ^outcome$ tokens, got ${outcome_count_a} (RED)"
+fi
+
+# --- JLIFE-03: J1 outcome --result SUCCESS
+result_j1=$(awk '/^--result$/{getline; print}' "${ARGV_FILE_A}" 2>/dev/null | grep "^SUCCESS$" | head -1 || true)
+if [[ "${result_j1}" == "SUCCESS" ]]; then
+  pass "JLIFE-03: --result SUCCESS found for J1"
+else
+  fail "JLIFE-03: --result SUCCESS NOT found (RED)"
+fi
+
+# --- JLIFE-03: J1 SUCCESS has NO --metadata token
+# (we check that the metadata count matches only the number of FAILED jobs = 1)
+metadata_count_a=$(count_grep "^--metadata$" "${ARGV_FILE_A}")
+if [[ "${metadata_count_a}" -eq 1 ]]; then
+  pass "JLIFE-03: exactly 1 --metadata token (only for FAILED job J2)"
+else
+  fail "JLIFE-03: expected 1 --metadata token, got ${metadata_count_a} (RED)"
+fi
+
+# --- J1 jobs ledger :outcome: entry
+if grep -q "^JOB:${JOB_ID_J1}:outcome:.*:SUCCESS" "${JOBS_LEDGER_A}" 2>/dev/null; then
+  pass "JLIFE-03/05: revenium-jobs.ledger has JOB:${JOB_ID_J1}:outcome:...:SUCCESS entry"
+else
+  fail "JLIFE-03/05: no JOB:${JOB_ID_J1}:outcome:...:SUCCESS in jobs ledger (RED)"
+fi
+
+# --- JLIFE-03: J2 outcome --result FAILED
+result_j2=$(awk '/^--result$/{getline; print}' "${ARGV_FILE_A}" 2>/dev/null | grep "^FAILED$" | head -1 || true)
+if [[ "${result_j2}" == "FAILED" ]]; then
+  pass "JLIFE-03 D-08: --result FAILED found for J2"
+else
+  fail "JLIFE-03 D-08: --result FAILED NOT found (RED)"
+fi
+
+# --- D-08: J2 --metadata is present and contains failure_reason (via python3 env-pass, no eval)
+metadata_val=$(awk '/^--metadata$/{getline; print}' "${ARGV_FILE_A}" 2>/dev/null | head -1 || true)
+if [[ -n "${metadata_val}" ]]; then
+  has_failure_reason=$(METADATA_VAL="${metadata_val}" python3 - 2>/dev/null <<'PY'
+import json, os, sys
+v = os.environ.get('METADATA_VAL', '')
+try:
+    d = json.loads(v)
+    if isinstance(d, dict) and 'failure_reason' in d:
+        print('yes')
+except Exception:
+    pass
+PY
+)
+  if [[ "${has_failure_reason}" == "yes" ]]; then
+    pass "D-08: --metadata JSON contains failure_reason key (parsed via env-passing python3, no eval)"
+  else
+    fail "D-08: --metadata JSON does NOT contain failure_reason key (value='${metadata_val}')"
+  fi
+else
+  fail "D-08: --metadata value is empty (RED)"
+fi
+
+# --- JLIFE-03 D-07: J3 outcome --result CANCELLED
+result_j3=$(awk '/^--result$/{getline; print}' "${ARGV_FILE_A}" 2>/dev/null | grep "^CANCELLED$" | head -1 || true)
+if [[ "${result_j3}" == "CANCELLED" ]]; then
+  pass "JLIFE-03 D-07: --result CANCELLED found for J3"
+else
+  fail "JLIFE-03 D-07: --result CANCELLED NOT found (RED)"
+fi
+
+# --- D-07: NO --outcome-type token EVER appears
+outcome_type_count_a=$(count_grep "^--outcome-type$" "${ARGV_FILE_A}")
+if [[ "${outcome_type_count_a}" -eq 0 ]]; then
+  pass "D-07: no --outcome-type token in captured argv"
+else
+  fail "D-07: found ${outcome_type_count_a} --outcome-type tokens (should be 0)"
+fi
+
+# --- D-04: NO --environment token EVER appears
+env_token_count_a=$(count_grep "^--environment$" "${ARGV_FILE_A}")
+if [[ "${env_token_count_a}" -eq 0 ]]; then
+  pass "D-04: no --environment token in captured argv"
+else
+  fail "D-04: found ${env_token_count_a} --environment tokens (should be 0)"
+fi
+
+# --- J3 CANCELLED has NO --metadata token (only FAILED gets metadata)
+# Already asserted above: metadata_count_a == 1 means only J2 FAILED has it.
+
+rm -f "${ARGV_FILE_A}"
+
+# ===========================================================================
+# GROUP B: Fail-open (JLIFE-04) — STUB_REVENIUM_NO_JOBS forces probe failure
+# ===========================================================================
+TMP_HOME_B=$(make_openclaw_home)
+ARGV_FILE_B=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-b.XXXXXX")
+
+SID_B1="44444444-dddd-dddd-dddd-dddddddddddd"
+JOB_ID_B1="failopen-5gh6"
+
+SESSION_B1="${TMP_HOME_B}/agents/main/sessions/${SID_B1}.jsonl"
+cat > "${SESSION_B1}" <<JSONL
+{"type":"session","version":3,"id":"${SID_B1}","timestamp":"2026-02-02T10:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-B1-001","parentId":"00000000","timestamp":"2026-02-02T10:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Some work"}]}}
+{"type":"message","id":"comp-B1-001","parentId":"user-B1-001","timestamp":"2026-02-02T10:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Work done"}],"usage":{"input":50,"output":25,"cacheRead":0,"cacheWrite":0,"totalTokens":75}}}
+JSONL
+
+MARKER_B1="${TMP_HOME_B}/skills/revenium/markers/${SID_B1}.jsonl"
+printf '%s\n' '{"kind":"job","ts":"2026-02-02T10:03:00Z","sid":"'"${SID_B1}"'","agentic_job_id":"'"${JOB_ID_B1}"'","job_name":"Fail Open","job_type":"feature_development","status":"SUCCESS","completion_id":"comp-B1-001"}' > "${MARKER_B1}"
+
+# Run with STUB_REVENIUM_NO_JOBS=1 — probe fails → JOBS_CLI_CAPABLE=false
+STUB_REVENIUM_NO_JOBS=1 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_B}" \
+  OPENCLAW_HOME="${TMP_HOME_B}" HOME="${TMP_FAKE_HOME}" \
+  bash "${REPORT_SH}" 2>&1 || true
+
+# Assert: zero ^jobs$ tokens
+jobs_token_count_b=$(count_grep "^jobs$" "${ARGV_FILE_B}")
+if [[ "${jobs_token_count_b}" -eq 0 ]]; then
+  pass "JLIFE-04 fail-open: zero ^jobs$ tokens in argv (JOBS_CLI_CAPABLE=false)"
+else
+  fail "JLIFE-04 fail-open: expected 0 ^jobs$ tokens, got ${jobs_token_count_b} (RED)"
+fi
+
+# Assert: zero agentic-job tokens
+agentic_job_count_b=$(count_grep "agentic-job" "${ARGV_FILE_B}")
+if [[ "${agentic_job_count_b}" -eq 0 ]]; then
+  pass "JLIFE-04 fail-open: zero agentic-job tokens in argv (v1.0 metering unchanged)"
+else
+  fail "JLIFE-04 fail-open: expected 0 agentic-job tokens, got ${agentic_job_count_b} (RED)"
+fi
+
+# Assert: --task-type still present (v1.0 metering unaffected)
+if grep -q "^--task-type$" "${ARGV_FILE_B}" 2>/dev/null; then
+  pass "JLIFE-04 fail-open: --task-type still present in argv (v1.0 metering byte-identical)"
+else
+  fail "JLIFE-04 fail-open: --task-type NOT present in argv (RED)"
+fi
+
+# Assert: --agent still present
+if grep -q "^--agent$" "${ARGV_FILE_B}" 2>/dev/null; then
+  pass "JLIFE-04 fail-open: --agent still present in argv"
+else
+  fail "JLIFE-04 fail-open: --agent NOT present in argv (RED)"
+fi
+
+rm -f "${ARGV_FILE_B}"
+
+# ===========================================================================
+# GROUP C: 409-as-success (JLIFE-04 extra / D-06)
+#   Run with STUB_REVENIUM_409_FOR = J1 job id on a FRESH OPENCLAW_HOME.
+#   Even though jobs create exits non-zero (409), the ledger row must be written
+#   and report.sh must exit 0.
+# ===========================================================================
+TMP_HOME_C=$(make_openclaw_home)
+ARGV_FILE_C=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-c.XXXXXX")
+
+# Re-use SID_J1 fixture in a new home
+SESSION_C1="${TMP_HOME_C}/agents/main/sessions/${SID_J1}.jsonl"
+cat > "${SESSION_C1}" <<JSONL
+{"type":"session","version":3,"id":"${SID_J1}","timestamp":"2026-02-01T10:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-J1-001","parentId":"00000000","timestamp":"2026-02-01T10:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Build the feature"}]}}
+{"type":"message","id":"comp-J1-001","parentId":"user-J1-001","timestamp":"2026-02-01T10:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Feature implemented"}],"usage":{"input":100,"output":50,"cacheRead":0,"cacheWrite":0,"totalTokens":150}}}
+JSONL
+
+MARKER_C1="${TMP_HOME_C}/skills/revenium/markers/${SID_J1}.jsonl"
+printf '%s\n' '{"kind":"job","ts":"2026-02-01T10:03:00Z","sid":"'"${SID_J1}"'","agentic_job_id":"'"${JOB_ID_J1}"'","job_name":"'"${JOB_NAME_J1}"'","job_type":"'"${JOB_TYPE_J1}"'","status":"SUCCESS","completion_id":"comp-J1-001"}' > "${MARKER_C1}"
+
+# Run with 409 stub for J1
+STUB_REVENIUM_409_FOR="${JOB_ID_J1}" STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_C}" \
+  OPENCLAW_HOME="${TMP_HOME_C}" HOME="${TMP_FAKE_HOME}" \
+  bash "${REPORT_SH}" 2>&1 || true
+
+JOBS_LEDGER_C="${TMP_HOME_C}/revenium-jobs.ledger"
+
+# Assert: :created: row still written (409 is success)
+if grep -q "^JOB:${JOB_ID_J1}:created:" "${JOBS_LEDGER_C}" 2>/dev/null; then
+  pass "D-06 409-as-success: JOB:${JOB_ID_J1}:created: ledger row written despite 409 stub (RED — wiring not yet in report.sh)"
+else
+  fail "D-06 409-as-success: JOB:${JOB_ID_J1}:created: ledger row NOT written (RED — expected failure)"
+fi
+
+rm -f "${ARGV_FILE_C}"
+
+# ===========================================================================
+# GROUP D: CR-02 / D-12 decoupling (JLIFE-04 extra — REQUIRED, VALIDATION.md L48)
+#   STUB_REVENIUM_JOBS_FAIL=1: jobs create/outcome exit non-409 error;
+#   meter completion still succeeds.
+#   Fresh OPENCLAW_HOME, empty offsets, empty ledgers.
+#   Assert:
+#     (a) TX:<comp_id> written exactly once in revenium-reported.ledger
+#     (b) offset advanced — second run does NOT re-meter the completion
+#     (c) report.sh exits 0 on the jobs-failing run
+#     (d) no JOB:<id>: row in revenium-jobs.ledger
+# ===========================================================================
+TMP_HOME_D=$(make_openclaw_home)
+ARGV_FILE_D1=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-d1.XXXXXX")
+
+SID_D1="55555555-eeee-eeee-eeee-eeeeeeeeeeee"
+JOB_ID_D1="decoupling-7ij8"
+
+SESSION_D1="${TMP_HOME_D}/agents/main/sessions/${SID_D1}.jsonl"
+cat > "${SESSION_D1}" <<JSONL
+{"type":"session","version":3,"id":"${SID_D1}","timestamp":"2026-02-03T10:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-D1-001","parentId":"00000000","timestamp":"2026-02-03T10:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Decouple jobs from metering"}]}}
+{"type":"message","id":"comp-D1-001","parentId":"user-D1-001","timestamp":"2026-02-03T10:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Decoupled"}],"usage":{"input":70,"output":35,"cacheRead":0,"cacheWrite":0,"totalTokens":105}}}
+JSONL
+
+MARKER_D1="${TMP_HOME_D}/skills/revenium/markers/${SID_D1}.jsonl"
+printf '%s\n' '{"kind":"job","ts":"2026-02-03T10:03:00Z","sid":"'"${SID_D1}"'","agentic_job_id":"'"${JOB_ID_D1}"'","job_name":"Decouple","job_type":"feature_development","status":"SUCCESS","completion_id":"comp-D1-001"}' > "${MARKER_D1}"
+
+# First run with STUB_REVENIUM_JOBS_FAIL=1 — jobs CLI fails, meter completion succeeds
+report_rc_d=0
+STUB_REVENIUM_JOBS_FAIL=1 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_D1}" \
+  OPENCLAW_HOME="${TMP_HOME_D}" HOME="${TMP_FAKE_HOME}" \
+  bash "${REPORT_SH}" 2>&1 || report_rc_d=$?
+
+COMPLETION_LEDGER_D="${TMP_HOME_D}/revenium-reported.ledger"
+JOBS_LEDGER_D="${TMP_HOME_D}/revenium-jobs.ledger"
+
+# (a) TX:comp-D1-001 written exactly once
+tx_count_d=$(count_grep "^TX:comp-D1-001$" "${COMPLETION_LEDGER_D}")
+if [[ "${tx_count_d}" -eq 1 ]]; then
+  pass "CR-02/D-12 (a): TX:comp-D1-001 written exactly once in revenium-reported.ledger"
+else
+  fail "CR-02/D-12 (a): expected TX:comp-D1-001 count=1, got ${tx_count_d} (RED)"
+fi
+
+# (c) report.sh exits 0 on the jobs-failing run (best-effort)
+if [[ "${report_rc_d}" -eq 0 ]]; then
+  pass "CR-02/D-12 (c): report.sh exits 0 even when jobs CLI fails (best-effort)"
+else
+  fail "CR-02/D-12 (c): report.sh exited ${report_rc_d} (should be 0 — jobs failure must not abort)"
+fi
+
+# (d) No JOB:<id>: row in revenium-jobs.ledger (jobs failure stayed in warn path)
+job_row_count_d=$(count_grep "^JOB:${JOB_ID_D1}:" "${JOBS_LEDGER_D}")
+if [[ "${job_row_count_d}" -eq 0 ]]; then
+  pass "CR-02/D-12 (d): no JOB:${JOB_ID_D1}: row in jobs ledger (failure stayed in warn-and-continue)"
+else
+  fail "CR-02/D-12 (d): found ${job_row_count_d} JOB:${JOB_ID_D1}: rows (should be 0 on failure — RED)"
+fi
+
+# (b) Second run — offset should be advanced, no re-metering of comp-D1-001
+ARGV_FILE_D2=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-d2.XXXXXX")
+STUB_REVENIUM_JOBS_FAIL=1 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_D2}" \
+  OPENCLAW_HOME="${TMP_HOME_D}" HOME="${TMP_FAKE_HOME}" \
+  bash "${REPORT_SH}" 2>&1 || true
+
+# The second run must NOT re-meter comp-D1-001 (TX: already in ledger + offset advanced)
+# Check: no ^completion$ token in the second-run argv
+completion_count_d2=$(count_grep "^completion$" "${ARGV_FILE_D2}")
+if [[ "${completion_count_d2}" -eq 0 ]]; then
+  pass "CR-02/D-12 (b): second run does NOT re-meter comp-D1-001 (offset advanced, completion gate blocked)"
+else
+  fail "CR-02/D-12 (b): second run has ${completion_count_d2} ^completion$ token(s) — re-metering occurred (RED)"
+fi
+
+# Also verify TX: count is still exactly 1 after the second run
+tx_count_d2=$(count_grep "^TX:comp-D1-001$" "${COMPLETION_LEDGER_D}")
+if [[ "${tx_count_d2}" -eq 1 ]]; then
+  pass "CR-02/D-12 (b) ledger: TX:comp-D1-001 still exactly 1 after second run"
+else
+  fail "CR-02/D-12 (b) ledger: TX:comp-D1-001 count=${tx_count_d2} after second run (expected 1)"
+fi
+
+rm -f "${ARGV_FILE_D1}" "${ARGV_FILE_D2}"
+
+# ===========================================================================
+# GROUP E: Idempotency / re-run (JLIFE-01/05)
+#   Run report.sh TWICE against the same OPENCLAW_HOME (no reset between runs).
+#   Assert across BOTH runs combined: exactly one ^create$ and one ^outcome$
+#   token per job, and the jobs ledger has exactly one :created: and one
+#   :outcome: line per job id.
+# ===========================================================================
+TMP_HOME_E=$(make_openclaw_home)
+ARGV_FILE_E1=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-e1.XXXXXX")
+ARGV_FILE_E2=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-e2.XXXXXX")
+
+SID_E1="66666666-ffff-ffff-ffff-ffffffffffff"
+JOB_ID_E1="idempotent-9kl0"
+
+SESSION_E1="${TMP_HOME_E}/agents/main/sessions/${SID_E1}.jsonl"
+cat > "${SESSION_E1}" <<JSONL
+{"type":"session","version":3,"id":"${SID_E1}","timestamp":"2026-02-04T10:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-E1-001","parentId":"00000000","timestamp":"2026-02-04T10:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Idempotent work"}]}}
+{"type":"message","id":"comp-E1-001","parentId":"user-E1-001","timestamp":"2026-02-04T10:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Done"}],"usage":{"input":50,"output":25,"cacheRead":0,"cacheWrite":0,"totalTokens":75}}}
+JSONL
+
+MARKER_E1="${TMP_HOME_E}/skills/revenium/markers/${SID_E1}.jsonl"
+printf '%s\n' '{"kind":"job","ts":"2026-02-04T10:03:00Z","sid":"'"${SID_E1}"'","agentic_job_id":"'"${JOB_ID_E1}"'","job_name":"Idempotent","job_type":"feature_development","status":"SUCCESS","completion_id":"comp-E1-001"}' > "${MARKER_E1}"
+
+# First run
+run_report "${TMP_HOME_E}" "${ARGV_FILE_E1}"
+# Second run (same OPENCLAW_HOME — no reset of offsets/ledgers)
+run_report "${TMP_HOME_E}" "${ARGV_FILE_E2}"
+
+JOBS_LEDGER_E="${TMP_HOME_E}/revenium-jobs.ledger"
+
+# Merge both argv files for cross-run token counts
+ARGV_FILE_E_MERGED=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-e-merged.XXXXXX")
+cat "${ARGV_FILE_E1}" "${ARGV_FILE_E2}" > "${ARGV_FILE_E_MERGED}"
+
+# Exactly one ^create$ across both runs
+create_count_e=$(count_grep "^create$" "${ARGV_FILE_E_MERGED}")
+if [[ "${create_count_e}" -eq 1 ]]; then
+  pass "JLIFE-05: exactly 1 ^create$ token across two runs (idempotent — ledger gate worked)"
+else
+  fail "JLIFE-05: expected 1 ^create$ across two runs, got ${create_count_e} (RED)"
+fi
+
+# Exactly one ^outcome$ across both runs
+outcome_count_e=$(count_grep "^outcome$" "${ARGV_FILE_E_MERGED}")
+if [[ "${outcome_count_e}" -eq 1 ]]; then
+  pass "JLIFE-05: exactly 1 ^outcome$ token across two runs (idempotent)"
+else
+  fail "JLIFE-05: expected 1 ^outcome$ across two runs, got ${outcome_count_e} (RED)"
+fi
+
+# Exactly one :created: line in jobs ledger
+created_ledger_count_e=$(count_grep "^JOB:${JOB_ID_E1}:created:" "${JOBS_LEDGER_E}")
+if [[ "${created_ledger_count_e}" -eq 1 ]]; then
+  pass "JLIFE-05: exactly 1 JOB:${JOB_ID_E1}:created: line in jobs ledger"
+else
+  fail "JLIFE-05: expected 1 :created: ledger line, got ${created_ledger_count_e} (RED)"
+fi
+
+# Exactly one :outcome: line in jobs ledger
+outcome_ledger_count_e=$(count_grep "^JOB:${JOB_ID_E1}:outcome:" "${JOBS_LEDGER_E}")
+if [[ "${outcome_ledger_count_e}" -eq 1 ]]; then
+  pass "JLIFE-05: exactly 1 JOB:${JOB_ID_E1}:outcome: line in jobs ledger"
+else
+  fail "JLIFE-05: expected 1 :outcome: ledger line, got ${outcome_ledger_count_e} (RED)"
+fi
+
+rm -f "${ARGV_FILE_E1}" "${ARGV_FILE_E2}" "${ARGV_FILE_E_MERGED}"
+
+# ===========================================================================
+# GROUP A cleanup
+# ===========================================================================
+# (tmp homes cleaned up by EXIT trap below or manually here)
+
+cleanup_all() {
+  rm -rf "${TMP_HOME_A}" "${TMP_HOME_B}" "${TMP_HOME_C}" "${TMP_HOME_D}" "${TMP_HOME_E}" 2>/dev/null || true
+  cleanup
+}
+trap cleanup_all EXIT
+
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+echo ""
+echo "Results: ${PASS} passed, ${FAIL} failed"
+if [[ "${FAIL}" -gt 0 ]]; then
+  exit 1
+fi
+exit 0
