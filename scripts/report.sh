@@ -448,11 +448,25 @@ PY
     is_streamed="false"
     [[ "${api_type}" == *"stream"* ]] && is_streamed="true"
 
-    input_tokens=$(echo "${line}" | jq -r '.message.usage.input // 0')
-    output_tokens=$(echo "${line}" | jq -r '.message.usage.output // 0')
-    cache_read=$(echo "${line}" | jq -r '.message.usage.cacheRead // 0')
-    cache_create=$(echo "${line}" | jq -r '.message.usage.cacheWrite // 0')
-    total_tokens=$(echo "${line}" | jq -r '.message.usage.totalTokens // 0')
+    # WR-07: tolerate both observed usage spellings. OpenClaw fixtures vary
+    # between the camelCase form (input/output/cacheRead/cacheWrite/totalTokens)
+    # and the Anthropic snake_case form (input_tokens/output_tokens/
+    # cache_read_input_tokens/cache_creation_input_tokens, no totalTokens).
+    # Accept either, and synthesize total_tokens when the key is absent so the
+    # zero-usage skip at the bottom of the loop does not silently drop real
+    # usage. NOTE: confirm the canonical production schema (HUMAN VERIFY).
+    input_tokens=$(echo "${line}" | jq -r '.message.usage.input // .message.usage.input_tokens // 0')
+    output_tokens=$(echo "${line}" | jq -r '.message.usage.output // .message.usage.output_tokens // 0')
+    cache_read=$(echo "${line}" | jq -r '.message.usage.cacheRead // .message.usage.cache_read_input_tokens // 0')
+    cache_create=$(echo "${line}" | jq -r '.message.usage.cacheWrite // .message.usage.cache_creation_input_tokens // 0')
+    total_tokens=$(echo "${line}" | jq -r '
+      .message.usage as $u
+      | ($u.totalTokens
+         // $u.total_tokens
+         // (((($u.input // $u.input_tokens // 0)
+              + ($u.output // $u.output_tokens // 0)
+              + ($u.cacheRead // $u.cache_read_input_tokens // 0)
+              + ($u.cacheWrite // $u.cache_creation_input_tokens // 0)))))')
     timestamp=$(echo "${line}" | jq -r '.timestamp // empty' 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
     tx_id=$(echo "${line}" | jq -r '.id // empty' 2>/dev/null || echo "${session_id}-$(date +%s%N)")
     stop_reason=$(map_stop_reason "$(echo "${line}" | jq -r '.message.stopReason // "stop"')")
