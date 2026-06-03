@@ -240,6 +240,12 @@ rec = {
 if status == "FAILED" and failure_reason:
     rec["failure_reason"] = failure_reason
 
+# completion_id: id of the most recent assistant completion (Approach A key).
+# report.sh correlates job markers to completions by exact id; without this the
+# correlation silently degrades to timestamp-only (CR-01). Mirrors write-marker.sh.
+if completion_id:
+    rec["completion_id"] = completion_id
+
 # --- Append under fcntl.LOCK_EX + O_APPEND (T-05-06) ---
 # Use json.dumps with compact separators so no raw field bytes hit the file
 # unescaped; O_APPEND is atomic at the OS level, flock prevents interleaving
