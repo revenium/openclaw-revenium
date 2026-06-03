@@ -233,6 +233,9 @@ post_to_revenium() {
   local output_response="${19:-}"
   local root_sid="${20:-}"
   local task_type="${21:-unclassified}"
+  local agentic_job_id="${22:-}"
+  local agentic_job_name="${23:-}"
+  local agentic_job_type="${24:-}"
 
   local cmd=(
     revenium meter completion
@@ -288,6 +291,14 @@ post_to_revenium() {
   # Add output response (the assistant's reply content)
   if [[ -n "${output_response}" ]]; then
     cmd+=(--output-response "${output_response}")
+  fi
+
+  # Add agentic job flags when capability probe confirmed and id is non-empty (JLIFE-02)
+  # Bash-array discipline (T-06-04 / V5): cmd+=(--flag "$val"), never eval/unquoted.
+  if [[ "${JOBS_CLI_CAPABLE}" == "true" && -n "${agentic_job_id}" ]]; then
+    cmd+=(--agentic-job-id "${agentic_job_id}")
+    [[ -n "${agentic_job_name}" ]] && cmd+=(--agentic-job-name "${agentic_job_name}")
+    [[ -n "${agentic_job_type}" ]] && cmd+=(--agentic-job-type "${agentic_job_type}")
   fi
 
   local cmd_output cmd_exit
@@ -585,6 +596,93 @@ PY
     # 64-char truncation for log injection mitigation (T-04-08)
     local task_type_log="${task_type:0:64}"
 
+    # Per-completion job correlation (JLIFE-02 / D-01).
+    # Reuses the SAME completion_id-exact → ts-fallback engine as task_type.
+    # Scans jobs_cache_file (from Task 2); resolves agentic_job_id/name/type.
+    # All fields default empty when no job row matches (fail-open, D-12).
+    # Prior-tick already-TX:-ledgered completions never reach here (continue above).
+    local agentic_job_id="" agentic_job_name="" agentic_job_type=""
+    if [[ "${JOBS_CLI_CAPABLE}" == "true" && -s "${jobs_cache_file}" ]]; then
+      local job_resolve_result
+      job_resolve_result=$(_JOBS_CACHE="${jobs_cache_file}" COMPLETION_TS="${timestamp}" COMPLETION_ID="${tx_id}" python3 - <<'PY' 2>/dev/null || true
+import os
+from datetime import datetime, timezone
+
+jc  = os.environ.get('_JOBS_CACHE', '')
+cts_raw = os.environ.get('COMPLETION_TS', '')
+cid = os.environ.get('COMPLETION_ID', '')
+
+# WR-02: parse ts rather than lexicographic compare (Pitfall 5)
+def parse_ts(s):
+    try: return datetime.fromisoformat(s.replace('Z', '+00:00'))
+    except Exception: pass
+    for fmt in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ'):
+        try: return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+        except Exception: pass
+    return None
+
+# Job cache row: ts|agentic_job_id|job_name|job_type|status|failure_reason|completion_id
+rows = []
+try:
+    with open(jc, encoding='utf-8') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line: continue
+            parts = line.split('\t', 6)
+            if len(parts) < 2: continue
+            rows.append(parts)
+except Exception:
+    pass
+
+chosen = None
+
+# --- Phase A: exact completion_id match ---
+if cid:
+    for parts in rows:
+        row_cid = parts[6] if len(parts) > 6 else ''
+        if row_cid and row_cid == cid:
+            chosen = parts
+            break
+
+# --- Phase D: earliest job marker at or after completion ts (fallback) ---
+if chosen is None:
+    cts = parse_ts(cts_raw)
+    for parts in rows:
+        row_cid = parts[6] if len(parts) > 6 else ''
+        if row_cid:
+            continue  # id-keyed: don't bleed via timestamp
+        ts = parts[0]
+        mts = parse_ts(ts)
+        if mts is not None and cts is not None:
+            if mts >= cts:
+                chosen = parts
+                break
+        else:
+            if ts >= cts_raw:
+                chosen = parts
+                break
+
+if chosen is not None:
+    jid   = chosen[1] if len(chosen) > 1 else ''
+    jname = chosen[2] if len(chosen) > 2 else ''
+    jtype = chosen[3] if len(chosen) > 3 else ''
+    print(f"{jid}\t{jname}\t{jtype}")
+else:
+    print('\t\t')
+PY
+)
+      # Parse tab-separated result (job_id, job_name, job_type)
+      agentic_job_id="${job_resolve_result%%$'\t'*}"
+      local _rest="${job_resolve_result#*$'\t'}"
+      agentic_job_name="${_rest%%$'\t'*}"
+      agentic_job_type="${_rest#*$'\t'}"
+      # 64-char truncation for log injection mitigation (T-06-06 / T-04-08)
+      local agentic_job_id_log="${agentic_job_id:0:64}"
+      if [[ -n "${agentic_job_id}" ]]; then
+        info "Job correlation: tx_id=${tx_id} agentic_job_id=${agentic_job_id_log}"
+      fi
+    fi
+
     # Compute request time (parent message timestamp) and duration in ms.
     # The parent's timestamp is when the request was dispatched; this message's
     # timestamp is when the response arrived.
@@ -703,7 +801,8 @@ print(json.dumps([{'role': 'user', 'content': text}]))
         "${model_source}" "${is_streamed}" \
         "${trace_id}" "${operation_type}" \
         "${system_prompt}" "${input_msgs_json}" "${output_resp}" \
-        "${root_sid}" "${task_type:-unclassified}"; then
+        "${root_sid}" "${task_type:-unclassified}" \
+        "${agentic_job_id}" "${agentic_job_name}" "${agentic_job_type}"; then
       echo "TX:${tx_id}" >> "${LEDGER_FILE}"
       ((reported_count++)) || true
     else

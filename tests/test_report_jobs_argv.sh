@@ -202,11 +202,15 @@ else
 fi
 
 # --- JLIFE-02: correlated completion ships --agentic-job-id for J1
-stamped_job_id=$(awk '/^--agentic-job-id$/{getline; print}' "${ARGV_FILE_A}" 2>/dev/null | head -1 || true)
-if [[ "${stamped_job_id}" == "${JOB_ID_J1}" ]]; then
+# Note: find(1) returns session files in inode order (not alphabetical), so we
+# cannot rely on head -1 to return J1's id first.  Instead check that J1's id
+# appears SOMEWHERE in the captured argv (all three sessions are in one home,
+# so all three ids must appear; this assertion only checks the J1 presence).
+all_stamped_ids=$(awk '/^--agentic-job-id$/{getline; print}' "${ARGV_FILE_A}" 2>/dev/null || true)
+if echo "${all_stamped_ids}" | grep -qx "${JOB_ID_J1}"; then
   pass "JLIFE-02: --agentic-job-id ${JOB_ID_J1} found in stamped completion argv"
 else
-  fail "JLIFE-02: expected --agentic-job-id ${JOB_ID_J1}, got '${stamped_job_id}' (RED)"
+  fail "JLIFE-02: expected --agentic-job-id ${JOB_ID_J1} somewhere in argv, got '$(echo "${all_stamped_ids}" | tr '\n' '|')' (RED)"
 fi
 
 # --- JLIFE-02: --agentic-job-name present
@@ -339,12 +343,17 @@ STUB_REVENIUM_NO_JOBS=1 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_B}" \
   OPENCLAW_HOME="${TMP_HOME_B}" HOME="${TMP_FAKE_HOME}" \
   bash "${REPORT_SH}" 2>&1 || true
 
-# Assert: zero ^jobs$ tokens
-jobs_token_count_b=$(count_grep "^jobs$" "${ARGV_FILE_B}")
-if [[ "${jobs_token_count_b}" -eq 0 ]]; then
-  pass "JLIFE-04 fail-open: zero ^jobs$ tokens in argv (JOBS_CLI_CAPABLE=false)"
+# Assert: zero ^create$ tokens (no jobs create call happened)
+# Note: the capability probe "revenium jobs --help" always emits 1 ^jobs$ token
+# even when it fails (the stub captures all argv before checking env switches).
+# Checking for ^create$ = 0 and ^outcome$ = 0 is the reliable signal that no
+# actual job work happened (the probe invocation is expected and benign).
+create_token_count_b=$(count_grep "^create$" "${ARGV_FILE_B}")
+outcome_token_count_b=$(count_grep "^outcome$" "${ARGV_FILE_B}")
+if [[ "${create_token_count_b}" -eq 0 && "${outcome_token_count_b}" -eq 0 ]]; then
+  pass "JLIFE-04 fail-open: zero ^create$/^outcome$ tokens in argv (JOBS_CLI_CAPABLE=false, no job work)"
 else
-  fail "JLIFE-04 fail-open: expected 0 ^jobs$ tokens, got ${jobs_token_count_b} (RED)"
+  fail "JLIFE-04 fail-open: expected 0 ^create$/^outcome$ tokens, got create=${create_token_count_b} outcome=${outcome_token_count_b} (RED)"
 fi
 
 # Assert: zero agentic-job tokens
@@ -472,13 +481,15 @@ STUB_REVENIUM_JOBS_FAIL=1 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_D2}" \
   OPENCLAW_HOME="${TMP_HOME_D}" HOME="${TMP_FAKE_HOME}" \
   bash "${REPORT_SH}" 2>&1 || true
 
-# The second run must NOT re-meter comp-D1-001 (TX: already in ledger + offset advanced)
-# Check: no ^completion$ token in the second-run argv
-completion_count_d2=$(count_grep "^completion$" "${ARGV_FILE_D2}")
-if [[ "${completion_count_d2}" -eq 0 ]]; then
-  pass "CR-02/D-12 (b): second run does NOT re-meter comp-D1-001 (offset advanced, completion gate blocked)"
+# The second run must NOT re-meter comp-D1-001 (TX: already in ledger + offset advanced).
+# The capability probe "revenium meter completion --help" emits a ^completion$ token even
+# when no real metering happens, so we check for ^--transaction-id$ instead — that flag
+# only appears in real "meter completion" posts (not in the --help probe).
+tx_flag_count_d2=$(count_grep "^--transaction-id$" "${ARGV_FILE_D2}")
+if [[ "${tx_flag_count_d2}" -eq 0 ]]; then
+  pass "CR-02/D-12 (b): second run does NOT re-meter comp-D1-001 (offset advanced, no --transaction-id in argv)"
 else
-  fail "CR-02/D-12 (b): second run has ${completion_count_d2} ^completion$ token(s) — re-metering occurred (RED)"
+  fail "CR-02/D-12 (b): second run has ${tx_flag_count_d2} ^--transaction-id$ flag(s) — re-metering occurred (RED)"
 fi
 
 # Also verify TX: count is still exactly 1 after the second run
