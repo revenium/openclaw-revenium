@@ -607,8 +607,16 @@ print(json.dumps([{'role': 'user', 'content': text}]))
     info "Session ${session_id}: reported ${reported_count} events, ${failed_count} failures"
   fi
 
-  # Persist the line offset so next run skips already-processed lines
-  set_offset "${session_id}" "${total_lines}"
+  # Persist the line offset so next run skips already-processed lines.
+  # CR-02: only advance past lines that were all handled. If any completion
+  # failed to post (network/API/auth transient), do NOT advance — leave the
+  # offset so those lines are re-scanned next tick. Re-processing succeeded
+  # lines is safe because the ledger (TX:) dedups them, so no double-billing.
+  if [[ "${failed_count}" -eq 0 ]]; then
+    set_offset "${session_id}" "${total_lines}"
+  else
+    warn "Session ${session_id}: ${failed_count} failure(s) — not advancing offset (will retry next tick)"
+  fi
 }
 
 # ---------------------------------------------------------------------------
