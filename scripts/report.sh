@@ -319,8 +319,15 @@ process_session() {
   # Change 2 (METER-03 / NP-1 performance): read+sort markers ONCE per session
   # (not per completion line — Pitfall 3). Cache sorted list in a temp file.
   # Each line: "<ts>\t<task_type>"
-  local markers_cache_file
+  # WR-01: declare all per-iteration temp files up front and clean them with a
+  # single function-scoped helper. A bare `trap ... EXIT` would be overwritten
+  # by the second trap (and by every loop iteration), leaking temp files every
+  # tick under cron. Instead we rm explicitly on every return path.
+  local markers_cache_file msg_meta_file="" user_msgs_file=""
   markers_cache_file=$(mktemp "${TMPDIR:-/tmp}/rv-markers.XXXXXX")
+  _cleanup_session_tmp() {
+    rm -f "${markers_cache_file}" "${msg_meta_file}" "${user_msgs_file}"
+  }
   local marker_file="${MARKERS_DIR}/${session_id}.jsonl"
   if [[ -f "${marker_file}" ]]; then
     # Parse marker JSONL into tab-separated "ts<TAB>task_type", sorted by ts.
@@ -349,8 +356,6 @@ for ts, tt in rows:
     sys.stdout.write(f"{ts}\t{tt}\n")
 PY
   fi
-  # shellcheck disable=SC2064
-  trap "rm -f '${markers_cache_file}'" EXIT
 
   # Get last processed line offset for this session
   local offset total_lines
@@ -359,6 +364,7 @@ PY
 
   # Nothing new to process — replaces the old DONE: skip
   if [[ "${offset}" -ge "${total_lines}" ]]; then
+    _cleanup_session_tmp
     return 0
   fi
 
@@ -373,11 +379,8 @@ PY
   # Build lookup files for message metadata (bash 3.x compatible — no associative arrays).
   # These temp files replace declare -A and are used for trace ID walks, duration
   # computation, and user message lookups via grep.
-  local msg_meta_file user_msgs_file
   msg_meta_file=$(mktemp "${TMPDIR:-/tmp}/rv-meta.XXXXXX")
   user_msgs_file=$(mktemp "${TMPDIR:-/tmp}/rv-umsg.XXXXXX")
-  # shellcheck disable=SC2064
-  trap "rm -f '${msg_meta_file}' '${user_msgs_file}'" EXIT
 
   # msg_meta_file: TAB-separated "id \t parentId \t role \t timestamp"
   jq -r 'select(.type=="message") | [.id // "", .parentId // "", (.message.role // ""), .timestamp // ""] | @tsv' \
@@ -617,6 +620,9 @@ print(json.dumps([{'role': 'user', 'content': text}]))
   else
     warn "Session ${session_id}: ${failed_count} failure(s) — not advancing offset (will retry next tick)"
   fi
+
+  # WR-01: clean this iteration's temp files before the next session.
+  _cleanup_session_tmp
 }
 
 # ---------------------------------------------------------------------------
