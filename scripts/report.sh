@@ -455,9 +455,24 @@ PY
     if [[ -s "${markers_cache_file}" ]]; then
       task_type=$(_MARKERS_CACHE="${markers_cache_file}" COMPLETION_TS="${timestamp}" python3 - <<'PY' 2>/dev/null || echo "unclassified"
 import os
+from datetime import datetime, timezone
 mc = os.environ.get('_MARKERS_CACHE', '')
-cts = os.environ.get('COMPLETION_TS', '')
+cts_raw = os.environ.get('COMPLETION_TS', '')
 chosen = 'unclassified'
+
+# WR-02: compare parsed datetimes, not raw strings. Markers are written with
+# second precision + 'Z' (...00Z) while completion timestamps carry ms
+# (...00.000Z). A lexicographic compare ranks 'Z' (0x5A) > '.' (0x2E), so a
+# marker that coincides with the completion's second is wrongly excluded.
+def parse_ts(s):
+    try: return datetime.fromisoformat(s.replace('Z', '+00:00'))
+    except Exception: pass
+    for fmt in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ'):
+        try: return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+        except Exception: pass
+    return None
+
+cts = parse_ts(cts_raw)
 try:
     with open(mc, encoding='utf-8') as fh:
         for line in fh:
@@ -466,10 +481,20 @@ try:
             parts = line.split('\t', 1)
             if len(parts) != 2: continue
             ts, tt = parts
-            if ts <= cts:
-                chosen = tt
+            mts = parse_ts(ts)
+            # Cache is sorted ascending; once a marker is strictly after the
+            # completion we can stop. If either side fails to parse, fall back
+            # to the raw lexicographic compare so behavior degrades gracefully.
+            if mts is not None and cts is not None:
+                if mts <= cts:
+                    chosen = tt
+                else:
+                    break
             else:
-                break
+                if ts <= cts_raw:
+                    chosen = tt
+                else:
+                    break
 except Exception:
     pass
 print(chosen)
