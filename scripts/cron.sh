@@ -72,12 +72,26 @@ run_report() {
 # next tick fires. Prefer `flock` (util-linux; auto-releases on process death);
 # fall back to a portable atomic `mkdir` lock where flock is absent (e.g. macOS),
 # mirroring the timeout/gtimeout degradation above.
+# D-04: markers directory for per-session marker JSONL files.
+# Inlined rather than sourcing common.sh to keep cron.sh self-contained.
+# MARKERS_DIR lives under the skill state directory (OpenClaw collapsed model).
+MARKERS_DIR="${OPENCLAW_HOME}/skills/revenium/markers"
+
+# D-04: prune_markers — delete marker files older than ~7 days.
+# Fail-open: prune failure MUST NOT block the tick (T-04-17).
+# Uses find -mtime +7 (BSD/GNU portable, mirrors -mmin usage at line 88).
+# Runs AFTER report.sh + guardrail-check.sh so it cannot starve enforcement.
+prune_markers() {
+  find "${MARKERS_DIR}" -name '*.jsonl' -mtime +7 -delete 2>/dev/null
+}
+
 LOCK_FILE="${OPENCLAW_HOME:-${HOME}/.openclaw}/revenium-metering.lock"
 if command -v flock &>/dev/null; then
   (
     flock -n 9 || exit 0
     run_report "$@" || true
     bash "${SKILL_DIR}/scripts/guardrail-check.sh" || true
+    prune_markers || true
   ) 9>"${LOCK_FILE}"
 else
   # No flock (e.g. macOS): atomic mkdir lock. `mkdir` fails if the dir exists,
@@ -92,6 +106,7 @@ else
     trap 'rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT
     run_report "$@" || true
     bash "${SKILL_DIR}/scripts/guardrail-check.sh" || true
+    prune_markers || true
   else
     # Another run holds the lock — skip this tick (matches flock -n behavior).
     exit 0

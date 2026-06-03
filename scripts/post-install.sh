@@ -111,12 +111,35 @@ fi
 info "SKILL.md present"
 
 # Ensure scripts are executable
-for script in cron.sh report.sh common.sh setup-guardrails.sh guardrail-check.sh install-cron.sh uninstall-cron.sh clear-halt.sh post-install.sh; do
+for script in cron.sh report.sh common.sh setup-guardrails.sh guardrail-check.sh install-cron.sh uninstall-cron.sh clear-halt.sh post-install.sh write-marker.sh get-root-session-id.py; do
   if [[ -f "${SKILL_DIR}/scripts/${script}" ]]; then
     chmod +x "${SKILL_DIR}/scripts/${script}"
   fi
 done
 info "Scripts marked executable"
+
+# Seed task-taxonomy.json into SKILL_DIR if absent.
+# The repo-root copy is the source of truth; post-install deploys it to the
+# install location so write-marker.sh and setup-guardrails.sh can read it.
+# Single path per Pitfall 6 — SKILL_DIR and STATE_DIR are the same in OpenClaw.
+TAXONOMY_SRC="${SKILL_DIR}/task-taxonomy.json"
+TAXONOMY_DST="${SKILL_DIR}/task-taxonomy.json"  # same path (self-contained install)
+if [[ ! -f "${TAXONOMY_DST}" ]]; then
+  if [[ -f "${TAXONOMY_SRC}" ]]; then
+    cp "${TAXONOMY_SRC}" "${TAXONOMY_DST}"
+    info "Seeded task-taxonomy.json at ${TAXONOMY_DST}"
+  else
+    warn "task-taxonomy.json not found at ${TAXONOMY_SRC} — write-marker.sh will fail until it is present"
+  fi
+else
+  info "task-taxonomy.json already present at ${TAXONOMY_DST}"
+fi
+
+# Create markers/ directory for per-session marker JSONL files.
+# Mode 0700: markers contain task-type + timestamp, accessible only to the owner (ASVS V4 / T-04-18).
+mkdir -p "${SKILL_DIR}/markers"
+chmod 700 "${SKILL_DIR}/markers"
+info "markers/ directory created at ${SKILL_DIR}/markers (mode 0700)"
 
 # ---------------------------------------------------------------------------
 # 3. Configure sandbox access
