@@ -688,7 +688,16 @@ EOF
   # gate always passes (TASK_TYPE VERIFIED). Fail-open: if absent, the base
   # rule is still created and recorded. (D-10)
   # --------------------------------------------------------------------------
-  if revenium guardrails budget-rules create --help 2>/dev/null | grep -q 'TASK_TYPE'; then
+  # Capture --help output first, THEN grep the captured string. Piping the
+  # revenium process directly into `grep -q` is unsafe under `set -o pipefail`:
+  # `grep -q` exits the instant it matches, closing the pipe while revenium is
+  # still writing, so revenium dies with SIGPIPE (141). Under pipefail the
+  # pipeline then reports 141 and the gate spuriously fails — randomly, since it
+  # races on whether revenium finished writing first. That intermittently
+  # skipped the entire per-task picker (ROADMAP criterion 5) in production.
+  local _ttype_help
+  _ttype_help="$(revenium guardrails budget-rules create --help 2>/dev/null || true)"
+  if grep -q 'TASK_TYPE' <<<"${_ttype_help}"; then
     # Picker is supported — read labels from TAXONOMY_FILE
     if [[ -f "${TAXONOMY_FILE}" ]]; then
       local labels_json

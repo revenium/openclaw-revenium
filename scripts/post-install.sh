@@ -615,7 +615,12 @@ fi
 if command_exists openclaw; then
   echo ""
   echo "    Checking skill visibility..."
-  if openclaw skills list 2>/dev/null | grep -q "${SKILL_NAME}"; then
+  # Capture first, then grep: piping `openclaw skills list` straight into
+  # `grep -q` is unsafe under `set -o pipefail` — `grep -q` exits on first match
+  # and SIGPIPEs the still-writing producer (141), which pipefail then reports as
+  # the pipeline status, racing the gate to a spurious "not visible" result.
+  _skills_list="$(openclaw skills list 2>/dev/null || true)"
+  if grep -q "${SKILL_NAME}" <<<"${_skills_list}"; then
     info "Skill '${SKILL_NAME}' visible to OpenClaw"
   else
     warn "Skill not yet visible. You may need to restart the OpenClaw gateway."
