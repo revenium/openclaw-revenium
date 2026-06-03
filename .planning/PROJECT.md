@@ -35,10 +35,11 @@ Agents never silently blow through token budgets — every turn is guardrail-che
 - ✓ Task-type metering: 8-label `task-taxonomy.json`, mandatory TASK CLASSIFICATION directive, `--task-type` on every `meter completion` (default `unclassified`) — v1.0 (Phase 4, METER-01..03)
 - ✓ Root-session attribution: `report.sh` resolves the root session and passes `--agent "openclaw-<root_session_id>"`; budget rules scope via `AGENT:STARTS_WITH:openclaw-` (D-07) — v1.0 (Phase 4, TRACE-01..02)
 - ✓ Optional per-task-type budget rules offered by `setup-guardrails.sh --interactive` — v1.0 (Phase 4)
+- ✓ Job declaration foundation: 11-label `job-taxonomy.json` (snake_case, installed + seeded via `post-install.sh`), `scripts/write-job-marker.sh` validated `kind:"job"` marker writer (sanitize-before-allowlist, flock+O_APPEND, completion_id correlation, safe kebab+4-hex job IDs), and the arc-boundary JOB DECLARATION directive in SKILL.md + `references/job-declaration.md` — v1.1 (Phase 5, JOBDEC-01..04)
 
 ### Active
 
-v1.1 Agentic Job Tracking — requirements defined in `.planning/REQUIREMENTS.md` (job declaration, lifecycle, taxonomy, root rollup, halt outcome).
+v1.1 Agentic Job Tracking — requirements defined in `.planning/REQUIREMENTS.md`. Phase 5 (job declaration) validated; remaining: lifecycle wiring (Phase 6), root rollup (Phase 7), halt → CANCELLED outcome (Phase 8).
 
 ### Out of Scope
 
@@ -82,7 +83,8 @@ v1.1 Agentic Job Tracking — requirements defined in `.planning/REQUIREMENTS.md
 | Agent-driven marker write (not native hooks) | OpenClaw `pre_llm_call` hook events unconfirmed | ⚠️ Revisit — markers land after the turn's completion; correlation reworked to completion_id keying |
 | Task-type correlation by `completion_id` + marker-after fallback | Timestamp-precedence (marker before completion) never matched in practice | ✓ Good (post-Phase-4 debug fix) |
 | Defer Agentic Job tracking to a future milestone | Per-session `--agent` rollup sufficient for v1.0 | ✓ Promoted to v1.1 |
-| Agent-written `kind:"job"` markers (not classifier plugin) for v1.1 | Consistent with v1.0 task-type architecture; avoids unconfirmed OpenClaw session-end hook dependency | — Pending (v1.1) |
+| Agent-written `kind:"job"` markers (not classifier plugin) for v1.1 | Consistent with v1.0 task-type architecture; avoids unconfirmed OpenClaw session-end hook dependency | ✓ Foundation shipped (Phase 5) |
+| Dedicated `write-job-marker.sh` (D-06: new writer, not an extension of `write-marker.sh`) | Keep task-type writer untouched; job writer diverges on named flags + 7 mandatory fields | ✓ Good (Phase 5 — write-marker.sh byte-for-byte unchanged) |
 
 ## Evolution
 
@@ -102,4 +104,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-03 — started milestone v1.1 Agentic Job Tracking*
+*Last updated: 2026-06-03 — Phase 5 (Job Declaration Foundation) complete; v1.1 in progress*
