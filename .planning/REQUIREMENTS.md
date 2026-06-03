@@ -25,9 +25,9 @@
 
 ### Root-Session Job Rollup (JROLL)
 
-- [ ] **JROLL-01**: Completions from a subagent session ship the ROOT session's `agentic_job_id` (override), so one job spans the whole agent tree (extends v1.0 root-session resolution)
-- [ ] **JROLL-02**: When the root job ID cannot yet be resolved (marker race), the completion omits `--agentic-job-id` and is retried on the next cron tick rather than shipping a wrong or sub-session ID
-- [ ] **JROLL-03**: Top-level (root) sessions ship their own declared job; a subagent's internally-declared job markers are not shipped as separate jobs
+- [x] **JROLL-01**: Completions from a subagent session ship the ROOT session's `agentic_job_id` (override), so one job spans the whole agent tree (extends v1.0 root-session resolution)
+- [x] **JROLL-02**: When the root job ID cannot yet be resolved (marker race), the completion omits `--agentic-job-id` and is retried on the next cron tick rather than shipping a wrong or sub-session ID
+- [x] **JROLL-03**: Top-level (root) sessions ship their own declared job; a subagent's internally-declared job markers are not shipped as separate jobs
 
 ### Halt → Outcome (JHALT)
 
@@ -64,9 +64,9 @@ Which phases cover which requirements. Filled during roadmap creation.
 | JLIFE-03 | Phase 6 | Complete |
 | JLIFE-04 | Phase 6 | Complete |
 | JLIFE-05 | Phase 6 | Complete |
-| JROLL-01 | Phase 7 | Pending |
-| JROLL-02 | Phase 7 | Pending |
-| JROLL-03 | Phase 7 | Pending |
+| JROLL-01 | Phase 7 | Complete |
+| JROLL-02 | Phase 7 | Complete |
+| JROLL-03 | Phase 7 | Complete |
 | JHALT-01 | Phase 8 | Pending |
 | JHALT-02 | Phase 8 | Pending |
 
