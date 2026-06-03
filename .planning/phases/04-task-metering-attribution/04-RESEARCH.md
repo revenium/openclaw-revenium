@@ -440,17 +440,15 @@ get_root_session_id() {
 | A3 | Marker `ts` as ISO8601 sorts correctly against report.sh completion `timestamp` (both UTC `...Z`) | Pattern 1 / Pitfall 2 | LOW — both are ISO8601 UTC; verify report.sh timestamps are always `Z`-suffixed during planning. |
 | A4 | Server-side, `--task-type` with no value defaults benignly (report.sh always sends `unclassified` so this is moot) | METER-03 | LOW — report.sh never omits the flag. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Marker sid resolution robustness (A2).**
-   - What we know: Hermes uses newest-non-cron session file; OpenClaw cron sessions are keyed `agent:main:cron:*` in `sessions.json`.
-   - What's unclear: whether the active interactive session is always the freshest-mtime `.jsonl` at the instant `write-marker.sh` runs.
-   - Recommendation: planner should add a worked-example test and consider reading `sessions.json` to exclude `agent:main:cron:*`-keyed files, OR pass the sid explicitly if SKILL.md/OpenClaw exposes it to the shell call.
+1. **Marker sid resolution robustness (A2).** — **RESOLVED.**
+   - What we knew: Hermes uses newest-non-cron session file; OpenClaw cron sessions are keyed `agent:main:cron:*` in `sessions.json`.
+   - Resolution: Plan 04-02 Task 1 excludes cron sessions during sid resolution — `write-marker.sh` reads `sessions.json` and skips files whose session-key starts with `agent:main:cron:`, then takes the freshest-mtime remaining `.jsonl` (with a `pseudo-<epoch>` fallback). Because `write-marker.sh` runs synchronously inside the active turn, the interactive session's file is the freshest non-cron candidate at write time. A worked-example test (`tests/test_write_marker.sh`, plan 04-02) seeds a tmp sessions tree to assert the marker lands in the interactive session's marker file. Residual mis-attribution risk is bounded: the resolver chain is fail-open (D-05/D-06) and a mis-attributed marker only mislabels a `--task-type`, never blocks metering.
 
-2. **Whether OpenClaw exposes the current session id to shell tool calls.**
-   - What we know: Hermes' `execute_code` gets no `HERMES_SESSION_ID`; it uses the file heuristic.
-   - What's unclear: whether OpenClaw provides an env var (e.g. `OPENCLAW_SESSION_ID`) when running a `bash` tool call from within a turn — that would make `write-marker.sh` sid resolution deterministic.
-   - Recommendation: probe during planning (`env | grep -i session` from inside an OpenClaw bash tool call). If present, prefer it over the heuristic.
+2. **Whether OpenClaw exposes the current session id to shell tool calls.** — **RESOLVED.**
+   - What we knew: Hermes' `execute_code` gets no `HERMES_SESSION_ID`; it uses the file heuristic.
+   - Resolution: Probed during planning — running `env | grep -i session` inside an OpenClaw bash tool call surfaces **no** `OPENCLAW_SESSION_ID` (or any session-id) environment variable. OpenClaw does not expose the current session id to shell tool calls, so the newest-non-cron-file heuristic (Open Q1 above) is the resolution path and is what `write-marker.sh` uses. If a future OpenClaw version adds such an env var, `write-marker.sh` can prefer it over the heuristic, but the current design does not depend on it and remains fail-open without it.
 
 ## Environment Availability
 
@@ -549,7 +547,7 @@ get_root_session_id() {
 - Root-session resolution mechanism: HIGH for JSONL shapes / no-SQLite / linkage location; MEDIUM for future-version subagent file persistence (mitigated by fail-open).
 - Port surface (taxonomy, marker, picker, agent wiring): HIGH — all source + target files read directly.
 - Correlation strategy divergence (precedence vs equal-split): HIGH — grounded in actual report.sh structure.
-- Marker sid resolution robustness: MEDIUM — heuristic carries a mis-attribution risk (A2, Open Q1/2).
+- Marker sid resolution robustness: MEDIUM — heuristic carries a mis-attribution risk (A2, Open Q1/2); mitigated by cron-session exclusion + fail-open (both Open Questions now RESOLVED).
 
 **Research date:** 2026-06-03
 **Valid until:** 2026-07-03 (stable — revenium 1.1.2 pinned; OpenClaw session model is the main version-sensitive item)
