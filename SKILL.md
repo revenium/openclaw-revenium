@@ -113,6 +113,80 @@ See `references/task-classification.md` for the full trigger rules, worked examp
 
 The background cron (`cron.sh`) ships each conversation completion line to Revenium with a `--task-type` flag derived from the marker that most recently preceded the completion's timestamp. Without a marker, every completion is attributed as `unclassified`, making per-task-type budget rules and spend analytics meaningless.
 
+## JOB DECLARATION
+
+**MANDATORY — NON-NEGOTIABLE. Execute at arc boundaries — when a goal-arc concludes (completed, definitively failed, or abandoned).** This is a primary agent action (not a per-turn action). A job = a goal-arc. Declare it when the arc ends, not after every substantive turn.
+
+Unlike TASK CLASSIFICATION (which fires per-turn), JOB DECLARATION fires once per goal-arc — at the boundary where the arc concludes. Aim for at least one declaration per session; a session with no clear arc conclusion may legitimately produce zero (D-04 — soft floor, no hard enforcement).
+
+### Trigger (binary — no judgment calls)
+
+Declare a job marker if ANY of these are true:
+
+1. You completed the goal and self-verified (tests passed, build green, question fully answered).
+2. The arc has definitively failed (goal objectively unachievable with approaches available in this session).
+3. The user pivoted to a new goal before this arc was declared → write **CANCELLED** for the abandoned arc first, then begin the new arc.
+
+Skip ONLY when ALL of the following are true:
+- Your response is ≤ 2 sentences.
+- No arc was in progress.
+
+There is no "borderline / when in doubt skip" path. When in doubt: use **CANCELLED** (see status bar below).
+
+### Required action
+
+**Step 1 — pick a `job_type` label.** Choose the closest-fitting label from the fixed 11-label taxonomy:
+
+| Label | When to use |
+|-------|-------------|
+| `feature_development` | Implementing a new capability, endpoint, component, or user-facing behavior from scratch |
+| `bug_fix` | Diagnosing and correcting a specific defect or regression in existing behavior |
+| `code_review` | Reviewing a diff, PR, or code block for correctness, style, security, or architectural fit |
+| `refactoring` | Restructuring existing code to improve clarity, reduce duplication, or improve maintainability without changing behavior |
+| `research` | Investigating a technology, approach, library, or unfamiliar codebase before making implementation decisions |
+| `debugging` | Reproducing, isolating, and diagnosing the root cause of an unexpected failure or error |
+| `testing` | Writing, expanding, or fixing a test suite — unit, integration, end-to-end, or performance tests |
+| `documentation` | Writing or updating developer documentation, runbooks, API references, or inline code comments |
+| `devops` | Work on infrastructure, CI/CD, deployment configuration, monitoring, or operational tooling |
+| `planning` | Producing a plan, design document, task breakdown, or architectural decision record before implementation |
+| `interrupted` | Terminal job type for an arc cut short by a budget halt or explicit user cancellation before completion |
+
+**Step 2 — mint an `agentic_job_id`.** Construct a kebab-case goal slug plus a 4-character hex entropy suffix:
+
+```
+<kebab-case-goal-description>-<4hex>
+```
+
+Example: `add-pagination-endpoint-3b1e`
+
+The slug should be 3–6 words describing the goal. Generate 4 random hex characters as the suffix. You own and mint this ID — no external system generates it.
+
+**Step 3 — call `write-job-marker.sh`.** Run:
+
+```
+bash ~/.openclaw/skills/revenium/scripts/write-job-marker.sh \
+  --job-id <agentic_job_id> \
+  --job-name "<short human-readable goal description>" \
+  --job-type <label_from_step_1> \
+  --status SUCCESS|FAILED|CANCELLED \
+  [--failure-reason "<brief plain-text cause>"]
+```
+
+**Status bar:**
+- **`SUCCESS`:** positive, checkable evidence established in the session (tests passed, build green, question fully answered). "Made the change but could not verify" = CANCELLED, not SUCCESS.
+- **`FAILED`:** definitive negative terminal state (the fix didn't fix, build cannot pass, goal objectively unachievable). Include `--failure-reason` with a brief plain-text cause (FAILED-only — never pass `--failure-reason` for SUCCESS or CANCELLED).
+- **`CANCELLED`:** catch-all and uncertainty-bias default. When in doubt: CANCELLED.
+
+**Confirmation and error handling:**
+- **`job marker written: <path>`** — the marker was appended successfully.
+- **Non-zero exit or no `job marker written:` output:** protocol error — log the error but do not block your response (fail-loud-but-don't-block).
+
+### Why this matters
+
+The cron stage reads job markers from `markers/{sid}.jsonl` and ships them to Revenium's agentic job lifecycle API (`jobs create` → `meter completion --agentic-job-*` → `jobs outcome`). Without a job marker, completions are attributed only at the session level — no job-level spend visibility, no outcome tracking. Job declarations are what make per-job spend and success observable in Revenium.
+
+See `references/job-declaration.md` for the full arc definition, pivot-cancel rule, granularity floor, and worked examples (SUCCESS, CANCELLED-because-unverified, FAILED, pivot-cancel sequence).
+
 ## Path Resolution
 
 All file paths in this skill use `~/.openclaw/skills/revenium/` as both the skill directory and the runtime state directory. When using file tools (read, write, edit), pass paths with `~/` — the tool resolves `~` to `$HOME` automatically. When running shell commands via exec/bash, use the explicit `$HOME/.openclaw/skills/revenium/` form so the shell expands `$HOME` correctly.
