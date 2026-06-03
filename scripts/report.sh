@@ -34,6 +34,29 @@ BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
 OFFSETS_FILE="${OPENCLAW_HOME}/revenium-offsets.json"
 
 # ---------------------------------------------------------------------------
+# Phase 4 constants (METER-03 / TRACE-01/02 / D-07)
+# ---------------------------------------------------------------------------
+# MARKERS_DIR: per-session marker JSONL files written by write-marker.sh
+MARKERS_DIR="${SKILL_DIR}/markers"
+# REVENIUM_AGENT_PREFIX: prefix for --agent value; root_sid appended per session.
+# Supersedes the static "OpenClaw" agent name (D-07).
+REVENIUM_AGENT_PREFIX="${REVENIUM_AGENT_PREFIX:-openclaw-}"
+
+# get_root_session_id — wrapper around get-root-session-id.py sidecar.
+# Resolves a child session id to its root via JSONL childSessionKey walk.
+# Fail-open (D-05/D-06): if python3 absent or sidecar fails, echoes input sid.
+# Resolve ONCE per session file (not per completion line) — Pitfall 3.
+get_root_session_id() {
+  local sid="${1:-}"
+  [[ -z "${sid}" ]] && return 0
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' "${sid}"; return 0
+  fi
+  OPENCLAW_HOME="${OPENCLAW_HOME}" python3 "${SKILL_DIR}/scripts/get-root-session-id.py" "${sid}" 2>/dev/null \
+    || printf '%s\n' "${sid}"
+}
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 log() {
@@ -203,6 +226,8 @@ post_to_revenium() {
   local system_prompt="${17:-}"
   local input_messages="${18:-}"
   local output_response="${19:-}"
+  local root_sid="${20:-}"
+  local task_type="${21:-unclassified}"
 
   local cmd=(
     revenium meter completion
@@ -218,7 +243,8 @@ post_to_revenium() {
     --completion-start-time "${request_time}"
     --response-time "${response_time}"
     --request-duration "${duration_ms}"
-    --agent "OpenClaw"
+    --agent "${REVENIUM_AGENT_PREFIX}${root_sid}"
+    --task-type "${task_type:-unclassified}"
     --transaction-id "${transaction_id}"
     --operation-type "${operation_type}"
     --quiet
@@ -280,6 +306,48 @@ process_session() {
   local session_file="$1"
   local session_id
   session_id=$(basename "${session_file}" .jsonl)
+
+  # Change 2 (TRACE-01/02): resolve root session id ONCE per session file.
+  # Fail-open to own sid (D-05); belt-and-suspenders fallback via :-.
+  local root_sid
+  root_sid=$(get_root_session_id "${session_id}")
+  root_sid="${root_sid:-${session_id}}"
+
+  # Change 2 (METER-03 / NP-1 performance): read+sort markers ONCE per session
+  # (not per completion line — Pitfall 3). Cache sorted list in a temp file.
+  # Each line: "<ts>\t<task_type>"
+  local markers_cache_file
+  markers_cache_file=$(mktemp "${TMPDIR:-/tmp}/rv-markers.XXXXXX")
+  local marker_file="${MARKERS_DIR}/${session_id}.jsonl"
+  if [[ -f "${marker_file}" ]]; then
+    # Parse marker JSONL into tab-separated "ts<TAB>task_type", sorted by ts.
+    # Per-line try/except for malformed lines (T-04-05). Sort is lexicographic
+    # on ISO8601 UTC ts strings (Pitfall 2 / NP-1).
+    # Env-passing heredoc discipline: no ${VAR} interpolation inside <<'PY' (T-04-09).
+    _MARKER_FILE="${marker_file}" python3 - <<'PY' 2>/dev/null >> "${markers_cache_file}" || true
+import json, os, sys
+mf = os.environ.get('_MARKER_FILE', '')
+rows = []
+try:
+    with open(mf, encoding='utf-8') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line: continue
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(r, dict) and r.get('ts') and r.get('task_type'):
+                rows.append((r['ts'], r['task_type']))
+except Exception:
+    pass
+rows.sort(key=lambda x: x[0])
+for ts, tt in rows:
+    sys.stdout.write(f"{ts}\t{tt}\n")
+PY
+  fi
+  # shellcheck disable=SC2064
+  trap "rm -f '${markers_cache_file}'" EXIT
 
   # Get last processed line offset for this session
   local offset total_lines
@@ -372,6 +440,38 @@ process_session() {
     timestamp=$(echo "${line}" | jq -r '.timestamp // empty' 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
     tx_id=$(echo "${line}" | jq -r '.id // empty' 2>/dev/null || echo "${session_id}-$(date +%s%N)")
     stop_reason=$(map_stop_reason "$(echo "${line}" | jq -r '.message.stopReason // "stop"')")
+
+    # Change 3 (METER-03 / NP-1): timestamp-precedence task_type lookup.
+    # Use the markers_cache_file (sorted ts<TAB>task_type lines) built once per
+    # session above. For each completion, pick the latest marker where marker_ts
+    # <= completion_ts. Default unclassified (A4). Never aborts the tick (T-04-05).
+    local task_type="unclassified"
+    if [[ -s "${markers_cache_file}" ]]; then
+      task_type=$(_MARKERS_CACHE="${markers_cache_file}" COMPLETION_TS="${timestamp}" python3 - <<'PY' 2>/dev/null || echo "unclassified"
+import os
+mc = os.environ.get('_MARKERS_CACHE', '')
+cts = os.environ.get('COMPLETION_TS', '')
+chosen = 'unclassified'
+try:
+    with open(mc, encoding='utf-8') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line: continue
+            parts = line.split('\t', 1)
+            if len(parts) != 2: continue
+            ts, tt = parts
+            if ts <= cts:
+                chosen = tt
+            else:
+                break
+except Exception:
+    pass
+print(chosen)
+PY
+      )
+    fi
+    # 64-char truncation for log injection mitigation (T-04-08)
+    local task_type_log="${task_type:0:64}"
 
     # Compute request time (parent message timestamp) and duration in ms.
     # The parent's timestamp is when the request was dispatched; this message's
@@ -486,7 +586,8 @@ print(json.dumps([{'role': 'user', 'content': text}]))
         "${stop_reason}" "${tx_id}" \
         "${model_source}" "${is_streamed}" \
         "${trace_id}" "${operation_type}" \
-        "${system_prompt}" "${input_msgs_json}" "${output_resp}"; then
+        "${system_prompt}" "${input_msgs_json}" "${output_resp}" \
+        "${root_sid}" "${task_type:-unclassified}"; then
       echo "TX:${tx_id}" >> "${LEDGER_FILE}"
       ((reported_count++)) || true
     else

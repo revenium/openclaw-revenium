@@ -92,24 +92,32 @@ JSONL
 # No marker file for SID_B
 
 # ---------------------------------------------------------------------------
-# Stub revenium: place on PATH, set STUB_REVENIUM_ARGV_FILE
+# Stub revenium: place in a fake HOME/.local/bin so it wins after report.sh's
+# PATH-expansion loop. report.sh prepends "${HOME}/.local/bin" LAST (so it
+# ends up FIRST on PATH after the loop). By setting HOME to a temp dir we
+# control that slot without touching the real user's environment.
 # ---------------------------------------------------------------------------
-TMP_BIN=$(mktemp -d "${TMPDIR:-/tmp}/test-rpt-bin.XXXXXX")
-ln -sf "${STUB_SH}" "${TMP_BIN}/revenium"
+TMP_FAKE_HOME=$(mktemp -d "${TMPDIR:-/tmp}/test-rpt-fakehome.XXXXXX")
+TMP_LOCAL_BIN="${TMP_FAKE_HOME}/.local/bin"
+mkdir -p "${TMP_LOCAL_BIN}"
+ln -sf "${STUB_SH}" "${TMP_LOCAL_BIN}/revenium"
 ARGV_FILE=$(mktemp "${TMPDIR:-/tmp}/test-rpt-argv.XXXXXX")
 
 cleanup() {
-  rm -rf "${TMP_HOME}" "${TMP_BIN}" "${ARGV_FILE}" 2>/dev/null || true
+  rm -rf "${TMP_HOME}" "${TMP_FAKE_HOME}" "${ARGV_FILE}" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+# Export STUB_REVENIUM_ARGV_FILE so it is inherited by the report.sh subshell
+# and from there by every `revenium` invocation.
+export STUB_REVENIUM_ARGV_FILE="${ARGV_FILE}"
 
 # ---------------------------------------------------------------------------
 # Run report.sh with the stubbed environment
 # ---------------------------------------------------------------------------
 report_output=$(
   OPENCLAW_HOME="${TMP_HOME}" \
-  PATH="${TMP_BIN}:${PATH}" \
-  STUB_REVENIUM_ARGV_FILE="${ARGV_FILE}" \
+  HOME="${TMP_FAKE_HOME}" \
   bash "${REPORT_SH}" 2>&1
 ) || true
 
@@ -152,8 +160,12 @@ fi
 # ---------------------------------------------------------------------------
 # Assert: all meter completion calls have --task-type (always present)
 # ---------------------------------------------------------------------------
-meter_completions=$(grep -c "^meter$" "${ARGV_FILE}" 2>/dev/null || echo 0)
-task_type_count=$(grep -c "^--task-type$" "${ARGV_FILE}" 2>/dev/null || echo 0)
+meter_completions=0
+task_type_count=0
+if [[ -f "${ARGV_FILE}" ]]; then
+  meter_completions=$(grep -c "^meter$" "${ARGV_FILE}" 2>/dev/null) || meter_completions=0
+  task_type_count=$(grep -c "^--task-type$" "${ARGV_FILE}" 2>/dev/null) || task_type_count=0
+fi
 
 if [[ "${meter_completions}" -gt 0 && "${task_type_count}" -eq "${meter_completions}" ]]; then
   pass "--task-type present in all ${meter_completions} meter completion calls"
