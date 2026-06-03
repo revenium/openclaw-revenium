@@ -38,10 +38,11 @@ Agents never silently blow through token budgets — every turn is guardrail-che
 - ✓ Job declaration foundation: 11-label `job-taxonomy.json` (snake_case, installed + seeded via `post-install.sh`), `scripts/write-job-marker.sh` validated `kind:"job"` marker writer (sanitize-before-allowlist, flock+O_APPEND, completion_id correlation, safe kebab+4-hex job IDs), and the arc-boundary JOB DECLARATION directive in SKILL.md + `references/job-declaration.md` — v1.1 (Phase 5, JOBDEC-01..04)
 - ✓ Job lifecycle wiring: `report.sh` opens each declared job once via `revenium jobs create`, stamps `--agentic-job-id/-name/-type` on every belonging `meter completion`, and closes it once via `revenium jobs outcome --result SUCCESS|FAILED|CANCELLED` — all ledger-gated (idempotent), 409-as-success, and fully fail-open behind a `JOBS_CLI_CAPABLE` capability probe so existing task-type metering is never endangered — v1.1 (Phase 6, JLIFE-01..05). Two human-verification follow-ups open: live 409 conflict-string confirmation and the CR-01 transient-failure retry-durability decision (see `06-HUMAN-UAT.md`).
 - ✓ Root-session job rollup: a job spans the entire agent tree — `report.sh` resolves the root session once per subagent session (`root_aid` cross-session resolver reading `markers/{root_sid}.jsonl`), overrides each subagent completion with the root's `--agentic-job-*` values (or omits them on marker race / orphan), and gates `jobs create`/`jobs outcome` to root sessions only so subagent job markers never ship as separate jobs — v1.1 (Phase 7, JROLL-01..03). 5 advisory hardening warnings logged in `07-REVIEW.md` (multi-marker ordering, colon/tab id sanitization, python3-absent fail-open, log noise) — candidates for a follow-on, non-blocking.
+- ✓ Halt → CANCELLED outcome: a guardrail halt still produces a terminal job record — `report.sh`'s account-level `handle_halt()` runs once per tick after the per-session loop (behind `JOBS_CLI_CAPABLE`), reads `guardrail-status.json`, and on a newly-recorded halt closes every open job CANCELLED under its own id (JHALT-01) or mints+closes a synthetic `guardrail-halt-<hex>` `interrupted` job when none were open (JHALT-02), gated exactly-once via a `JOB:halt:<haltedAt>` ledger marker and fully fail-open — v1.1 (Phase 8, JHALT-01..02). 5 advisory warnings in `08-REVIEW.md` (most notably `grep` regex vs fixed-string matching of untrusted `haltedAt`/job-id, and empty-hex collapse if python3 is absent) — candidates for a follow-on, non-blocking.
 
 ### Active
 
-v1.1 Agentic Job Tracking — requirements defined in `.planning/REQUIREMENTS.md`. Phases 5 (job declaration), 6 (lifecycle wiring), and 7 (root-session rollup) validated; remaining: halt → CANCELLED outcome (Phase 8).
+v1.1 Agentic Job Tracking — requirements defined in `.planning/REQUIREMENTS.md`. All phases validated: 5 (job declaration), 6 (lifecycle wiring), 7 (root-session rollup), 8 (halt → CANCELLED outcome). Milestone implementation complete — ready for milestone close.
 
 ### Out of Scope
 
@@ -106,4 +107,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-03 — Phase 7 (Root-Session Job Rollup) complete; v1.1 in progress*
+*Last updated: 2026-06-03 — Phase 8 (Halt → CANCELLED Outcome) complete; v1.1 implementation complete, ready for milestone close*
