@@ -767,13 +767,98 @@ fi
 rm -f "${ARGV_FILE_G}"
 
 # ===========================================================================
-# GROUP A cleanup
+# GROUP H: Subagent job markers suppressed; root still creates once (JROLL-03)
+#   ROOT session with sessions_spawn link to CHILD; BOTH have completions.
+#   ROOT marker declares job root-job-5e6f (enables JROLL-01 inherit path).
+#   CHILD marker has its OWN job id sub-job-3c4d — proves subagent-own-job
+#   marker is suppressed (JROLL-03): no JOB:sub-job-3c4d: ledger rows.
+#   After report.sh runs:
+#     - 0 JOB:sub-job-3c4d: lines in jobs ledger (subagent own job suppressed)
+#     - 1 JOB:root-job-5e6f:created: line in jobs ledger (root creates once)
+#     - child completion ships --agentic-job-id == root-job-5e6f (JROLL-01)
+#     - --agentic-job-id never resolves to sub-job-3c4d
+# ===========================================================================
+ROOT_UUID_H="h0000000-aaaa-aaaa-aaaa-000000000001"
+CHILD_UUID_H="h0000000-cccc-cccc-cccc-000000000002"
+JOB_ID_ROOT_H="root-job-5e6f"
+JOB_NAME_ROOT_H="Root H Job"
+JOB_TYPE_ROOT_H="bug_fix"
+SUB_JOB_ID_H="sub-job-3c4d"
+
+TMP_HOME_H=$(make_openclaw_home)
+ARGV_FILE_H=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-h.XXXXXX")
+
+# Root session JSONL with sessions_spawn link AND a root completion
+cat > "${TMP_HOME_H}/agents/main/sessions/${ROOT_UUID_H}.jsonl" <<JSONL
+{"type":"session","version":3,"id":"${ROOT_UUID_H}","timestamp":"2026-03-03T10:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"spawn-msg-h1","parentId":"00000000","timestamp":"2026-03-03T10:01:00.000Z","message":{"role":"toolResult","toolName":"sessions_spawn","content":[{"type":"text","text":"{}"}],"details":{"status":"accepted","childSessionKey":"agent:main:subagent:${CHILD_UUID_H}","runId":"run-h001"}}}
+{"type":"message","id":"comp-root-h001","parentId":"spawn-msg-h1","timestamp":"2026-03-03T10:04:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Root work done"}],"usage":{"input":100,"output":50,"cacheRead":0,"cacheWrite":0,"totalTokens":150}}}
+JSONL
+
+# Child session JSONL with one assistant completion
+cat > "${TMP_HOME_H}/agents/main/sessions/${CHILD_UUID_H}.jsonl" <<JSONL
+{"type":"session","version":3,"id":"${CHILD_UUID_H}","timestamp":"2026-03-03T10:02:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-child-h1","parentId":"00000000","timestamp":"2026-03-03T10:02:30.000Z","message":{"role":"user","content":[{"type":"text","text":"Subagent task"}]}}
+{"type":"message","id":"comp-child-h001","parentId":"user-child-h1","timestamp":"2026-03-03T10:03:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Subagent work done"}],"usage":{"input":80,"output":40,"cacheRead":0,"cacheWrite":0,"totalTokens":120}}}
+JSONL
+
+# Root job marker — root declares its job (enables JROLL-01 inherit path)
+printf '%s\n' '{"kind":"job","ts":"2026-03-03T10:05:00Z","sid":"'"${ROOT_UUID_H}"'","agentic_job_id":"'"${JOB_ID_ROOT_H}"'","job_name":"'"${JOB_NAME_ROOT_H}"'","job_type":"'"${JOB_TYPE_ROOT_H}"'","status":"SUCCESS","completion_id":"comp-root-h001"}' \
+  > "${TMP_HOME_H}/skills/revenium/markers/${ROOT_UUID_H}.jsonl"
+
+# Child marker with the subagent's OWN job id — must be suppressed (JROLL-03)
+printf '%s\n' '{"kind":"job","ts":"2026-03-03T10:03:30Z","sid":"'"${CHILD_UUID_H}"'","agentic_job_id":"'"${SUB_JOB_ID_H}"'","job_name":"Subagent Own Job","job_type":"feature_development","status":"SUCCESS","completion_id":"comp-child-h001"}' \
+  > "${TMP_HOME_H}/skills/revenium/markers/${CHILD_UUID_H}.jsonl"
+
+# Run report.sh for GROUP H
+run_report "${TMP_HOME_H}" "${ARGV_FILE_H}"
+JOBS_LEDGER_H="${TMP_HOME_H}/revenium-jobs.ledger"
+
+# ---------------------------------------------------------------------------
+# GROUP H assertions
+# ---------------------------------------------------------------------------
+
+# JROLL-03 H: 0 JOB:sub-job-3c4d: lines in jobs ledger (subagent own job suppressed)
+sub_job_ledger_count_h=$(count_grep "^JOB:${SUB_JOB_ID_H}:" "${JOBS_LEDGER_H}")
+if [[ "${sub_job_ledger_count_h}" -eq 0 ]]; then
+  pass "JROLL-03 H: 0 JOB:${SUB_JOB_ID_H}: rows in jobs ledger (subagent's own job suppressed)"
+else
+  fail "JROLL-03 H: found ${sub_job_ledger_count_h} JOB:${SUB_JOB_ID_H}: rows (must be 0 — suppression failed)"
+fi
+
+# JROLL-03 H: exactly 1 JOB:root-job-5e6f:created: line in jobs ledger (root creates once)
+root_created_count_h=$(count_grep "^JOB:${JOB_ID_ROOT_H}:created:" "${JOBS_LEDGER_H}")
+if [[ "${root_created_count_h}" -eq 1 ]]; then
+  pass "JROLL-03 H: exactly 1 JOB:${JOB_ID_ROOT_H}:created: in jobs ledger (root creates once)"
+else
+  fail "JROLL-03 H: expected 1 JOB:${JOB_ID_ROOT_H}:created: ledger row, got ${root_created_count_h} (RED)"
+fi
+
+# JROLL-03 H (+ JROLL-01): child's completion ships the ROOT's agentic_job_id (not sub-job-3c4d)
+all_stamped_ids_h=$(awk '/^--agentic-job-id$/{getline; print}' "${ARGV_FILE_H}" 2>/dev/null || true)
+if echo "${all_stamped_ids_h}" | grep -qx "${JOB_ID_ROOT_H}"; then
+  pass "JROLL-03 H: child completion ships --agentic-job-id ${JOB_ID_ROOT_H} (root id inherited)"
+else
+  fail "JROLL-03 H: expected child completion --agentic-job-id ${JOB_ID_ROOT_H}, got '$(echo "${all_stamped_ids_h}" | tr '\n' '|')' (RED)"
+fi
+
+# JROLL-03 H: --agentic-job-id never resolves to sub-job-3c4d
+if echo "${all_stamped_ids_h}" | grep -qx "${SUB_JOB_ID_H}"; then
+  fail "JROLL-03 H: subagent's own id '${SUB_JOB_ID_H}' leaked into --agentic-job-id (must NEVER happen)"
+else
+  pass "JROLL-03 H: subagent's own id '${SUB_JOB_ID_H}' NOT in stamped --agentic-job-id (correct)"
+fi
+
+rm -f "${ARGV_FILE_H}"
+
+# ===========================================================================
+# GROUP A/F/G/H cleanup
 # ===========================================================================
 # (tmp homes cleaned up by EXIT trap below or manually here)
 
 cleanup_all() {
   rm -rf "${TMP_HOME_A}" "${TMP_HOME_B}" "${TMP_HOME_C}" "${TMP_HOME_D}" "${TMP_HOME_E}" \
-    "${TMP_HOME_F}" "${TMP_HOME_G}" 2>/dev/null || true
+    "${TMP_HOME_F}" "${TMP_HOME_G}" "${TMP_HOME_H}" 2>/dev/null || true
   cleanup
 }
 trap cleanup_all EXIT
