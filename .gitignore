@@ -1,6 +1,10 @@
 # MCP response cache (runtime artifacts)
 .cache/
 
+# Python bytecode cache
+__pycache__/
+*.pyc
+
 # Runtime state written into the skill directory at runtime.
 # Relevant when the skill dir is a git clone (local development) — these are
 # created by post-install/cron/setup and must never be committed (config.json
