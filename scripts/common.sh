@@ -48,9 +48,11 @@ RULES_LOCK_FILE="${STATE_DIR}/rules.lock"
 
 # Phase 4 path constants (METER-01 / D-07).
 # TAXONOMY_FILE: 8-label task vocabulary for write-marker.sh + setup-guardrails.sh.
+# JOB_TAXONOMY_FILE: 11-label job vocabulary for write-job-marker.sh (v1.1 / JOBDEC-01).
 # MARKERS_DIR: per-session marker JSONL files (appended by write-marker.sh).
 # SESSIONS_DIR: OpenClaw agent session JSONL directory (read by resolver + report.sh).
 TAXONOMY_FILE="${STATE_DIR}/task-taxonomy.json"
+JOB_TAXONOMY_FILE="${STATE_DIR}/job-taxonomy.json"
 MARKERS_DIR="${STATE_DIR}/markers"
 SESSIONS_DIR="${OPENCLAW_HOME}/agents/main/sessions"
 

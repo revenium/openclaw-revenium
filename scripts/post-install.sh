@@ -111,7 +111,7 @@ fi
 info "SKILL.md present"
 
 # Ensure scripts are executable
-for script in cron.sh report.sh common.sh setup-guardrails.sh guardrail-check.sh install-cron.sh uninstall-cron.sh clear-halt.sh post-install.sh write-marker.sh get-root-session-id.py; do
+for script in cron.sh report.sh common.sh setup-guardrails.sh guardrail-check.sh install-cron.sh uninstall-cron.sh clear-halt.sh post-install.sh write-marker.sh write-job-marker.sh get-root-session-id.py; do
   if [[ -f "${SKILL_DIR}/scripts/${script}" ]]; then
     chmod +x "${SKILL_DIR}/scripts/${script}"
   fi
@@ -133,6 +133,22 @@ if [[ ! -f "${TAXONOMY_DST}" ]]; then
   fi
 else
   info "task-taxonomy.json already present at ${TAXONOMY_DST}"
+fi
+
+# Seed job-taxonomy.json into SKILL_DIR if absent.
+# The repo-root copy is the source of truth; post-install deploys it to the
+# install location so write-job-marker.sh can read it (v1.1 / JOBDEC-01).
+JOB_TAXONOMY_SRC="${SKILL_DIR}/job-taxonomy.json"
+JOB_TAXONOMY_DST="${SKILL_DIR}/job-taxonomy.json"  # same path (self-contained install)
+if [[ ! -f "${JOB_TAXONOMY_DST}" ]]; then
+  if [[ -f "${JOB_TAXONOMY_SRC}" ]]; then
+    cp "${JOB_TAXONOMY_SRC}" "${JOB_TAXONOMY_DST}"
+    info "Seeded job-taxonomy.json at ${JOB_TAXONOMY_DST}"
+  else
+    warn "job-taxonomy.json not found at ${JOB_TAXONOMY_SRC} — write-job-marker.sh will fail until it is present"
+  fi
+else
+  info "job-taxonomy.json already present at ${JOB_TAXONOMY_DST}"
 fi
 
 # Create markers/ directory for per-session marker JSONL files.
