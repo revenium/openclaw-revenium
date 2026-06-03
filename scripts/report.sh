@@ -32,6 +32,7 @@ SKILL_DIR="${OPENCLAW_HOME}/skills/revenium"
 CONFIG_FILE="${SKILL_DIR}/config.json"
 BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
 OFFSETS_FILE="${OPENCLAW_HOME}/revenium-offsets.json"
+JOBS_LEDGER_FILE="${REVENIUM_JOBS_LEDGER_FILE:-${OPENCLAW_HOME}/revenium-jobs.ledger}"
 
 # ---------------------------------------------------------------------------
 # Phase 4 constants (METER-03 / TRACE-01/02 / D-07)
@@ -109,6 +110,7 @@ if ! revenium config show &>/dev/null; then
 fi
 
 touch "${LEDGER_FILE}"
+touch "${JOBS_LEDGER_FILE}"
 
 # ---------------------------------------------------------------------------
 # Read optional organization name from config.json
@@ -724,5 +726,22 @@ main() {
 
   info "=== Done. Processed ${total_files} session file(s). ==="
 }
+
+# ---------------------------------------------------------------------------
+# JOBS_CLI_CAPABLE — one-time dual capability probe per cron tick (D-11).
+# Set true only if BOTH `revenium jobs --help` exits 0 AND
+# `revenium meter completion --help` output contains --agentic-job-id.
+# On probe failure, warn once and leave JOBS_CLI_CAPABLE=false so all job
+# work is skipped; metering ships byte-identical to v1.0.
+# Probe runs ONCE at startup (before main); the boolean is cached for the
+# whole tick and read by per-completion stamping and Plan 03's create/outcome.
+# ---------------------------------------------------------------------------
+JOBS_CLI_CAPABLE=false
+if revenium jobs --help >/dev/null 2>&1 && \
+   revenium meter completion --help 2>&1 | grep -q -- '--agentic-job-id'; then
+  JOBS_CLI_CAPABLE=true
+else
+  warn "revenium jobs/--agentic-job-id not available — job work skipped; metering continues as v1.0."
+fi
 
 main "$@"
