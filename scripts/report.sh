@@ -852,6 +852,58 @@ print(json.dumps([{'role': 'user', 'content': text}]))
       ((failed_count++)) || true
     fi
 
+    # ---------------------------------------------------------------------------
+    # jobs outcome — in-loop, create-confirmed gate, fail-open (JLIFE-03/05)
+    # Fires after post_to_revenium (D-09: create → stamp → outcome).
+    # Three gates: (1) already closed (idempotent skip); (2) create not confirmed
+    # yet (defer/warn, retry next tick, Pitfall 3); (3) else proceed.
+    # CRITICAL (D-12 / Pitfall 1): own exit locals; NEVER touch failed_count/
+    # reported_count; NEVER return/exit process_session; NEVER reach CR-02 gate.
+    # D-07: NO --outcome-type ever. D-08: failure_reason via --metadata FAILED-only.
+    # ---------------------------------------------------------------------------
+    if [[ "${JOBS_CLI_CAPABLE}" == "true" && -n "${agentic_job_id}" ]]; then
+      if grep -q "^JOB:${agentic_job_id}:outcome:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
+        :   # already closed — idempotent skip (D-09)
+      elif ! grep -q "^JOB:${agentic_job_id}:created:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
+        warn "outcome deferred: id=${agentic_job_id_log} — create not yet confirmed (retry next tick)"
+      else
+        local outcome_cmd=( revenium jobs outcome "${agentic_job_id}" --result "${job_status}" --quiet )
+        # D-07: NO --outcome-type ever.
+        # D-08: failure_reason via --metadata only for FAILED status, json.dumps via env heredoc.
+        # T-06-08: agent-supplied prose may contain quotes/braces — json.dumps is the ONLY safe path.
+        local outcome_metadata=""
+        if [[ "${job_status}" == "FAILED" && -n "${failure_reason}" ]]; then
+          outcome_metadata=$(FR="${failure_reason}" python3 - <<'PY' 2>/dev/null || true
+import json, os
+fr = os.environ.get('FR', '').strip()
+if fr: print(json.dumps({"failure_reason": fr}, separators=(',', ':')))
+PY
+)
+          outcome_metadata="${outcome_metadata%%$'\n'*}"
+          [[ -n "${outcome_metadata}" ]] && outcome_cmd+=(--metadata "${outcome_metadata}")
+        fi
+
+        local outcome_cmd_output outcome_cmd_exit
+        outcome_cmd_output=$("${outcome_cmd[@]}" 2>&1) && outcome_cmd_exit=0 || outcome_cmd_exit=$?
+
+        local outcome_success=false
+        if [[ "${outcome_cmd_exit}" -eq 0 ]]; then
+          outcome_success=true
+        elif echo "${outcome_cmd_output}" | grep -qi "409\|already.exist\|conflict"; then
+          outcome_success=true   # 409-as-success backstop (D-06)
+        fi
+
+        if [[ "${outcome_success}" == "true" ]]; then
+          local outcome_now_ts
+          outcome_now_ts=$(python3 -c "import time; print(f'{time.time():.3f}')" 2>/dev/null || date +%s)
+          echo "JOB:${agentic_job_id}:outcome:${outcome_now_ts}:${job_status}" >> "${JOBS_LEDGER_FILE}"
+          info "Outcome reported: agentic_job_id=${agentic_job_id_log} result=${job_status}"
+        else
+          warn "outcome failed: id=${agentic_job_id_log} exit=${outcome_cmd_exit} — retries next tick"
+        fi
+      fi
+    fi
+
   done < <(tail -n +$((offset + 1)) "${session_file}")
 
   if [[ "${reported_count}" -gt 0 ]]; then
