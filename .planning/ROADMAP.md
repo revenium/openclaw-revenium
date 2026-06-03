@@ -26,7 +26,7 @@ Full details archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.
 - [x] **Phase 5: Job Declaration Foundation** - Agent declares jobs via validated `kind:"job"` markers backed by an 11-label job taxonomy (completed 2026-06-03)
 - [x] **Phase 6: Job Lifecycle Wiring** - `report.sh` opens, meters under, and closes each declared job idempotently via the jobs ledger (completed 2026-06-03)
 - [x] **Phase 7: Root-Session Job Rollup** - Subagent completions roll up under the root session's job so one job spans the whole agent tree (completed 2026-06-03)
-- [ ] **Phase 8: Halt → CANCELLED Outcome** - A guardrail halt closes the in-progress job CANCELLED with a terminal interrupted job record
+- [x] **Phase 8: Halt → CANCELLED Outcome** - A guardrail halt closes the in-progress job CANCELLED with a terminal interrupted job record (completed 2026-06-03)
 
 ## Phase Details
 
@@ -116,11 +116,11 @@ Full details archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.
 
 **Wave 1**
 
-  - [ ] 08-01-PLAN.md — Wave 0 RED tests: extend stub-revenium.sh (halt jobs-fail switch) + add GROUP I/J/K/L/M to test_report_jobs_argv.sh with a halted guardrail-status.json fixture (single open→CANCELLED / zero→synthetic interrupted / multi-open / idempotent / fail-open) covering JHALT-01, JHALT-02
+  - [x] 08-01-PLAN.md — Wave 0 RED tests: extend stub-revenium.sh (halt jobs-fail switch) + add GROUP I/J/K/L/M to test_report_jobs_argv.sh with a halted guardrail-status.json fixture (single open→CANCELLED / zero→synthetic interrupted / multi-open / idempotent / fail-open) covering JHALT-01, JHALT-02
 
 **Wave 2** *(blocked on Wave 1)*
 
-  - [ ] 08-02-PLAN.md — report.sh account-level halt handler: read guardrail-status.json, JOB:halt:<haltedAt> gate, close all open jobs CANCELLED or mint synthetic guardrail-halt-<hex> interrupted job, fail-open behind JOBS_CLI_CAPABLE; turns GROUP I–M green (JHALT-01, JHALT-02)
+  - [x] 08-02-PLAN.md — report.sh account-level halt handler: read guardrail-status.json, JOB:halt:<haltedAt> gate, close all open jobs CANCELLED or mint synthetic guardrail-halt-<hex> interrupted job, fail-open behind JOBS_CLI_CAPABLE; turns GROUP I–M green (JHALT-01, JHALT-02)
 
 ## Progress
 
@@ -136,4 +136,4 @@ Phases execute in numeric order: 5 → 6 → 7 → 8
 | 5. Job Declaration Foundation | v1.1 | 3/3 | Complete    | 2026-06-03 |
 | 6. Job Lifecycle Wiring | v1.1 | 3/3 | Complete    | 2026-06-03 |
 | 7. Root-Session Job Rollup | v1.1 | 2/2 | Complete    | 2026-06-03 |
-| 8. Halt → CANCELLED Outcome | v1.1 | 0/2 | Not started | - |
+| 8. Halt → CANCELLED Outcome | v1.1 | 2/2 | Complete   | 2026-06-03 |
