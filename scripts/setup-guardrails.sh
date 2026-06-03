@@ -234,7 +234,11 @@ period_titled() {
 # Helper: create_rule RULE_NAME HARD_LIMIT WARN_THRESHOLD PERIOD
 # Single call site for rule creation (single base rule per D-02/D-03).
 # Sets RULE_ID and RULE_EXIT globals on return.
-# Appends --shadow-mode when SHADOW_MODE="true" (D-08).
+# Passes --shadow-mode=${SHADOW_MODE} EXPLICITLY (D-08): the API defaults
+# shadowMode=true when the flag is omitted, so non-shadow mode must force
+# --shadow-mode=false to get a genuinely enforcing rule. After create, the rule
+# is read back and shadowMode is asserted to match intent — on mismatch the rule
+# is cleaned up and RULE_ID is cleared so callers do NOT record a bad ruleId.
 # Filter defaults to AGENT:IS:${REVENIUM_AGENT_NAME} (D-23).
 # Bash 3.2: RULE_JSON passed via env to python3 heredoc.
 # ---------------------------------------------------------------------------
@@ -267,6 +271,11 @@ create_rule() {
       --shadow-mode \
       2>&1) && RULE_EXIT=0 || RULE_EXIT=$?
   else
+    # Pass --shadow-mode=false EXPLICITLY. The Revenium API defaults shadowMode
+    # to true on create when the flag is omitted, so simply leaving it off
+    # silently produces an observe-only (non-enforcing) rule. The explicit
+    # =false forces a genuinely enforcing rule. (Verified against
+    # api.revenium.ai: omit -> shadowMode:true; --shadow-mode=false -> false.)
     rule_json=$(revenium guardrails budget-rules create \
       --output json \
       --name "${rule_name}" \
@@ -278,6 +287,7 @@ create_rule() {
       --warn-threshold "${warn_threshold}" \
       --hard-limit "${hard_limit}" \
       --filter "AGENT:IS:${REVENIUM_AGENT_NAME}" \
+      --shadow-mode=false \
       2>&1) && RULE_EXIT=0 || RULE_EXIT=$?
   fi
 
@@ -298,7 +308,47 @@ except Exception:
 PY
   )
 
-  info "Created rule ${RULE_ID} for ${rule_name} (warn=${warn_threshold} hard=${hard_limit} period=${period})"
+  if [[ -z "${RULE_ID}" ]]; then
+    error "rule creation returned no id; cannot record. Raw: ${rule_json:0:200}"
+    RULE_EXIT=1
+    return
+  fi
+
+  # Verify the PERSISTED rule matches the requested enforcement intent. Because
+  # the API silently defaults shadowMode=true on create, never trust the flag
+  # alone — read the rule back and assert shadowMode == SHADOW_MODE so we never
+  # record a rule whose real enforcement contradicts what the operator asked for.
+  local verify_json verify_shadow
+  verify_json=$(revenium guardrails budget-rules get "${RULE_ID}" --output json 2>&1) || verify_json=""
+  verify_shadow=$(VERIFY_JSON="${verify_json}" python3 - <<'PY'
+import json, os
+try:
+    sm = json.loads(os.environ['VERIFY_JSON']).get('shadowMode')
+    print('true' if sm is True else 'false' if sm is False else 'unknown')
+except Exception:
+    print('unknown')
+PY
+  )
+
+  if [[ "${verify_shadow}" == "unknown" ]]; then
+    error "could not read back rule ${RULE_ID} to verify shadowMode; refusing to record it. Inspect/remove manually: revenium guardrails budget-rules delete ${RULE_ID} -y"
+    RULE_ID=""
+    RULE_EXIT=1
+    return
+  fi
+
+  if [[ "${verify_shadow}" != "${SHADOW_MODE}" ]]; then
+    error "rule ${RULE_ID} shadowMode mismatch: requested '${SHADOW_MODE}', persisted '${verify_shadow}'. Refusing to record a non-matching rule."
+    # Best-effort cleanup so a retry doesn't accumulate an orphaned rule.
+    revenium guardrails budget-rules delete "${RULE_ID}" -y >/dev/null 2>&1 \
+      && info "Deleted mismatched rule ${RULE_ID}" \
+      || warn "Could not delete mismatched rule ${RULE_ID} — remove it manually: revenium guardrails budget-rules delete ${RULE_ID} -y"
+    RULE_ID=""
+    RULE_EXIT=1
+    return
+  fi
+
+  info "Created rule ${RULE_ID} for ${rule_name} (warn=${warn_threshold} hard=${hard_limit} period=${period} shadow=${SHADOW_MODE})"
 }
 
 # ---------------------------------------------------------------------------

@@ -245,6 +245,33 @@ revenium guardrails budget-rules list
 revenium guardrails budget-rules delete <rule-id> --yes
 ```
 
+## Troubleshooting
+
+### macOS: `guardrail-status.json` never updates (`lastChecked: null`)
+
+`scripts/cron.sh` uses `flock` to prevent two cron ticks from overlapping, but **macOS does not ship `flock`** by default. Older versions of the cron failed with `flock: command not found` before running the metering/guardrail pass, so `guardrail-status.json` stayed at `lastChecked: null` and guardrails were silently inert. The cron now detects `flock` and falls back to an unlocked run when it's absent (the 15-minute cadence makes overlap unlikely), so no action is needed. If you want cross-platform locking anyway, install it with `brew install flock` and the locked path is used automatically.
+
+To confirm the cron is working, run it once manually and check the timestamp:
+
+```bash
+bash ~/.openclaw/skills/revenium/scripts/cron.sh
+python3 -c "import json;print(json.load(open('$HOME/.openclaw/skills/revenium/guardrail-status.json'))['lastChecked'])"
+```
+
+### Budget rule warns but never blocks (`shadowMode: true`)
+
+The Revenium API **defaults `shadowMode` to `true` when a rule is created without the `--shadow-mode` flag** — an observe-only rule that meters and warns but never enforces the hard limit. Because of this default, `setup-guardrails.sh` passes `--shadow-mode=false` explicitly for enforcing rules and then reads the rule back to assert `shadowMode` matches what you asked for (failing loudly rather than recording a non-enforcing rule). Shadow mode is still available on purpose via `setup-guardrails.sh --shadow-mode` or the interactive shadow-mode prompt.
+
+To check whether an existing rule actually enforces:
+
+```bash
+revenium guardrails budget-rules get <rule-id> --output json | grep -i shadowMode
+# shadowMode:false  → enforcing (blocks at the hard limit)
+# shadowMode:true   → observe-only (warns/meters but never blocks)
+```
+
+Note that `revenium guardrails budget-rules update` has **no** shadow-mode flag — you cannot flip an existing rule's enforcement after creation. To switch a rule from observe-only to enforcing, delete it and recreate it (which is what `/revenium` reconfigure does).
+
 ## Support
 
 Questions, bugs, or feature requests? Join us on [Discord](http://discord.gg/J2DbmjZ2nA).

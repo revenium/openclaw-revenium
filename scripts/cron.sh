@@ -64,9 +64,21 @@ run_report() {
   fi
 }
 
+# Run the metering + guardrail-check pass under an advisory lock so two
+# overlapping cron ticks can't race on the report/status files. `flock` ships
+# with util-linux (Linux default) but is NOT on macOS by default — mirror the
+# timeout/gtimeout degradation above and fall back to an unlocked run there.
+# The 15-minute cadence makes concurrent overlap unlikely, so the unlocked
+# path is safe.
 LOCK_FILE="${OPENCLAW_HOME:-${HOME}/.openclaw}/revenium-metering.lock"
-(
-  flock -n 9 || exit 0
+if command -v flock &>/dev/null; then
+  (
+    flock -n 9 || exit 0
+    run_report "$@" || true
+    bash "${SKILL_DIR}/scripts/guardrail-check.sh" || true
+  ) 9>"${LOCK_FILE}"
+else
+  # No flock (e.g. macOS): run without the advisory lock.
   run_report "$@" || true
   bash "${SKILL_DIR}/scripts/guardrail-check.sh" || true
-) 9>"${LOCK_FILE}"
+fi
