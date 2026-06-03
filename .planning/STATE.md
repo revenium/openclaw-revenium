@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Agentic Job Tracking
 status: planning
-last_updated: "2026-06-03T15:27:58.583Z"
+last_updated: "2026-06-03T15:35:00.000Z"
 last_activity: 2026-06-03
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,23 +17,23 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-13)
+See: .planning/PROJECT.md (updated 2026-06-03)
 
-**Core value:** Agents never silently blow through token budgets — every operation is budget-checked, and the user always has control over whether to continue past a budget threshold.
-**Current focus:** Milestone complete
+**Core value:** Agents never silently blow through token budgets — every completion is guardrail-checked and metered, and the user retains control over continuing past a threshold. v1.1 adds: every completion is attributed to an agentic job, opened and closed with a terminal outcome.
+**Current focus:** v1.1 Agentic Job Tracking — roadmap created (Phases 5–8), ready to plan Phase 5
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 5 — Job Declaration Foundation (not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-06-03 — Milestone v1.1 started
+Status: Roadmap created; awaiting phase planning
+Last activity: 2026-06-03 — v1.1 roadmap created (4 phases, 14/14 requirements mapped)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 6
+- Total plans completed: 6 (v1.0)
 - Average duration: ~5 min
 - Total execution time: ~5 min
 
@@ -52,6 +52,15 @@ Last activity: 2026-06-03 — Milestone v1.1 started
 
 *Updated after each plan completion*
 
+## v1.1 Phase Map
+
+| Phase | Name | Requirements | Depends on |
+|-------|------|--------------|------------|
+| 5 | Job Declaration Foundation | JOBDEC-01..04 | Phase 4 |
+| 6 | Job Lifecycle Wiring | JLIFE-01..05 | Phase 5 |
+| 7 | Root-Session Job Rollup | JROLL-01..03 | Phase 6 |
+| 8 | Halt → CANCELLED Outcome | JHALT-01..02 | Phases 6, 7 |
+
 ## Accumulated Context
 
 ### Decisions
@@ -59,12 +68,10 @@ Last activity: 2026-06-03 — Milestone v1.1 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- [Init]: Global install at ~/.openclaw/skills/ — available to all agents on the machine
-- [Init]: Binary on PATH not bundled — user manages revenium-cli installation
-- [Init]: Warn-and-ask on budget exceeded — user retains control
-- [Init]: Store anomaly ID in {baseDir}/config.json — sole persistence mechanism across sessions
-- [Phase 01]: Guard-first body ordering in SKILL.md to maximize LLM instruction compliance
-- [Phase 01]: Single-line JSON metadata to avoid silent parse failures in OpenClaw
+- [v1.1]: Agent-written `kind:"job"` markers (not classifier plugin) — consistent with v1.0 task-type architecture; avoids unconfirmed OpenClaw session-end hook dependency
+- [v1.1]: Job tracking is observability-only — per-job-type budget rules deferred; enforcement stays on `AGENT:STARTS_WITH` with server-side job rollup
+- [Phase 4]: Task-type correlation by `completion_id` + marker-after fallback (markers land after the completion they classify) — same correlation concern applies to job markers
+- [Phase 4]: `AGENT:STARTS_WITH:openclaw-` attribution (D-07) — root-session rollup; job rollup (Phase 7) extends this resolver
 
 ### Pending Todos
 
@@ -78,27 +85,27 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 3]: OpenClaw's `openclaw hooks install` supports custom hook packs but native `pre_llm_call`/`pre_tool_call` events are unconfirmed — hooks research needed; `bootstrap-extra-files` + GUARDRAIL-GUARD.md is the structural fallback
-- [Phase 3]: `revenium guardrails enforcement-rules get` returns integer ruleIds; `budget-rules list` returns string-hash IDs — name-based join required (confirmed in Hermes guardrail-check.sh)
-- [Phase 4]: OpenClaw subagent session model (parentSessionId field in session JSONL) needs verification before root-session-ID walk can be implemented
+- [Phase 7]: Marker-race — job markers are written after the completions they belong to (same timing as v1.0 task-type markers); root job ID may not resolve on first cron tick. JROLL-02 mandates omit-and-retry rather than shipping a sub-session ID.
+- [Phase 8]: Synthetic interrupted job (`guardrail-halt-<hex>`) must integrate with the existing halt flow (`guardrail-check.sh` / BUDGET-GUARD.md) without re-triggering metering of a halted turn.
+- [Carried, Phase 4]: subagent→root spend rollup confirmed end-to-end for completions; Phase 7 must verify the same path carries `agentic_job_id` overrides.
 
 ## Deferred Items
 
-Items acknowledged and deferred at milestone close on 2026-06-03:
+Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 | Category | Item | Status | Note |
 |----------|------|--------|------|
-| uat_gap | 04-HUMAN-UAT | RESOLVED 2026-06-03 | Both caveats verified by user: in-skill D-08 legacy notice fires as designed; subagent→root spend rollup confirmed end-to-end (child completions roll up under `openclaw-<parent_session_id>`). 04-HUMAN-UAT.md now 3/3 passed, status complete. |
-| verification_gap | 01-VERIFICATION | human_needed | Pre-existing — Phase 1 shipped with human_needed verification never flipped to passed. Skill scaffolding is in production use. |
-| verification_gap | 03-VERIFICATION | human_needed | Pre-existing — Phase 3 shipped with human_needed verification never flipped to passed. Guardrail engine is in production use. |
-| quick_task | 260327-o1o-replace-done-session-skip-with-line-offs | missing | Actually COMPLETE (commit 7481c0c, see Quick Tasks Completed table); audit flagged it only because the task directory was cleaned up. No action needed. |
+| uat_gap | 04-HUMAN-UAT | RESOLVED 2026-06-03 | Both caveats verified by user: in-skill D-08 legacy notice fires as designed; subagent→root spend rollup confirmed end-to-end. |
+| verification_gap | 01-VERIFICATION | human_needed | Phase 1 shipped with human_needed verification; skill scaffolding is in production use. |
+| verification_gap | 03-VERIFICATION | human_needed | Phase 3 shipped with human_needed verification; guardrail engine is in production use. |
+| quick_task | 260327-o1o-replace-done-session-skip-with-line-offs | missing | Actually COMPLETE (commit 7481c0c). No action needed. |
 
 ## Session Continuity
 
-Last session: 2026-06-03T04:05:10.355Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-task-metering-attribution/04-CONTEXT.md
+Last session: 2026-06-03 — v1.1 roadmap creation
+Stopped at: ROADMAP.md written, REQUIREMENTS.md traceability filled (14/14 mapped)
+Resume file: .planning/ROADMAP.md
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Plan the first v1.1 phase with `/gsd-plan-phase 5`

@@ -55,25 +55,25 @@ Which phases cover which requirements. Filled during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| JOBDEC-01 | — | Pending |
-| JOBDEC-02 | — | Pending |
-| JOBDEC-03 | — | Pending |
-| JOBDEC-04 | — | Pending |
-| JLIFE-01 | — | Pending |
-| JLIFE-02 | — | Pending |
-| JLIFE-03 | — | Pending |
-| JLIFE-04 | — | Pending |
-| JLIFE-05 | — | Pending |
-| JROLL-01 | — | Pending |
-| JROLL-02 | — | Pending |
-| JROLL-03 | — | Pending |
-| JHALT-01 | — | Pending |
-| JHALT-02 | — | Pending |
+| JOBDEC-01 | Phase 5 | Pending |
+| JOBDEC-02 | Phase 5 | Pending |
+| JOBDEC-03 | Phase 5 | Pending |
+| JOBDEC-04 | Phase 5 | Pending |
+| JLIFE-01 | Phase 6 | Pending |
+| JLIFE-02 | Phase 6 | Pending |
+| JLIFE-03 | Phase 6 | Pending |
+| JLIFE-04 | Phase 6 | Pending |
+| JLIFE-05 | Phase 6 | Pending |
+| JROLL-01 | Phase 7 | Pending |
+| JROLL-02 | Phase 7 | Pending |
+| JROLL-03 | Phase 7 | Pending |
+| JHALT-01 | Phase 8 | Pending |
+| JHALT-02 | Phase 8 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 14 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 14
+- Mapped to phases: 14 (Phase 5: 4, Phase 6: 5, Phase 7: 3, Phase 8: 2)
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-03 for milestone v1.1*
