@@ -158,13 +158,13 @@ Setup happens automatically the first time the agent tries to perform an operati
 3. Ask for a **budget period** (DAILY, WEEKLY, MONTHLY, or QUARTERLY)
 4. Optionally enable **shadow mode** (record breaches without enforcing) and **autonomous mode** (halt-on-exceed with notifications to Slack, Discord, Telegram, etc.)
 5. Create the **Revenium guardrail rules** and save their `ruleIds` to `~/.openclaw/skills/revenium/config.json`
-6. Install the background metering cron (runs every 15 minutes)
+6. Install the background metering cron (runs every minute by default; configurable)
 
 Setup is atomic — if rule creation fails, no partial `ruleIds` are written.
 
 ## How It Works
 
-A background cron job (`cron.sh`) runs every 15 minutes and performs two stages:
+A background cron job (`cron.sh`) runs **every minute by default** and performs two stages. The interval is configurable (see [Cron interval](#cron-interval) below) — a shorter interval keeps guardrail enforcement closer to real-time, a longer one reduces how often the Revenium API is polled. Note that enforcement is only as fresh as the last cron run: a budget breach is detected on the next tick, so within one interval an autonomous agent can spend past the hard limit before `halted` flips.
 
 ### 1. Token Metering (`report.sh`)
 
@@ -218,7 +218,8 @@ The skill stores its config at `~/.openclaw/skills/revenium/config.json`:
   "organizationName": "my-org",
   "autonomousMode": false,
   "notifyChannel": "slack",
-  "notifyTarget": "#ops"
+  "notifyTarget": "#ops",
+  "cronIntervalMinutes": 1
 }
 ```
 
@@ -226,8 +227,24 @@ The skill stores its config at `~/.openclaw/skills/revenium/config.json`:
 - `organizationName` — optional, used for attribution in Revenium reporting
 - `autonomousMode` — when `true`, budget exceedance halts all operations and sends notifications; when `false` (default), the agent warns and asks for permission
 - `notifyChannel` / `notifyTarget` — notification destination for autonomous-mode halt alerts
+- `cronIntervalMinutes` — optional, how often the metering/guardrail cron runs (default `1`); see [Cron interval](#cron-interval)
 
 Your API key, Team ID, Tenant ID, and Owner ID are stored separately by the `revenium` CLI (at `~/.config/revenium/config.yaml`) and injected into the sandbox as `REVENIUM_*` environment variables by post-install.
+
+### Cron interval
+
+The metering/guardrail cron runs **every minute by default**. Two ways to change it:
+
+```bash
+# Per-run flag (updates the crontab entry in place):
+bash ~/.openclaw/skills/revenium/scripts/install-cron.sh --interval 5
+
+# Or persist it in config.json so future re-installs pick it up:
+#   "cronIntervalMinutes": 5
+bash ~/.openclaw/skills/revenium/scripts/install-cron.sh
+```
+
+Precedence is `--interval` flag → `config.json` `cronIntervalMinutes` → default `1`. Valid range is 1–59 minutes. A shorter interval tightens the enforcement window (a breach is caught sooner) at the cost of polling the Revenium API more often; a longer interval does the reverse. Overlapping runs are prevented by a lock (`flock` where available, otherwise an atomic `mkdir` lock), so a tick that fires while the previous run is still going is skipped rather than double-metering.
 
 The cron writes `~/.openclaw/skills/revenium/guardrail-status.json` with the latest guardrail check result — this is what the agent reads to enforce the guard.
 
@@ -249,7 +266,7 @@ revenium guardrails budget-rules delete <rule-id> --yes
 
 ### macOS: `guardrail-status.json` never updates (`lastChecked: null`)
 
-`scripts/cron.sh` uses `flock` to prevent two cron ticks from overlapping, but **macOS does not ship `flock`** by default. Older versions of the cron failed with `flock: command not found` before running the metering/guardrail pass, so `guardrail-status.json` stayed at `lastChecked: null` and guardrails were silently inert. The cron now detects `flock` and falls back to an unlocked run when it's absent (the 15-minute cadence makes overlap unlikely), so no action is needed. If you want cross-platform locking anyway, install it with `brew install flock` and the locked path is used automatically.
+`scripts/cron.sh` uses `flock` to prevent two cron ticks from overlapping, but **macOS does not ship `flock`** by default. Older versions of the cron failed with `flock: command not found` before running the metering/guardrail pass, so `guardrail-status.json` stayed at `lastChecked: null` and guardrails were silently inert. The cron now detects `flock` and, when it's absent, falls back to a portable atomic `mkdir` lock — so overlapping runs are still prevented (important at the default 1-minute interval) without double-metering. No action is needed; `brew install flock` is optional and switches to the flock path automatically.
 
 To confirm the cron is working, run it once manually and check the timestamp:
 

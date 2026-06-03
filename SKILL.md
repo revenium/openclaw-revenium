@@ -35,7 +35,7 @@ This is not optional. This is not guidance. If you output ANYTHING other than th
 
 **MANDATORY — execute before EVERY response, EVERY tool call, EVERY operation.** This applies to ALL tasks — not just Revenium-related ones.
 
-The guardrail status is maintained by a background cron job that checks Revenium every 15 minutes and writes the result to `~/.openclaw/skills/revenium/guardrail-status.json`. You read this local file — do NOT call the Revenium API directly.
+The guardrail status is maintained by a background cron job that checks Revenium every minute (default; configurable) and writes the result to `~/.openclaw/skills/revenium/guardrail-status.json`. You read this local file — do NOT call the Revenium API directly.
 
 1. **Read guardrail status.** Read `~/.openclaw/skills/revenium/guardrail-status.json`. If it does not exist, tell the user "Guardrail status not yet available. The metering cron may not be installed. Run `bash ~/.openclaw/skills/revenium/scripts/install-cron.sh` to set it up." Then proceed with the operation.
 
@@ -123,7 +123,7 @@ Follow these steps in order. If any step fails, STOP and explain the failure. Do
    ```
    bash ~/.openclaw/skills/revenium/scripts/install-cron.sh
    ```
-   This registers a background job that ships token usage to Revenium every 15 minutes and keeps `guardrail-status.json` current. If the cron is already installed, this is a no-op.
+   This registers a background job that ships token usage to Revenium every minute (the default interval; configurable via `--interval <minutes>` or `config.json` `cronIntervalMinutes`) and keeps `guardrail-status.json` current. Re-running updates the existing entry in place.
 
 ### Error Handling
 
