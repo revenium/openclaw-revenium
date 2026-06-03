@@ -112,7 +112,15 @@ Full details archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.
   1. When a guardrail halt interrupts an in-progress job, that job is closed with outcome `CANCELLED` through the existing halt flow
   2. An interrupted job is recorded with `job_type:"interrupted"` and a synthetic `agentic_job_id` (e.g. `guardrail-halt-<hex>`) so halted work still yields a terminal job record
 
-**Plans**: TBD
+**Plans**: 2 plans
+
+**Wave 1**
+
+  - [ ] 08-01-PLAN.md — Wave 0 RED tests: extend stub-revenium.sh (halt jobs-fail switch) + add GROUP I/J/K/L/M to test_report_jobs_argv.sh with a halted guardrail-status.json fixture (single open→CANCELLED / zero→synthetic interrupted / multi-open / idempotent / fail-open) covering JHALT-01, JHALT-02
+
+**Wave 2** *(blocked on Wave 1)*
+
+  - [ ] 08-02-PLAN.md — report.sh account-level halt handler: read guardrail-status.json, JOB:halt:<haltedAt> gate, close all open jobs CANCELLED or mint synthetic guardrail-halt-<hex> interrupted job, fail-open behind JOBS_CLI_CAPABLE; turns GROUP I–M green (JHALT-01, JHALT-02)
 
 ## Progress
 
@@ -128,4 +136,4 @@ Phases execute in numeric order: 5 → 6 → 7 → 8
 | 5. Job Declaration Foundation | v1.1 | 3/3 | Complete    | 2026-06-03 |
 | 6. Job Lifecycle Wiring | v1.1 | 3/3 | Complete    | 2026-06-03 |
 | 7. Root-Session Job Rollup | v1.1 | 2/2 | Complete    | 2026-06-03 |
-| 8. Halt → CANCELLED Outcome | v1.1 | 0/TBD | Not started | - |
+| 8. Halt → CANCELLED Outcome | v1.1 | 0/2 | Not started | - |
