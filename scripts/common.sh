@@ -46,11 +46,24 @@ LOCK_FILE="${STATE_DIR}/revenium-metering.lock"
 LOG_FILE="${STATE_DIR}/revenium-metering.log"
 RULES_LOCK_FILE="${STATE_DIR}/rules.lock"
 
+# Phase 4 path constants (METER-01 / D-07).
+# TAXONOMY_FILE: 8-label task vocabulary for write-marker.sh + setup-guardrails.sh.
+# MARKERS_DIR: per-session marker JSONL files (appended by write-marker.sh).
+# SESSIONS_DIR: OpenClaw agent session JSONL directory (read by resolver + report.sh).
+TAXONOMY_FILE="${STATE_DIR}/task-taxonomy.json"
+MARKERS_DIR="${STATE_DIR}/markers"
+SESSIONS_DIR="${OPENCLAW_HOME}/agents/main/sessions"
+
 # Agent name constant: defaults to "OpenClaw". Override via env to scope
 # guardrail rule filters when multiple distinct installs share one API key.
 # Used for --filter AGENT:IS:${REVENIUM_AGENT_NAME} in setup-guardrails.sh
 # and for --agent in report.sh (Phase 4 concern; constant established here).
 REVENIUM_AGENT_NAME="${REVENIUM_AGENT_NAME:-OpenClaw}"
+
+# D-07: metering/filter scheme. report.sh ships --agent "${REVENIUM_AGENT_PREFIX}${root_sid}";
+# base budget rule filters AGENT:STARTS_WITH:${REVENIUM_AGENT_PREFIX}. Supersedes the static
+# AGENT:IS:${REVENIUM_AGENT_NAME} model (Phase 3 D-23) for filtering/rollup.
+REVENIUM_AGENT_PREFIX="${REVENIUM_AGENT_PREFIX:-openclaw-}"
 
 # Ensure STATE_DIR exists (idempotent).
 mkdir -p "${STATE_DIR}"
@@ -121,4 +134,25 @@ error() { log "ERROR" "$@"; }
 has_guardrails_cli() {
   revenium guardrails budget-rules --help >/dev/null 2>&1 && \
   revenium guardrails enforcement-events --help >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------------------
+# get_root_session_id — bash wrapper around get-root-session-id.py sidecar.
+# Resolves a child session id to its root via JSONL childSessionKey walk.
+# Fail-open (D-05/D-06): if python3 is absent or the sidecar fails, prints
+# the input sid and returns 0 (never blocks the caller).
+#
+# Source: adapted from ../hermes-revenium/skills/revenium/scripts/common.sh:96-106
+#
+# Usage:
+#   root_sid=$(get_root_session_id "${session_id}")
+# ---------------------------------------------------------------------------
+get_root_session_id() {
+  local sid="${1:-}"
+  [[ -z "${sid}" ]] && return 0
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' "${sid}"; return 0
+  fi
+  OPENCLAW_HOME="${OPENCLAW_HOME}" python3 "${SKILL_DIR}/scripts/get-root-session-id.py" "${sid}" 2>/dev/null \
+    || printf '%s\n' "${sid}"
 }
