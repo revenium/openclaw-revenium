@@ -67,7 +67,19 @@ Full details archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.
   4. A `jobs` CLI error or absent subcommand is caught and logged, and task-type metering plus guardrail checks continue to run (fail-open)
   5. The jobs ledger persists created and closed job IDs so re-runs never re-issue a `create` or `outcome` for the same job
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1**
+
+  - [ ] 06-01-PLAN.md — Wave 0 test scaffolding: extend stub-revenium.sh (jobs fakes + 409 + capability-probe --help) and create test_report_jobs_argv.sh (RED) covering JLIFE-01..05
+
+**Wave 2** *(blocked on Wave 1)*
+
+  - [ ] 06-02-PLAN.md — report.sh foundation: JOBS_LEDGER_FILE + JOBS_CLI_CAPABLE probe, markers-cache kind:job rows, correlation, --agentic-job-* stamping (JLIFE-02, JLIFE-04, JLIFE-05)
+
+**Wave 3** *(blocked on Wave 2)*
+
+  - [ ] 06-03-PLAN.md — report.sh lifecycle calls: in-loop jobs create + jobs outcome, ledger-gated + 409-as-success, fail-open (JLIFE-01, JLIFE-03, JLIFE-05)
 
 ### Phase 7: Root-Session Job Rollup
 
@@ -106,6 +118,6 @@ Phases execute in numeric order: 5 → 6 → 7 → 8
 | 3. Guardrail Engine | v1.0 | 8/8 | Complete | 2026-05-31 |
 | 4. Task Metering & Attribution | v1.0 | 4/4 | Complete | 2026-06-03 |
 | 5. Job Declaration Foundation | v1.1 | 3/3 | Complete    | 2026-06-03 |
-| 6. Job Lifecycle Wiring | v1.1 | 0/TBD | Not started | - |
+| 6. Job Lifecycle Wiring | v1.1 | 0/3 | Planned | - |
 | 7. Root-Session Job Rollup | v1.1 | 0/TBD | Not started | - |
 | 8. Halt → CANCELLED Outcome | v1.1 | 0/TBD | Not started | - |
