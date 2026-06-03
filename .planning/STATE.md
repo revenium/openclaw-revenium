@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Agentic Job Tracking
-status: ready_to_plan
-last_updated: 2026-06-03T17:13:53.151Z
-last_activity: 2026-06-03 -- Phase 05 execution started
+status: planning
+last_updated: "2026-06-03T17:28:03.984Z"
+last_activity: 2026-06-03
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
   completed_plans: 3
-  percent: 0
-stopped_at: Phase 05 complete (3/3) — ready to discuss Phase 6
+  percent: 25
 ---
 
 # Project State
@@ -104,9 +103,9 @@ Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 ## Session Continuity
 
-Last session: 2026-06-03T16:07:40.710Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-job-declaration-foundation/05-CONTEXT.md
+Last session: 2026-06-03T17:28:03.978Z
+Stopped at: Phase 6 context gathered
+Resume file: .planning/phases/06-job-lifecycle-wiring/06-CONTEXT.md
 
 ## Operator Next Steps
 
