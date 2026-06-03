@@ -91,16 +91,61 @@ except OSError:
 # Remove cron-session files
 non_cron = [f for f in all_files if f[:-len('.jsonl')] not in cron_sids]
 
+
+# WR-03: raw mtime is a fragile signal — any concurrent/subagent session that
+# touched its JSONL more recently steals attribution, and report.sh correlates
+# markers strictly within the same session id, so a misfiled marker is silently
+# lost to `unclassified`. Prefer the non-cron session that most recently
+# appended an assistant *completion* (the conversation this marker describes);
+# fall back to non-cron mtime. Never fall back to cron sessions.
+def last_completion_ts(fname):
+    """Return the ts of the last assistant-message line, or None.
+    Reads only the tail to stay cheap on large session logs."""
+    path = os.path.join(sessions_dir, fname)
+    try:
+        with open(path, 'rb') as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            # Read up to the last 64 KiB; enough for the final few lines.
+            window = min(size, 65536)
+            fh.seek(size - window)
+            chunk = fh.read().decode('utf-8', 'replace')
+    except OSError:
+        return None
+    best = None
+    for line in chunk.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        msg = rec.get('message')
+        if rec.get('type') == 'message' and isinstance(msg, dict) and msg.get('role') == 'assistant':
+            ts = rec.get('timestamp') or ''
+            if ts and (best is None or ts > best):
+                best = ts
+    return best
+
+sid = None
 if non_cron:
-    # Pick the newest by mtime (most recently modified = active session)
-    newest = max(non_cron, key=lambda f: os.path.getmtime(os.path.join(sessions_dir, f)))
-    sid = newest[:-len('.jsonl')]
-elif all_files:
-    # Fallback: use all files if everything was filtered (shouldn't happen)
-    newest = max(all_files, key=lambda f: os.path.getmtime(os.path.join(sessions_dir, f)))
+    # First choice: session with the most recent assistant completion.
+    annotated = [(f, last_completion_ts(f)) for f in non_cron]
+    with_completion = [(f, ts) for f, ts in annotated if ts is not None]
+    if with_completion:
+        newest = max(with_completion, key=lambda pair: pair[1])[0]
+    else:
+        # No completions yet in any non-cron session — fall back to mtime,
+        # still restricted to non-cron files.
+        newest = max(non_cron, key=lambda f: os.path.getmtime(os.path.join(sessions_dir, f)))
     sid = newest[:-len('.jsonl')]
 else:
-    # No session files at all — use a pseudo sid
+    # No non-cron session files at all — use a pseudo sid. We deliberately do
+    # NOT fall back to cron sessions: filing a marker under a cron session id
+    # guarantees it is never correlated to a real user turn.
     sid = f"pseudo-{int(time.time())}"
 
 # --- Path-traversal guard (ASVS V5 / T-04-06) ---
