@@ -17,7 +17,7 @@ Out of scope (deferred): per-tick API-poll overhead metering; the non-autonomous
 
 ### Which "warn" to meter
 - **D-01:** "Warn" = the **soft warn-threshold** signal — a rule whose per-rule `state` becomes `'warn'` (currentValue ≥ `warnThreshold` but < `hardLimit`). Fires in BOTH autonomous and non-autonomous mode. This is the "approaching budget" meaning.
-- **D-02:** The top-level non-autonomous `warned` field (hardLimit breached but autonomousMode off → warn-and-ask) is **NOT** metered as a guardrail transaction in this phase (deferred). Only soft-threshold warn, halt, and shadow are metered.
+- **D-02 [informational]:** The top-level non-autonomous `warned` field (hardLimit breached but autonomousMode off → warn-and-ask) is **NOT** metered as a guardrail transaction in this phase (deferred). Only soft-threshold warn, halt, and shadow are metered. *(Negative/out-of-scope decision — nothing to implement; tracked as deferred below, not by any plan.)*
 - **D-03:** `guardrail-check.sh` currently emits only `HALT_TRANSITION` (D-11) and `shadow_transitions` (D-12). **Warn-onset transition detection must be ADDED** — mirror the existing `shadow_transitions` prev-vs-now comparison (`prev_rules_by_id[ruleId].state != 'warn'` and now `== 'warn'`), so it fires once per warn onset, not every tick while warned, and re-fires after a warn→ok→warn recovery cycle.
 
 ### Event types & task_type labels

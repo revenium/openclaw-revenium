@@ -57,8 +57,8 @@ Post-ship fix: the agent-written-marker pipeline never fired in production (Open
   5. Guardrail-event metering is fully fail-open — a metering error never blocks the status write, halt/warn/shadow notification, or cron tick — and `report.sh` no longer emits the dead operation-type `GUARDRAIL` heuristic (GRDEV-05, GRDEV-06)
 
 **Plans:** 3 plans
-
 Plans:
+
 - [ ] 09-00-PLAN.md — Wave 0: test scaffolding (tests/test_guardrail_argv.sh, stub-revenium.sh guardrails switch) + resolve live meter-completion CLI questions
 - [ ] 09-01-PLAN.md — Core metering: common.sh ledger constants, warn-onset detection, Section M _emit_guardrail_event (halt/warn/shadow), attribution + dedup, fail-open
 - [ ] 09-02-PLAN.md — Remove dead report.sh GUARDRAIL heuristic (D-12 / GRDEV-06) + test assertion
