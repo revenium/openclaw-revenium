@@ -39,7 +39,7 @@ Post-ship fix: the agent-written-marker pipeline never fired in production (Open
 **Milestone Goal:** Close the metering-visibility gaps found while debugging v1.1 in production — make guardrail enforcement and tool usage observable as first-class Revenium transactions, not just Chat/Tool Call completions. (Revenium renders a completion's `operationType` as the transaction type: CHAT→Chat, TOOL_CALL→Tool Call, GUARDRAIL→Guardrail.)
 
 - [x] **Phase 9: Guardrail Event Metering** — emit a GUARDRAIL transaction on each halt / warn / shadow enforcement transition, deduped + fail-open (completed 2026-06-04)
-- [ ] **Phase 10: Tool Registry & Tool-Event Metering** — register tools and meter tool invocations in Revenium (needs discuss/spec)
+- [ ] **Phase 10: Tool Registry & Tool-Event Metering** — register tools and meter tool invocations in Revenium (planned)
 
 ## Phase Details
 
@@ -75,6 +75,13 @@ Plans:
   3. Tool-event metering does not double-count against existing `TOOL_CALL` completions (TOOLEV-03)
   4. Tool registry + tool-event work is fail-open and idempotency-gated against duplicate registrations/events (TOOLEV-04)
 
+**Plans:** 3 plans
+Plans:
+
+- [ ] 10-00-PLAN.md — Wave 0 test scaffolding: tests/test_report_tool_argv.sh (TOOLEV-01..04 argv assertions) + stub-revenium.sh tools/tool-event switches (RED gate)
+- [ ] 10-01-PLAN.md — Registry foundation: common.sh tool ledger constants, TOOLS_CLI_CAPABLE probe, normalize_tool_id/classify_tool_type, _register_tool create-once (TOOLEV-01/04)
+- [ ] 10-02-PLAN.md — Tool-event emission: _meter_tool_event + toolCall scan loop in process_session, explicit --success, no double-count, fail-open (TOOLEV-02/03/04)
+
 ## Progress
 
 **Execution Order:** Phases execute in numeric order: 9 → 10
@@ -90,4 +97,4 @@ Plans:
 | 7. Root-Session Job Rollup | v1.1 | 2/2 | Complete | 2026-06-03 |
 | 8. Halt → CANCELLED Outcome | v1.1 | 2/2 | Complete | 2026-06-03 |
 | 9. Guardrail Event Metering | v1.2 | 3/3 | Complete    | 2026-06-04 |
-| 10. Tool Registry & Tool-Event Metering | v1.2 | 0/? | Not started | — |
+| 10. Tool Registry & Tool-Event Metering | v1.2 | 0/3 | Planned | — |
