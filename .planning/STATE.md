@@ -4,7 +4,7 @@ milestone: v1.2
 milestone_name: Metering Completeness
 status: Awaiting next milestone
 last_updated: "2026-06-04T22:38:48.136Z"
-last_activity: 2026-06-04 — Milestone v1.2 completed and archived
+last_activity: 2026-06-04 - Completed quick task 260604-qo0: job SUCCESS → outcome-type CONVERTED
 progress:
   total_phases: 2
   completed_phases: 2
@@ -88,6 +88,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260327-o1o | Replace DONE session skip with line-offset tracking in report.sh | 2026-03-27 | 7481c0c | [260327-o1o-replace-done-session-skip-with-line-offs](./quick/260327-o1o-replace-done-session-skip-with-line-offs/) |
+| 260604-qo0 | Job Outcome Type stuck at PENDING — map SUCCESS arcs to --outcome-type CONVERTED (JOUT-01 slice) | 2026-06-04 | 532e3b7 | [260604-qo0-job-outcome-converted](./quick/260604-qo0-job-outcome-converted/) |
 
 ### Blockers/Concerns
 
