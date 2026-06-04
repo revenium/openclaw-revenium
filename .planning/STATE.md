@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Metering Completeness
-status: planning
-last_updated: "2026-06-04T01:41:26.211Z"
-last_activity: 2026-06-04
+status: Defining requirements
+last_updated: "2026-06-04T01:49:00.974Z"
+last_activity: 2026-06-04 — Milestone v1.2 started
 progress:
-  total_phases: 0
+  total_phases: 2
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -106,9 +106,9 @@ Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 ## Session Continuity
 
-Last session: 2026-06-03T22:00:13.107Z
-Stopped at: Phase 8 context gathered
-Resume file: .planning/phases/08-halt-cancelled-outcome/08-CONTEXT.md
+Last session: 2026-06-04T01:49:00.969Z
+Stopped at: Phase 9 context gathered
+Resume file: .planning/phases/09-guardrail-event-metering/09-CONTEXT.md
 
 ## Operator Next Steps
 
