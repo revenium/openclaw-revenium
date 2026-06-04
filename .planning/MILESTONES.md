@@ -1,5 +1,23 @@
 # Milestones
 
+## v1.1 Agentic Job Tracking (Shipped: 2026-06-04)
+
+**Phases completed:** 4 phases, 10 plans, 14 tasks
+
+**Delivered:** Group an OpenClaw agent's work into Revenium *agentic jobs* — every completion attributed to a job, jobs opened and closed with a terminal outcome — ported from the hermes-revenium job model onto OpenClaw's agent-written-marker architecture (no native-hook dependency).
+
+**Key accomplishments:**
+
+- **Phase 5 — Job Declaration Foundation:** 11-label `job-taxonomy.json` + `write-job-marker.sh` (sanitization → allowlist → flock atomic append) + `JOB DECLARATION` directive in SKILL.md; 18/18 writer tests.
+- **Phase 6 — Job Lifecycle Wiring:** `report.sh` `JOBS_LEDGER_FILE` + `JOBS_CLI_CAPABLE` probe, per-completion correlation, `--agentic-job-id/-name/-type` stamping, ledger-gated `jobs create`/`jobs outcome` with 409-as-success and fail-open; 28/28 hermetic tests.
+- **Phase 7 — Root-Session Job Rollup:** subagent completions inherit the ROOT session's `agentic_job_id` (race-omit on unresolved root); root-only gates prevent duplicate/sub-session jobs; 44+9+7 tests green.
+- **Phase 8 — Halt → CANCELLED Outcome:** `handle_halt()` closes open jobs `CANCELLED` or mints a synthetic `guardrail-halt-<hex>` `interrupted` job on a budget halt; 71/71 cumulative tests.
+- **Post-ship production fix:** live debugging on the test host found the agent-written-marker pipeline never fired in practice — OpenClaw loads `SKILL.md` on-demand, so the "classify/declare every turn" directives were never in the agent's context. Fixed by injecting hardened Task Classification + Job Declaration **completion-gates** into `AGENTS.md` via `post-install.sh`; validated end-to-end (agent self-wrote markers → cron → job created + closed `SUCCESS` in Revenium).
+
+**Known deferred items at close:** 3 (see STATE.md → Deferred Items / `v1.1-MILESTONE-AUDIT.md`). Phase 6 left `human_needed` on two live-API checks (server 409-conflict string; CR-01 transient-failure job retry durability), plus one quick-task flagged "missing" covering the report.sh offset-gate. All three are carried into **v1.2** — Phase 9 directly touches the CR-01/offset area.
+
+---
+
 ## v1.0 Budget Guardrails & Metering (Shipped: 2026-06-03)
 
 **Phases completed:** 4 phases, 14 plans, 26 tasks
