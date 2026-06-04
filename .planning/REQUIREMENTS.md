@@ -21,10 +21,10 @@
 
 > Provisional — requires its own `/gsd-discuss-phase 10` / spec before planning. `meter tool-event` was explicitly out-of-scope in v1.1.
 
-- [ ] **TOOLEV-01**: The skill registers tools in Revenium via `revenium tools create` so agent tools appear in the Revenium tool registry
-- [ ] **TOOLEV-02**: Tool invocations are metered via `revenium meter tool-event` so per-tool usage is observable in Revenium
-- [ ] **TOOLEV-03**: Tool-event metering does **not** double-count against the existing `meter completion --operation-type TOOL_CALL` records
-- [ ] **TOOLEV-04**: Tool registry + tool-event work is fail-open and idempotency/ledger-gated so re-runs never duplicate registrations or events
+- [x] **TOOLEV-01**: The skill registers tools in Revenium via `revenium tools create` so agent tools appear in the Revenium tool registry
+- [x] **TOOLEV-02**: Tool invocations are metered via `revenium meter tool-event` so per-tool usage is observable in Revenium
+- [x] **TOOLEV-03**: Tool-event metering does **not** double-count against the existing `meter completion --operation-type TOOL_CALL` records
+- [x] **TOOLEV-04**: Tool registry + tool-event work is fail-open and idempotency/ledger-gated so re-runs never duplicate registrations or events
 
 ## Future Requirements (deferred)
 

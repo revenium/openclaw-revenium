@@ -103,4 +103,4 @@ Plans:
 | 7. Root-Session Job Rollup | v1.1 | 2/2 | Complete | 2026-06-03 |
 | 8. Halt → CANCELLED Outcome | v1.1 | 2/2 | Complete | 2026-06-03 |
 | 9. Guardrail Event Metering | v1.2 | 3/3 | Complete    | 2026-06-04 |
-| 10. Tool Registry & Tool-Event Metering | v1.2 | 3/3 | Complete   | 2026-06-04 |
+| 10. Tool Registry & Tool-Event Metering | v1.2 | 3/3 | Complete    | 2026-06-04 |
