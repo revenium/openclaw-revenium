@@ -48,6 +48,21 @@
 #     Detection uses `printf '%s\n' "$@" | grep -qF --` idiom (same as
 #     STUB_REVENIUM_409_FOR) — no eval, no string interpolation of argv.
 #
+# Phase 9 guardrail-event additions:
+#
+#   STUB_REVENIUM_GUARDRAILS_FAIL=1
+#     When set, `guardrails enforcement-rules get` exits 1 with an EOF-style
+#     error. Exercises the fail-open fallback path in guardrail-check.sh.
+#     `meter completion`, `config show`, and `jobs` calls are UNAFFECTED.
+#
+#   STUB_REVENIUM_ENFORCEMENT_JSON=<json>
+#     When set, returned as the body of `guardrails enforcement-rules get`.
+#     Default when unset: '{"rules":[]}'.
+#
+#   STUB_REVENIUM_BUDGET_RULES_JSON=<json>
+#     When set, returned as the body of `guardrails budget-rules list`.
+#     Default when unset: '[]'.
+#
 # SECURITY (T-04-09 / V5): this stub only string-COMPAREs positional args and
 # captures them with `printf '%s\n'`. It never `eval`s or string-interpolates
 # captured argv into a command.
@@ -65,8 +80,49 @@ fi
 # 2. Capability-probe and config responses
 # ---------------------------------------------------------------------------
 
-# config show → exit 0 silently (satisfies report.sh:106 guard)
+# config show → emit Team ID line (satisfies report.sh:106 guard AND guardrail-check.sh
+# Team ID parse at line 101). report.sh uses `revenium config show &>/dev/null` (only
+# checks exit code, not output) — safe to add output here.
 if [[ "$1 $2" == "config show" ]]; then
+  echo "Team ID:    test-team-id"
+  exit 0
+fi
+
+# guardrails --help and subcommand --help probes → exit 0 (satisfies has_guardrails_cli)
+if [[ "$1" == "guardrails" && "$2" == "--help" ]]; then
+  echo "usage: revenium guardrails <subcommand>"
+  exit 0
+fi
+if [[ "$1 $2 $3" == "guardrails budget-rules --help" ]]; then
+  echo "usage: revenium guardrails budget-rules <subcommand>"
+  exit 0
+fi
+if [[ "$1 $2 $3" == "guardrails enforcement-events --help" ]]; then
+  echo "usage: revenium guardrails enforcement-events <subcommand>"
+  exit 0
+fi
+
+# guardrails enforcement-rules get → fixture JSON (or STUB_REVENIUM_GUARDRAILS_FAIL)
+if [[ "$1 $2 $3" == "guardrails enforcement-rules get" ]]; then
+  if [[ -n "${STUB_REVENIUM_GUARDRAILS_FAIL:-}" ]]; then
+    echo '{"error":"EOF"}' >&2
+    exit 1
+  fi
+  if [[ -n "${STUB_REVENIUM_ENFORCEMENT_JSON:-}" ]]; then
+    echo "${STUB_REVENIUM_ENFORCEMENT_JSON}"
+  else
+    echo '{"rules":[]}'
+  fi
+  exit 0
+fi
+
+# guardrails budget-rules list → fixture JSON
+if [[ "$1 $2 $3" == "guardrails budget-rules list" ]]; then
+  if [[ -n "${STUB_REVENIUM_BUDGET_RULES_JSON:-}" ]]; then
+    echo "${STUB_REVENIUM_BUDGET_RULES_JSON}"
+  else
+    echo '[]'
+  fi
   exit 0
 fi
 
