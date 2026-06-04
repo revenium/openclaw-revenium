@@ -75,14 +75,14 @@ Plans:
   3. Tool-event metering does not double-count against existing `TOOL_CALL` completions (TOOLEV-03)
   4. Tool registry + tool-event work is fail-open and idempotency-gated against duplicate registrations/events (TOOLEV-04)
 
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 **Wave 1**
 
 - [x] 10-00-PLAN.md — Wave 0 test scaffolding: tests/test_report_tool_argv.sh (TOOLEV-01..04 argv assertions) + stub-revenium.sh tools/tool-event switches (RED gate)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 10-01-PLAN.md — Registry foundation: common.sh tool ledger constants, TOOLS_CLI_CAPABLE probe, normalize_tool_id/classify_tool_type, _register_tool create-once (TOOLEV-01/04)
+- [x] 10-01-PLAN.md — Registry foundation: common.sh tool ledger constants, TOOLS_CLI_CAPABLE probe, normalize_tool_id/classify_tool_type, _register_tool create-once (TOOLEV-01/04)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -103,4 +103,4 @@ Plans:
 | 7. Root-Session Job Rollup | v1.1 | 2/2 | Complete | 2026-06-03 |
 | 8. Halt → CANCELLED Outcome | v1.1 | 2/2 | Complete | 2026-06-03 |
 | 9. Guardrail Event Metering | v1.2 | 3/3 | Complete    | 2026-06-04 |
-| 10. Tool Registry & Tool-Event Metering | v1.2 | 1/3 | In Progress|  |
+| 10. Tool Registry & Tool-Event Metering | v1.2 | 2/3 | In Progress|  |
