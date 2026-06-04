@@ -213,15 +213,16 @@ PY
 
 # ---------------------------------------------------------------------------
 # normalize_tool_id — convert raw session tool name to stable URL-safe --tool-id.
-# Rules: __ → -- (MCP separator); _ → -; lowercase via python3 (Bash 3.2 safe).
+# Rules: __ → -- (MCP separator); _ → -; lowercase via tr (Bash 3.2 safe, no python dep).
 # Examples: web_fetch→web-fetch; mcp__ctx7__search→mcp--ctx7--search
+# tr is used (not python3) so the tool-id — and thus the registry/event ledger
+# keys — stay stable regardless of whether python3 is on the cron PATH (WR-05).
 # ---------------------------------------------------------------------------
 normalize_tool_id() {
   local raw="$1"
   local normalized="${raw//__/--}"
   normalized="${normalized//_/-}"
-  TOOL_NAME="${normalized}" python3 -c "import os; print(os.environ['TOOL_NAME'].lower())" 2>/dev/null \
-    || printf '%s' "${normalized}"
+  printf '%s' "${normalized}" | tr '[:upper:]' '[:lower:]'
 }
 
 # ---------------------------------------------------------------------------
@@ -250,8 +251,8 @@ _register_tool() {
   local tool_id="$2"
   local tool_type="$3"
 
-  if grep -qF "TOOL:${tool_id}" "${TOOL_REGISTRY_LEDGER_FILE}" 2>/dev/null; then
-    return 0  # already registered — idempotent skip
+  if grep -q "^TOOL:${tool_id}:" "${TOOL_REGISTRY_LEDGER_FILE}" 2>/dev/null; then
+    return 0  # already registered — idempotent skip (anchored: avoid prefix false-match, e.g. read vs read-file)
   fi
 
   local reg_cmd=( revenium tools create --name "${tool_name}" --tool-id "${tool_id}" \
@@ -299,8 +300,8 @@ _meter_tool_event() {
   local root_sid="$7"
 
   local ledger_key="TOOLEV:${toolcall_id}"
-  if grep -qF "${ledger_key}" "${TOOL_EVENTS_LEDGER_FILE}" 2>/dev/null; then
-    return 0  # already metered — idempotent skip
+  if grep -q "^${ledger_key}$" "${TOOL_EVENTS_LEDGER_FILE}" 2>/dev/null; then
+    return 0  # already metered — idempotent skip (anchored: avoid prefix false-match on toolCall ids)
   fi
 
   local ev_cmd=( revenium meter tool-event

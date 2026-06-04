@@ -318,6 +318,42 @@ fi
 rm -f "${ARGV_FILE_I1}" "${ARGV_FILE_I2}" "${ARGV_FILE_I_MERGED}"
 
 # ===========================================================================
+# GROUP X: Prefix-collision regression (TOOLEV-01/04 dedup must be anchored)
+# Seed each ledger with an entry whose key SUPERSTRINGS the real id. An
+# unanchored `grep -F "TOOL:read"` false-matches "TOOL:read-file:..." and an
+# unanchored `grep -F "TOOLEV:toolu_test001"` false-matches
+# "TOOLEV:toolu_test0019" — silently skipping registration / under-metering.
+# The fixture tool is `read` (id=read, toolCall id=toolu_test001), so seeding
+# these superstrings MUST NOT suppress the real calls when dedup is anchored.
+# ===========================================================================
+TMP_HOME_X=$(make_openclaw_home)
+ARGV_FILE_X=$(mktemp "${TMPDIR:-/tmp}/test-rpt-tools-argv-x.XXXXXX")
+
+printf '%s\n' "${FIXTURE_JSONL}" > "${TMP_HOME_X}/agents/main/sessions/${SID_T1}.jsonl"
+# Pre-seed superstring ledger entries (prefix-collision bait)
+printf 'TOOL:read-file:123.000\n'       > "${TMP_HOME_X}/revenium-tools.ledger"
+printf 'TOOLEV:toolu_test0019\n'        > "${TMP_HOME_X}/revenium-tool-events.ledger"
+
+run_report "${TMP_HOME_X}" "${ARGV_FILE_X}"
+
+# TOOLEV-01: `read` still registers despite ledger containing `read-file`.
+if argv_vals "--tool-id" "${ARGV_FILE_X}" | grep -q "^read$" \
+   && [[ "$(count_adjacent "tools" "create" "${ARGV_FILE_X}")" -eq 1 ]]; then
+  pass "TOOLEV-01 prefix-safe: 'read' registers even when ledger holds 'read-file' (anchored dedup)"
+else
+  fail "TOOLEV-01 prefix-safe: 'read' was suppressed by 'read-file' ledger entry (unanchored grep regression)"
+fi
+
+# TOOLEV-04: toolu_test001 event still emits despite ledger holding toolu_test0019.
+if [[ "$(count_grep "^--duration-ms$" "${ARGV_FILE_X}")" -eq 1 ]]; then
+  pass "TOOLEV-04 prefix-safe: 'toolu_test001' event emits even when ledger holds 'toolu_test0019' (anchored dedup)"
+else
+  fail "TOOLEV-04 prefix-safe: 'toolu_test001' event suppressed by 'toolu_test0019' ledger entry (unanchored grep regression)"
+fi
+
+rm -f "${ARGV_FILE_X}"
+
+# ===========================================================================
 # GROUP P: Fail-open probe (TOOLEV-04)
 # STUB_REVENIUM_NO_TOOLS=1 forces the tools probe to fail → TOOLS_CLI_CAPABLE=false.
 # All tool work must be skipped; meter completion must still appear.
