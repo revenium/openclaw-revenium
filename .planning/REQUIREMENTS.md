@@ -10,11 +10,11 @@
 
 ### Guardrail Event Metering (GRDEV) — Phase 9
 
-- [ ] **GRDEV-01**: A guardrail **halt** transition emits exactly one Revenium GUARDRAIL transaction (`meter completion --operation-type GUARDRAIL --task-type budget_guardrail_halt`, zero-token, `--stop-reason COST_LIMIT`), deduped via a ledger so repeated cron ticks during the same halt never re-emit
-- [ ] **GRDEV-02**: A guardrail **warn** transition (a rule entering the warn/blocked-in-non-autonomous state) emits exactly one GUARDRAIL transaction (`--task-type budget_guardrail_warn`), transition-gated so it fires once per warn onset — not every tick while warned
-- [ ] **GRDEV-03**: A **shadow-mode** would-have-halted transition emits exactly one GUARDRAIL transaction (`--task-type budget_guardrail_shadow`), once per shadow breach
-- [ ] **GRDEV-04**: Each guardrail transaction is attributed to the agent (root session, `--agent openclaw-<root_session_id>`) and carries the open `--agentic-job-id` when a job is in progress
-- [ ] **GRDEV-05**: Guardrail-event metering is fully **fail-open** — any metering error never blocks guardrail enforcement (status write, halt/warn/shadow notification) or the cron tick
+- [x] **GRDEV-01**: A guardrail **halt** transition emits exactly one Revenium GUARDRAIL transaction (`meter completion --operation-type GUARDRAIL --task-type budget_guardrail_halt`, zero-token, `--stop-reason COST_LIMIT`), deduped via a ledger so repeated cron ticks during the same halt never re-emit
+- [x] **GRDEV-02**: A guardrail **warn** transition (a rule entering the warn/blocked-in-non-autonomous state) emits exactly one GUARDRAIL transaction (`--task-type budget_guardrail_warn`), transition-gated so it fires once per warn onset — not every tick while warned
+- [x] **GRDEV-03**: A **shadow-mode** would-have-halted transition emits exactly one GUARDRAIL transaction (`--task-type budget_guardrail_shadow`), once per shadow breach
+- [x] **GRDEV-04**: Each guardrail transaction is attributed to the agent (root session, `--agent openclaw-<root_session_id>`) and carries the open `--agentic-job-id` when a job is in progress
+- [x] **GRDEV-05**: Guardrail-event metering is fully **fail-open** — any metering error never blocks guardrail enforcement (status write, halt/warn/shadow notification) or the cron tick
 - [ ] **GRDEV-06**: The dead/buggy operation-type `GUARDRAIL` heuristic is **removed** from `report.sh` (it greps tool-call args for the wrong filename and would tag every turn) so normal completions are only ever `CHAT` or `TOOL_CALL`
 
 ### Tool Registry & Tool-Event Metering (TOOLEV) — Phase 10
