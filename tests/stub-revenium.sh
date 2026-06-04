@@ -63,6 +63,21 @@
 #     When set, returned as the body of `guardrails budget-rules list`.
 #     Default when unset: '[]'.
 #
+# Phase 10 tool-registry/tool-event additions:
+#
+#   STUB_REVENIUM_NO_TOOLS=1
+#     When set, `tools --help` exits 1, forcing TOOLS_CLI_CAPABLE=false in
+#     report.sh. All meter tool-event and tools create calls are unaffected in
+#     terms of routing — they never reach their branches when the probe fails.
+#     Use for fail-open tests. `meter completion` and `config show` are
+#     UNAFFECTED.
+#
+#   STUB_REVENIUM_TOOLS_FAIL=1
+#     When set, `tools create` exits 1 with a NON-409 error (HTTP 500 style).
+#     Exercises the fail-open path where tool registration fails but tool-event
+#     emission continues (the caller returns 0 on all paths). `meter tool-event`
+#     and `meter completion` are UNAFFECTED.
+#
 # SECURITY (T-04-09 / V5): this stub only string-COMPAREs positional args and
 # captures them with `printf '%s\n'`. It never `eval`s or string-interpolates
 # captured argv into a command.
@@ -143,6 +158,23 @@ if [[ "$1 $2 $3" == "meter completion --help" ]]; then
   exit 0
 fi
 
+# tools --help → exit 0 unless STUB_REVENIUM_NO_TOOLS forces probe failure
+if [[ "$1 $2" == "tools --help" ]]; then
+  if [[ -n "${STUB_REVENIUM_NO_TOOLS:-}" ]]; then
+    exit 1
+  fi
+  echo "usage: revenium tools <subcommand>"
+  exit 0
+fi
+
+# meter tool-event --help → print a line with --tool-id so the dual probe
+# sets TOOLS_CLI_CAPABLE=true. ONLY for this --help invocation, not for real
+# meter tool-event posts (those fall through to the default exit 0).
+if [[ "$1 $2 $3" == "meter tool-event --help" ]]; then
+  echo "  --tool-id string    ID of the tool"
+  exit 0
+fi
+
 # ---------------------------------------------------------------------------
 # 3. jobs create / jobs outcome — optional 409 or non-409 failure
 # ---------------------------------------------------------------------------
@@ -171,7 +203,18 @@ if [[ "$1 $2" == "jobs create" || "$1 $2" == "jobs outcome" ]]; then
   fi
 fi
 
+# tools create — optional NON-409 failure (STUB_REVENIUM_TOOLS_FAIL seam)
+# This exercises the fail-open path where registration fails but tool-event
+# emission continues. Does NOT emit a 409 — 409 backstop is handled by the
+# existing STUB_REVENIUM_409_FOR mechanism.
+if [[ "$1 $2" == "tools create" ]]; then
+  if [[ -n "${STUB_REVENIUM_TOOLS_FAIL:-}" ]]; then
+    echo "Error: 500 tools service unavailable" >&2
+    exit 1
+  fi
+fi
+
 # ---------------------------------------------------------------------------
-# 4. Default — exit 0 (meter completion posts, etc. succeed silently)
+# 4. Default — exit 0 (meter completion posts, meter tool-event posts, etc.)
 # ---------------------------------------------------------------------------
 exit 0
