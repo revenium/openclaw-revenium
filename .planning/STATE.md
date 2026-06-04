@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: Agentic Job Tracking
-status: Awaiting next milestone
-last_updated: "2026-06-04T01:37:09.953Z"
-last_activity: 2026-06-04 — Milestone v1.1 completed and archived
+milestone: v1.2
+milestone_name: Metering Completeness
+status: planning
+last_updated: "2026-06-04T01:41:26.211Z"
+last_activity: 2026-06-04
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 10
-  completed_plans: 10
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -24,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-03)
 
 ## Current Position
 
-Phase: Milestone v1.1 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-04 — Milestone v1.1 completed and archived
+Status: Defining requirements
+Last activity: 2026-06-04 — Milestone v1.2 started
 
 ## Performance Metrics
 

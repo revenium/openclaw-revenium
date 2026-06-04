@@ -1,53 +1,45 @@
 # Requirements: Revenium OpenClaw Skill
 
-**Milestone:** v1.1 Agentic Job Tracking
-**Defined:** 2026-06-03
-**Core Value:** Agents never silently blow through token budgets — and every completion is metered and attributed (now by root session, task type, **and agentic job**) so spend and success are observable in Revenium.
+**Milestone:** v1.2 Metering Completeness
+**Defined:** 2026-06-04
+**Core Value:** Agents never silently blow through token budgets — and every cost-incurring activity (agent completions, **guardrail enforcement events**, and **tool usage**) is metered and attributed so spend is fully observable in Revenium, with no blind spots.
 
-> Reference implementation: the `hermes-revenium` skill. v1.1 ports its agentic-job model, **adapted** to OpenClaw's agent-written-marker architecture (Hermes infers jobs via an LLM `on_session_end` classifier plugin — deliberately not adopted here, per v1.0's unconfirmed-hooks decision).
+> Origin: gaps found while debugging v1.1 in production on the test host. Revenium renders a completion's `operationType` as the transaction "type" column (CHAT→Chat, TOOL_CALL→Tool Call, GUARDRAIL→Guardrail) — confirmed with stakeholder.
 
-## v1.1 Requirements
+## v1.2 Requirements
 
-### Job Declaration (JOBDEC)
+### Guardrail Event Metering (GRDEV) — Phase 9
 
-- [x] **JOBDEC-01**: A `job-taxonomy.json` ships with 11 job-type labels (`feature_development`, `bug_fix`, `code_review`, `refactoring`, `research`, `debugging`, `testing`, `documentation`, `devops`, `planning`, `interrupted`), validated against the same snake_case regex as `task-taxonomy.json`, and is installed to the skill runtime location alongside it
-- [x] **JOBDEC-02**: SKILL.md includes a `JOB DECLARATION` directive instructing the agent to append a `kind:"job"` marker when a unit of work concludes (mirrors the existing TASK CLASSIFICATION directive; no native-hook dependency)
-- [x] **JOBDEC-03**: The marker writer accepts and validates job markers — fields `kind`, `ts`, `sid`, `agentic_job_id`, `job_name`, `job_type`, `status` (SUCCESS/FAILED/CANCELLED) — rejecting unknown `job_type` and malformed records, with the existing flock-protected atomic append
-- [x] **JOBDEC-04**: The agent generates a stable, unique `agentic_job_id` (business label + short entropy suffix) and the writer sanitizes it (`:`, `|`, newline → `_`) before any value reaches a CLI argument
+- [ ] **GRDEV-01**: A guardrail **halt** transition emits exactly one Revenium GUARDRAIL transaction (`meter completion --operation-type GUARDRAIL --task-type budget_guardrail_halt`, zero-token, `--stop-reason COST_LIMIT`), deduped via a ledger so repeated cron ticks during the same halt never re-emit
+- [ ] **GRDEV-02**: A guardrail **warn** transition (a rule entering the warn/blocked-in-non-autonomous state) emits exactly one GUARDRAIL transaction (`--task-type budget_guardrail_warn`), transition-gated so it fires once per warn onset — not every tick while warned
+- [ ] **GRDEV-03**: A **shadow-mode** would-have-halted transition emits exactly one GUARDRAIL transaction (`--task-type budget_guardrail_shadow`), once per shadow breach
+- [ ] **GRDEV-04**: Each guardrail transaction is attributed to the agent (root session, `--agent openclaw-<root_session_id>`) and carries the open `--agentic-job-id` when a job is in progress
+- [ ] **GRDEV-05**: Guardrail-event metering is fully **fail-open** — any metering error never blocks guardrail enforcement (status write, halt/warn/shadow notification) or the cron tick
+- [ ] **GRDEV-06**: The dead/buggy operation-type `GUARDRAIL` heuristic is **removed** from `report.sh` (it greps tool-call args for the wrong filename and would tag every turn) so normal completions are only ever `CHAT` or `TOOL_CALL`
 
-### Job Lifecycle (JLIFE)
+### Tool Registry & Tool-Event Metering (TOOLEV) — Phase 10
 
-- [x] **JLIFE-01**: `report.sh` opens each declared job via `revenium jobs create --agentic-job-id --name --type --environment` exactly once, ledger-gated and idempotent across cron ticks
-- [x] **JLIFE-02**: Every metered completion belonging to a job is stamped with `--agentic-job-id`, `--agentic-job-name`, and `--agentic-job-type` on `revenium meter completion`
-- [x] **JLIFE-03**: `report.sh` reports a terminal outcome via `revenium jobs outcome <id> --result SUCCESS|FAILED|CANCELLED` once per job (ledger-gated), reading the result from the job marker's `status`
-- [x] **JLIFE-04**: Job tracking fails open — any `jobs` CLI error or absent subcommand is caught and logged without blocking task-type metering or guardrail checks
-- [x] **JLIFE-05**: A jobs ledger persists created/closed job IDs so re-runs never duplicate `create` or `outcome` calls
+> Provisional — requires its own `/gsd-discuss-phase 10` / spec before planning. `meter tool-event` was explicitly out-of-scope in v1.1.
 
-### Root-Session Job Rollup (JROLL)
-
-- [x] **JROLL-01**: Completions from a subagent session ship the ROOT session's `agentic_job_id` (override), so one job spans the whole agent tree (extends v1.0 root-session resolution)
-- [x] **JROLL-02**: When the root job ID cannot yet be resolved (marker race), the completion omits `--agentic-job-id` and is retried on the next cron tick rather than shipping a wrong or sub-session ID
-- [x] **JROLL-03**: Top-level (root) sessions ship their own declared job; a subagent's internally-declared job markers are not shipped as separate jobs
-
-### Halt → Outcome (JHALT)
-
-- [x] **JHALT-01**: When a guardrail halt interrupts an in-progress job, that job is closed with outcome `CANCELLED`, wired into the existing halt flow
-- [x] **JHALT-02**: An interrupted job is recorded with `job_type:"interrupted"` and a synthetic `agentic_job_id` (e.g. `guardrail-halt-<hex>`) so halted work still produces a terminal job record
+- [ ] **TOOLEV-01**: The skill registers tools in Revenium via `revenium tools create` so agent tools appear in the Revenium tool registry
+- [ ] **TOOLEV-02**: Tool invocations are metered via `revenium meter tool-event` so per-tool usage is observable in Revenium
+- [ ] **TOOLEV-03**: Tool-event metering does **not** double-count against the existing `meter completion --operation-type TOOL_CALL` records
+- [ ] **TOOLEV-04**: Tool registry + tool-event work is fail-open and idempotency/ledger-gated so re-runs never duplicate registrations or events
 
 ## Future Requirements (deferred)
 
-- **JCLASS-01**: LLM `on_session_end` classifier plugin that infers jobs automatically (Hermes-style), as primary inference with the agent-written marker as backstop — gated on confirming OpenClaw session-end hook support
-- **JGUARD-01**: Per-job-type budget rules in `setup-guardrails.sh --interactive` (grouped/scoped by job type), analogous to the existing per-task-type picker
-- **JOUT-01**: Business outcome reporting beyond execution result — `--outcome-type CONVERTED`, `--outcome-value`, ROI/conversion-funnel metrics
+- **GRDEV-F1**: Meter per-tick guardrail API-poll overhead (the `enforcement-rules get` / `budget-rules list` / `enforcement-events list` calls) as aggregated enforcement cost — deferred for volume/noise reasons
+- **JCLASS-01**: LLM `on_session_end` classifier plugin for automatic job/task inference — gated on confirming OpenClaw session-end hook support (carried from v1.1)
+- **JGUARD-01**: Per-job-type budget rules in `setup-guardrails.sh --interactive` (carried from v1.1)
+- **JOUT-01**: Business-outcome reporting (`--outcome-type CONVERTED`, ROI/conversion metrics) (carried from v1.1)
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Classifier-plugin job inference (v1.1) | OpenClaw `on_session_end` hook events unconfirmed; agent-written markers used instead (v1.0 architectural decision) — deferred, not abandoned |
-| Per-job-type budget rules (v1.1) | Job tracking is observability-only this milestone; enforcement stays on existing `AGENT:STARTS_WITH` rules with server-side job rollup |
-| `meter tool-event` reporting | Out of scope since v1.0; unchanged |
-| Native `pre_llm_call`/`pre_tool_call` hooks | Event support unconfirmed in OpenClaw; agent-driven markers remain the mechanism |
+| Per-tick API-poll metering (one transaction per cron poll) | ~1,440 transactions/day — noise; v1.2 meters discrete enforcement *events*, not every poll |
+| Per-job-type budget rules/guardrails | Tracking stays observability-only; enforcement stays on `AGENT:STARTS_WITH` rules |
+| Native `pre_llm_call`/`pre_tool_call`/`on_session_end` hooks | Event support unconfirmed in OpenClaw; agent-driven markers + cron pipeline remain the mechanism |
 
 ## Traceability
 
@@ -55,25 +47,21 @@ Which phases cover which requirements. Filled during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| JOBDEC-01 | Phase 5 | Complete |
-| JOBDEC-02 | Phase 5 | Complete |
-| JOBDEC-03 | Phase 5 | Complete |
-| JOBDEC-04 | Phase 5 | Complete |
-| JLIFE-01 | Phase 6 | Complete |
-| JLIFE-02 | Phase 6 | Complete |
-| JLIFE-03 | Phase 6 | Complete |
-| JLIFE-04 | Phase 6 | Complete |
-| JLIFE-05 | Phase 6 | Complete |
-| JROLL-01 | Phase 7 | Complete |
-| JROLL-02 | Phase 7 | Complete |
-| JROLL-03 | Phase 7 | Complete |
-| JHALT-01 | Phase 8 | Complete |
-| JHALT-02 | Phase 8 | Complete |
+| GRDEV-01 | Phase 9 | Planned |
+| GRDEV-02 | Phase 9 | Planned |
+| GRDEV-03 | Phase 9 | Planned |
+| GRDEV-04 | Phase 9 | Planned |
+| GRDEV-05 | Phase 9 | Planned |
+| GRDEV-06 | Phase 9 | Planned |
+| TOOLEV-01 | Phase 10 | Planned |
+| TOOLEV-02 | Phase 10 | Planned |
+| TOOLEV-03 | Phase 10 | Planned |
+| TOOLEV-04 | Phase 10 | Planned |
 
 **Coverage:**
-- v1.1 requirements: 14 total
-- Mapped to phases: 14 (Phase 5: 4, Phase 6: 5, Phase 7: 3, Phase 8: 2)
+- v1.2 requirements: 10 total
+- Mapped to phases: 10 (Phase 9: 6, Phase 10: 4)
 - Unmapped: 0 ✓
 
 ---
-*Requirements defined: 2026-06-03 for milestone v1.1*
+*Requirements defined: 2026-06-04 for milestone v1.2*

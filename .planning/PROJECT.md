@@ -8,21 +8,18 @@ A global OpenClaw skill that uses the `revenium` CLI to **enforce token-budget g
 
 Agents never silently blow through token budgets — every turn is guardrail-checked and the user retains control over continuing past a threshold — **and** every completion is metered and attributed (by root session + task type) so spend is observable in Revenium.
 
-## Current Milestone: v1.1 Agentic Job Tracking
+## Current Milestone: v1.2 Metering Completeness
 
-**Goal:** Group an OpenClaw agent's work into Revenium *agentic jobs* — every completion attributed to a job, jobs opened and closed with a terminal outcome — so spend and success are observable at the job level, not just per session/task-type.
+**Goal:** Close the metering-visibility gaps found while debugging v1.1 in production — make guardrail enforcement and tool usage observable as first-class Revenium transactions, not just Chat/Tool Call completions.
 
 **Target features:**
-- Job declaration via agent-written `kind:"job"` markers (new SKILL.md directive; mirrors the v1.0 task-type pattern, no native-hook dependency)
-- Full job lifecycle: `jobs create` → `meter completion --agentic-job-*` → `jobs outcome` (SUCCESS / FAILED / CANCELLED)
-- `job-taxonomy.json` — 11 coarse-grained labels ported from the Hermes skill
-- Root-job rollup — subagent completions ship the root session's `agentic_job_id` (extends v1.0 root-session resolution)
-- Halt → CANCELLED — a guardrail halt mid-job closes that job with outcome CANCELLED (`job_type:"interrupted"`)
-- Idempotent job ledger so jobs are created/closed once across cron ticks
+- Guardrail-event metering — emit a `GUARDRAIL` transaction (`meter completion --operation-type GUARDRAIL --task-type budget_guardrail_<halt|warn|shadow>`) once per halt, warn, and shadow would-have-halted transition, deduped via a ledger and fully fail-open, from `guardrail-check.sh` (Phase 9)
+- Remove the dead/buggy operation-type heuristic in `report.sh` (greps tool-call args for the wrong filename and would tag every turn anyway) so completions stay correctly CHAT/TOOL_CALL (Phase 9)
+- Tool registry + tool-event metering — register tools via `revenium tools create` and/or meter invocations via `meter tool-event` so tool usage is observable, without double-counting the existing TOOL_CALL completions (Phase 10 — needs its own discuss/spec)
 
-**Reference:** `hermes-revenium` skill is the design source; ported and adapted to OpenClaw's agent-marker architecture (Hermes uses an LLM `on_session_end` classifier plugin — deliberately not adopted here per v1.0's unconfirmed-hooks decision).
+**Context:** Revenium renders a completion's `operationType` as the transaction "type" column (CHAT→Chat, TOOL_CALL→Tool Call, GUARDRAIL→Guardrail) — confirmed with stakeholder. These gaps surfaced during v1.1 production debugging on the test host.
 
-**Explicitly deferred this milestone:** per-job-type budget rules/guardrails (rely on existing `AGENT:STARTS_WITH` enforcement + server-side job rollup); classifier-plugin job inference (future milestone, gated on confirming OpenClaw session-end hooks).
+**Explicitly deferred this milestone:** per-tick API-poll overhead metering (high volume/noise); per-job-type budget guardrails (still observability-only).
 
 ## Requirements
 
@@ -42,14 +39,17 @@ Agents never silently blow through token budgets — every turn is guardrail-che
 
 ### Active
 
-v1.1 Agentic Job Tracking — requirements defined in `.planning/REQUIREMENTS.md`. All phases validated: 5 (job declaration), 6 (lifecycle wiring), 7 (root-session rollup), 8 (halt → CANCELLED outcome). Milestone implementation complete — ready for milestone close.
+v1.2 Metering Completeness — requirements defined in `.planning/REQUIREMENTS.md`. Phase 9 (guardrail-event metering as GUARDRAIL transactions), Phase 10 (tool registry + tool-event metering; needs discuss/spec).
+
+**v1.1 post-ship fix (validated live):** the agent-written-marker pipeline (task classification + job declaration) never fired in production because OpenClaw loads `SKILL.md` on-demand — the "every turn" directives were never in the agent's context. Fixed by injecting hardened completion-gate directives into `~/.openclaw/workspace/AGENTS.md` via `post-install.sh`; end-to-end verified (agent self-writes markers → cron → job created + closed SUCCESS in Revenium).
 
 ### Out of Scope
 
 - ~~**Agentic Job tracking**~~ — promoted into scope for **v1.1** (see Current Milestone)
 - Code-side classifier *plugin* + OpenClaw `pre_llm_call`/`pre_tool_call`/`on_session_end` hooks — agent-driven marker write is used instead (native hook events unconfirmed); job inference via classifier plugin deferred to a future milestone
-- **Per-job-type budget rules/guardrails** — v1.1 job tracking is observability-only; enforcement stays on existing `AGENT:STARTS_WITH` rules with server-side job rollup
-- Tool-event reporting (`meter tool-event`)
+- **Per-job-type budget rules/guardrails** — job tracking is observability-only; enforcement stays on existing `AGENT:STARTS_WITH` rules with server-side job rollup
+- ~~Tool-event reporting (`meter tool-event`)~~ — promoted into scope for **v1.2** (Phase 10)
+- Per-tick guardrail API-poll overhead metering — high volume/noise; v1.2 meters discrete enforcement *events*, not every poll
 - Mobile/desktop companion app — CLI/agent-level skill only
 - Multi-agent budget splitting — single shared budget per machine; rollup is per root session
 - Token counting/estimation — Revenium platform handles actual metering
@@ -88,6 +88,8 @@ v1.1 Agentic Job Tracking — requirements defined in `.planning/REQUIREMENTS.md
 | Defer Agentic Job tracking to a future milestone | Per-session `--agent` rollup sufficient for v1.0 | ✓ Promoted to v1.1 |
 | Agent-written `kind:"job"` markers (not classifier plugin) for v1.1 | Consistent with v1.0 task-type architecture; avoids unconfirmed OpenClaw session-end hook dependency | ✓ Foundation shipped (Phase 5) |
 | Dedicated `write-job-marker.sh` (D-06: new writer, not an extension of `write-marker.sh`) | Keep task-type writer untouched; job writer diverges on named flags + 7 mandatory fields | ✓ Good (Phase 5 — write-marker.sh byte-for-byte unchanged) |
+| Marker directives belong in `AGENTS.md`, not `SKILL.md` (v1.1 post-ship) | OpenClaw loads SKILL.md on-demand, so "classify/declare every turn" directives never reached the agent; AGENTS.md is read before every response. Soft wording was skipped too — only a hard *completion-gate* framing works | ✓ Good — agent reliably writes task/job markers (validated live); injected via post-install.sh |
+| Revenium renders completion `operationType` as the transaction "type" (CHAT/TOOL_CALL/GUARDRAIL) | Confirmed with stakeholder; basis for v1.2 guardrail-event metering | ✓ Drives v1.2 Phase 9 |
 
 ## Evolution
 
@@ -107,4 +109,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-03 — Phase 8 (Halt → CANCELLED Outcome) complete; v1.1 implementation complete, ready for milestone close*
+*Last updated: 2026-06-04 — v1.1 (Agentic Job Tracking) shipped & archived; v1.2 (Metering Completeness) opened with Phases 9–10*
