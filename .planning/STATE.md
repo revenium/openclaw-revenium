@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Metering Completeness
-status: verifying
-last_updated: "2026-06-04T02:47:57.885Z"
+status: ready_to_plan
+last_updated: 2026-06-04T03:01:01.293Z
 last_activity: 2026-06-04
 progress:
   total_phases: 2
@@ -11,6 +11,7 @@ progress:
   total_plans: 3
   completed_plans: 3
   percent: 50
+stopped_at: Phase 09 complete (3/3) — ready to discuss Phase 10
 ---
 
 # Project State
@@ -20,20 +21,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-03)
 
 **Core value:** Agents never silently blow through token budgets — every completion is guardrail-checked and metered, and the user retains control over continuing past a threshold. v1.1 adds: every completion is attributed to an agentic job, opened and closed with a terminal outcome.
-**Current focus:** Phase 09 — guardrail-event-metering
+**Current focus:** Phase 10 — tool registry & tool event metering
 
 ## Current Position
 
-Phase: 09 (guardrail-event-metering) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
+Phase: 10
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-06-04
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 16 (v1.0)
+- Total plans completed: 19 (v1.0)
 - Average duration: ~5 min
 - Total execution time: ~5 min
 
@@ -48,6 +49,7 @@ Last activity: 2026-06-04
 | 06 | 3 | - | - |
 | 07 | 2 | - | - |
 | 08 | 2 | - | - |
+| 09 | 3 | - | - |
 
 **Recent Trend:**
 
