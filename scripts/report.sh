@@ -283,6 +283,57 @@ _register_tool() {
 }
 
 # ---------------------------------------------------------------------------
+# _meter_tool_event — emit one revenium meter tool-event per toolCall.id (TOOLEV-02/04).
+# Idempotent: skip if TOOLEV:<toolcall_id> already in TOOL_EVENTS_LEDGER_FILE.
+# Fail-open: returns 0 on all paths; NEVER touches failed_count/reported_count.
+# --success defaults to false in CLI — always pass explicitly (RESEARCH Pitfall 2).
+# CRITICAL (TOOLEV-03): NEVER call meter completion or add --operation-type.
+# ---------------------------------------------------------------------------
+_meter_tool_event() {
+  local toolcall_id="$1"
+  local tool_id="$2"
+  local ts="$3"          # ISO timestamp (from parent assistant message)
+  local duration_ms="$4" # integer, may be 0
+  local is_error="$5"    # "true" | "false"
+  local error_msg="$6"   # may be empty
+  local root_sid="$7"
+
+  local ledger_key="TOOLEV:${toolcall_id}"
+  if grep -qF "${ledger_key}" "${TOOL_EVENTS_LEDGER_FILE}" 2>/dev/null; then
+    return 0  # already metered — idempotent skip
+  fi
+
+  local ev_cmd=( revenium meter tool-event
+    --tool-id     "${tool_id}"
+    --duration-ms "${duration_ms}"
+    --timestamp   "${ts}"
+    --agent       "${REVENIUM_AGENT_PREFIX}${root_sid}"
+    --quiet
+  )
+  # --success defaults to false in CLI — always explicit (RESEARCH Pitfall 2)
+  if [[ "${is_error}" == "true" ]]; then
+    ev_cmd+=(--success=false)
+    [[ -n "${error_msg}" ]] && ev_cmd+=(--error-message "${error_msg}")
+  else
+    ev_cmd+=(--success)
+  fi
+  [[ -n "${ORG_NAME:-}" ]] && ev_cmd+=(--organization-name "${ORG_NAME}")
+
+  local ev_out ev_exit
+  ev_out=$("${ev_cmd[@]}" 2>&1) && ev_exit=0 || ev_exit=$?
+
+  if [[ "${ev_exit}" -eq 0 ]]; then
+    printf '%s\n' "${ledger_key}" >> "${TOOL_EVENTS_LEDGER_FILE}"
+    local tool_id_log="${tool_id:0:64}"
+    info "Tool event metered: tool_id=${tool_id_log} duration=${duration_ms}ms"
+  else
+    local tool_id_log="${tool_id:0:64}"
+    warn "Tool event failed: id=${tool_id_log} toolcall=${toolcall_id} exit=${ev_exit} — fail-open"
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Post a single completion event to Revenium via CLI
 # ---------------------------------------------------------------------------
 post_to_revenium() {
