@@ -111,12 +111,51 @@ fi
 info "SKILL.md present"
 
 # Ensure scripts are executable
-for script in cron.sh report.sh budget-check.sh install-cron.sh uninstall-cron.sh clear-halt.sh post-install.sh; do
+for script in cron.sh report.sh common.sh setup-guardrails.sh guardrail-check.sh install-cron.sh uninstall-cron.sh clear-halt.sh post-install.sh write-marker.sh write-job-marker.sh get-root-session-id.py; do
   if [[ -f "${SKILL_DIR}/scripts/${script}" ]]; then
     chmod +x "${SKILL_DIR}/scripts/${script}"
   fi
 done
 info "Scripts marked executable"
+
+# Seed task-taxonomy.json into SKILL_DIR if absent.
+# The repo-root copy is the source of truth; post-install deploys it to the
+# install location so write-marker.sh and setup-guardrails.sh can read it.
+# Single path per Pitfall 6 — SKILL_DIR and STATE_DIR are the same in OpenClaw.
+TAXONOMY_SRC="${SKILL_DIR}/task-taxonomy.json"
+TAXONOMY_DST="${SKILL_DIR}/task-taxonomy.json"  # same path (self-contained install)
+if [[ ! -f "${TAXONOMY_DST}" ]]; then
+  if [[ -f "${TAXONOMY_SRC}" ]]; then
+    cp "${TAXONOMY_SRC}" "${TAXONOMY_DST}"
+    info "Seeded task-taxonomy.json at ${TAXONOMY_DST}"
+  else
+    warn "task-taxonomy.json not found at ${TAXONOMY_SRC} — write-marker.sh will fail until it is present"
+  fi
+else
+  info "task-taxonomy.json already present at ${TAXONOMY_DST}"
+fi
+
+# Seed job-taxonomy.json into SKILL_DIR if absent.
+# The repo-root copy is the source of truth; post-install deploys it to the
+# install location so write-job-marker.sh can read it (v1.1 / JOBDEC-01).
+JOB_TAXONOMY_SRC="${SKILL_DIR}/job-taxonomy.json"
+JOB_TAXONOMY_DST="${SKILL_DIR}/job-taxonomy.json"  # same path (self-contained install)
+if [[ ! -f "${JOB_TAXONOMY_DST}" ]]; then
+  if [[ -f "${JOB_TAXONOMY_SRC}" ]]; then
+    cp "${JOB_TAXONOMY_SRC}" "${JOB_TAXONOMY_DST}"
+    info "Seeded job-taxonomy.json at ${JOB_TAXONOMY_DST}"
+  else
+    warn "job-taxonomy.json not found at ${JOB_TAXONOMY_SRC} — write-job-marker.sh will fail until it is present"
+  fi
+else
+  info "job-taxonomy.json already present at ${JOB_TAXONOMY_DST}"
+fi
+
+# Create markers/ directory for per-session marker JSONL files.
+# Mode 0700: markers contain task-type + timestamp, accessible only to the owner (ASVS V4 / T-04-18).
+mkdir -p "${SKILL_DIR}/markers"
+chmod 700 "${SKILL_DIR}/markers"
+info "markers/ directory created at ${SKILL_DIR}/markers (mode 0700)"
 
 # ---------------------------------------------------------------------------
 # 3. Configure sandbox access
@@ -197,16 +236,28 @@ if [[ -n "${JQ_PATH}" ]]; then
   fi
 fi
 
-# Bind-mount revenium CLI config (API key, team/tenant/user IDs).
-# The OpenClaw sandbox validator flags any bind targeting a path under
-# ~/.config/ as a "credential path" by default. We set
-# dangerouslyAllowExternalBindSources: true in the Python block below to
-# opt into mounting this directory — without it, the gateway will reject
-# the bind on startup.
-REVENIUM_CONFIG_DIR="${HOME}/.config/revenium"
-mkdir -p "${REVENIUM_CONFIG_DIR}"
-BIND_ENTRIES+=("${REVENIUM_CONFIG_DIR}:${REVENIUM_CONFIG_DIR}:ro")
-info "Will bind-mount revenium config at ${REVENIUM_CONFIG_DIR} (requires dangerouslyAllowExternalBindSources)"
+# Revenium CLI credentials reach the sandbox as REVENIUM_* env vars (injected in
+# the Python block below), NOT via a bind mount. OpenClaw's sandbox HARD-blocks
+# any bind whose destination falls under ~/.config/ as a credential path — even
+# with dangerouslyAllowExternalBindSources — so mounting ~/.config/revenium
+# crashes the gateway on startup (observed on OpenClaw 2026.4.14). revenium
+# honors REVENIUM_* env vars over the config file, so we read the host config
+# here and export the values for the Python block to inject.
+REVENIUM_CONFIG_FILE="${HOME}/.config/revenium/config.yaml"
+REV_KEY=""; REV_API_URL=""; REV_TEAM=""; REV_TENANT=""; REV_OWNER=""
+if [[ -f "${REVENIUM_CONFIG_FILE}" ]]; then
+  REV_KEY=$(sed -n 's/^key:[[:space:]]*//p' "${REVENIUM_CONFIG_FILE}" | head -1)
+  REV_API_URL=$(sed -n 's/^api-url:[[:space:]]*//p' "${REVENIUM_CONFIG_FILE}" | head -1)
+  REV_TEAM=$(sed -n 's/^team-id:[[:space:]]*//p' "${REVENIUM_CONFIG_FILE}" | head -1)
+  REV_TENANT=$(sed -n 's/^tenant-id:[[:space:]]*//p' "${REVENIUM_CONFIG_FILE}" | head -1)
+  REV_OWNER=$(sed -n 's/^owner-id:[[:space:]]*//p' "${REVENIUM_CONFIG_FILE}" | head -1)
+fi
+export REV_KEY REV_API_URL REV_TEAM REV_TENANT REV_OWNER
+if [[ -z "${REV_KEY}" ]]; then
+  warn "Revenium API key not set yet at ${REVENIUM_CONFIG_FILE}."
+  warn "Set credentials on the host, then re-run post-install.sh to inject them into the sandbox:"
+  warn "  revenium config set key <KEY>   (also team-id, tenant-id, owner-id)"
+fi
 
 # Generate a CA certificate bundle for sandboxed environments.
 # Minimal Docker containers often lack /etc/ssl/certs/ca-certificates.crt,
@@ -317,18 +368,37 @@ ssl_cert_file = "${SSL_CERT_FILE}"
 if ssl_cert_file:
     docker["env"]["SSL_CERT_FILE"] = ssl_cert_file
 
-# Opt into permissive bind-source validation so the sandbox accepts the
-# ~/.config/revenium credentials mount. Without this flag, OpenClaw's
-# sandbox validator rejects any bind whose destination falls under
-# ~/.config/ as a "credential path".
+# OpenClaw's sandbox applies TWO independent checks to bind sources:
+#   1. Credential/system-path block (~/.config, docker socket): HARD-blocked and
+#      NOT overridable by any flag. We satisfy this by never mounting
+#      ~/.config/revenium (creds go in as REVENIUM_* env vars below).
+#   2. Allowed-roots check: bind sources must sit under ~/.openclaw/workspace
+#      unless this flag opts in. The skill legitimately mounts ~/.openclaw (rw,
+#      for skills/guardrail-status.json/logs) and the Homebrew bin/lib dirs (ro,
+#      for the revenium/jq CLIs) — all outside workspace but trusted, not
+#      credential paths. So this MUST stay true, or the gateway rejects those
+#      binds with "source is outside allowed roots" and the agent fails to start.
 docker["dangerouslyAllowExternalBindSources"] = True
 
-# Clear any stale REVENIUM_* env vars we may have injected on a previous
-# post-install run — we're back to using the bind mount as the source of
-# truth so credential rotations on the host propagate live.
-for k in ("REVENIUM_API_KEY", "REVENIUM_API_URL", "REVENIUM_TEAM_ID",
-          "REVENIUM_TENANT_ID", "REVENIUM_OWNER_ID"):
-    docker["env"].pop(k, None)
+# Inject Revenium credentials as env vars (revenium honors REVENIUM_* over the
+# config file). Values come from the host config.yaml, read in the bash block
+# above and passed through the environment. Empty values are popped so we never
+# write blank creds; the user re-runs post-install after setting credentials to
+# refresh them. NOTE: unlike the old live bind mount, env injection is a
+# snapshot — credential rotation on the host requires re-running post-install.
+import os as _os
+for _k, _src in (
+    ("REVENIUM_API_KEY", "REV_KEY"),
+    ("REVENIUM_API_URL", "REV_API_URL"),
+    ("REVENIUM_TEAM_ID", "REV_TEAM"),
+    ("REVENIUM_TENANT_ID", "REV_TENANT"),
+    ("REVENIUM_OWNER_ID", "REV_OWNER"),
+):
+    _v = _os.environ.get(_src, "")
+    if _v:
+        docker["env"][_k] = _v
+    else:
+        docker["env"].pop(_k, None)
 
 # Allow outbound network access so the revenium CLI can reach api.revenium.ai
 docker["network"] = "bridge"
@@ -382,35 +452,21 @@ PYEOF
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Seed initial budget-status.json
+# 5. Seed initial guardrail-status.json
 # ---------------------------------------------------------------------------
-step "Seeding initial budget-status.json"
+step "Seeding initial guardrail-status.json"
 
-BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
+GUARDRAIL_STATUS_FILE="${SKILL_DIR}/guardrail-status.json"
 
-# Prefer seeding via budget-check.sh so the file has live values immediately
-# (e.g. on reinstall where config.json already carries an alertId). If the
-# script fails — typically because the /revenium flow hasn't produced an
-# alertId yet — fall back to a placeholder so budget-status.json always
-# exists for the AGENTS.md budget guard on the very first response.
-if bash "${SKILL_DIR}/scripts/budget-check.sh" >/dev/null 2>&1; then
-  info "Seeded budget-status.json via budget-check.sh (live values)"
-elif [[ ! -f "${BUDGET_STATUS_FILE}" ]]; then
-  cat > "${BUDGET_STATUS_FILE}" <<BSJSON
-{
-  "currentValue": 0,
-  "threshold": 0,
-  "percentUsed": 0,
-  "remaining": 0,
-  "exceeded": false,
-  "halted": false,
-  "lastChecked": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "note": "Placeholder — will be populated once /revenium configures an alertId and the next cron cycle (or budget-check.sh) runs"
-}
-BSJSON
-  info "Created placeholder budget-status.json (budget-check.sh couldn't seed — likely no alertId yet)"
+if [[ ! -f "${GUARDRAIL_STATUS_FILE}" ]]; then
+  python3 -c "
+import json, sys
+data = {'halted': False, 'lastChecked': None, 'rules': []}
+sys.stdout.write(json.dumps(data, indent=2) + '\n')
+" > "${GUARDRAIL_STATUS_FILE}"
+  info "Seeded guardrail-status.json placeholder"
 else
-  info "budget-status.json already exists — leaving untouched"
+  info "guardrail-status.json already exists — leaving untouched"
 fi
 
 # ---------------------------------------------------------------------------
@@ -445,27 +501,26 @@ fi
 # ---------------------------------------------------------------------------
 # 7. Inject budget check into AGENTS.md
 # ---------------------------------------------------------------------------
-step "Injecting budget check into AGENTS.md"
+step "Injecting guardrail check into AGENTS.md"
 
 AGENTS_MD="${OPENCLAW_HOME}/workspace/AGENTS.md"
-BUDGET_MARKER="## Budget Check (Mandatory)"
+GUARDRAIL_MARKER="## Guardrail Check (Mandatory)"
 
 if [[ ! -f "${AGENTS_MD}" ]]; then
-  warn "AGENTS.md not found at ${AGENTS_MD} — skipping budget injection"
-elif grep -q "${BUDGET_MARKER}" "${AGENTS_MD}" 2>/dev/null; then
-  info "Budget check already present in AGENTS.md"
+  warn "AGENTS.md not found at ${AGENTS_MD} — skipping guardrail injection"
+elif grep -q "${GUARDRAIL_MARKER}" "${AGENTS_MD}" 2>/dev/null; then
+  info "Guardrail check already present in AGENTS.md"
 else
   python3 <<PYEOF
-import re
-
 section = """
-## Budget Check (Mandatory)
+## Guardrail Check (Mandatory)
 
-BEFORE EVERY RESPONSE, NO EXCEPTIONS — read \`~/.openclaw/skills/revenium/budget-status.json\`.
+BEFORE EVERY RESPONSE, NO EXCEPTIONS — read \`~/.openclaw/skills/revenium/guardrail-status.json\`.
 
-- **File missing:** Warn user the metering cron may not be installed, then proceed.
-- **\`exceeded\` is \`false\`:** Proceed silently. Do NOT mention the budget.
-- **\`exceeded\` is \`true\`:** Follow the halt/warn logic in \`~/.openclaw/skills/revenium/SKILL.md\` (interactive vs autonomous mode).
+- **File missing:** Proceed with caution (metering cron may not be installed yet).
+- **\`halted\` is \`false\` AND \`warned\` is \`false\`:** Proceed silently. Do NOT mention guardrails.
+- **\`halted\` is \`false\` AND \`warned\` is \`true\`:** Execute the warn-and-ask flow from the "Guardrail Check Procedure" section of \`~/.openclaw/skills/revenium/SKILL.md\` — read \`warnedRules\` from guardrail-status.json, surface one "Budget warning — rule '[name]' ([metricType], [windowType]) at [currentValue] of [hardLimit] hard-limit." line per rule, then ask the user "Do you want me to proceed anyway, or stop?" and WAIT for the answer. Do NOT make any tool calls until the user grants permission.
+- **\`halted\` is \`true\`:** YOUR ENTIRE RESPONSE MUST BE EXACTLY the HALT CHECK message from \`~/.openclaw/skills/revenium/SKILL.md\` — substitute values from the \`haltedRule\` block in guardrail-status.json. Do NOT continue with any other response.
 
 This applies to ALL operations — chat, tool calls, code, questions, everything. No task is exempt.
 """
@@ -494,7 +549,59 @@ if not injected:
 with open(path, "w") as f:
     f.write(content)
 PYEOF
-  info "Injected budget check into AGENTS.md"
+  info "Injected guardrail check into AGENTS.md"
+fi
+
+# ---------------------------------------------------------------------------
+# 7b. Inject metering directives (task classification + job declaration) into AGENTS.md
+# ---------------------------------------------------------------------------
+# These are MANDATORY COMPLETION GATES: OpenClaw loads SKILL.md on demand, so a
+# "classify/declare every turn" directive only fires reliably when it lives in
+# AGENTS.md (read before every response), like the guardrail check above. The
+# directive text is shipped in references/ and injected here so it survives
+# reinstall and applies on every install. Idempotent + updatable: any prior
+# metering block (sentinel-wrapped OR bare-header) is stripped before re-inject.
+step "Injecting metering directives into AGENTS.md"
+
+METERING_SRC="${SKILL_DIR}/references/agents-metering-directives.md"
+
+if [[ ! -f "${AGENTS_MD}" ]]; then
+  warn "AGENTS.md not found at ${AGENTS_MD} — skipping metering directive injection"
+elif [[ ! -f "${METERING_SRC}" ]]; then
+  warn "Metering directive source not found at ${METERING_SRC} — skipping"
+else
+  AGENTS_MD="${AGENTS_MD}" METERING_SRC="${METERING_SRC}" python3 <<'PYEOF'
+import os, re
+
+path = os.environ["AGENTS_MD"]
+block = open(os.environ["METERING_SRC"]).read().strip() + "\n"
+
+with open(path) as f:
+    content = f.read()
+
+# Strip any prior metering block — sentinel-wrapped form...
+content = re.sub(
+    r'\n*<!-- BEGIN revenium-metering-directives -->.*?<!-- END revenium-metering-directives -->\n*',
+    '\n', content, flags=re.S)
+# ...and older bare-header form (hand-edited installs without sentinels).
+parts = re.split(r'(?m)^(?=## )', content)
+parts = [p for p in parts if not p.startswith('## Revenium Metering ')]
+content = ''.join(parts)
+
+# Place it right after the guardrail block, else before ## Memory, else append.
+anchor = "This applies to ALL operations — chat, tool calls, code, questions, everything. No task is exempt."
+if anchor in content:
+    content = content.replace(anchor, anchor + "\n\n" + block, 1)
+elif "## Memory" in content:
+    content = content.replace("## Memory", block + "\n## Memory", 1)
+else:
+    content = content.rstrip() + "\n\n" + block
+
+with open(path, "w") as f:
+    f.write(content)
+print("metering directives synced")
+PYEOF
+  info "Injected/updated metering directives in AGENTS.md"
 fi
 
 # ---------------------------------------------------------------------------
@@ -560,10 +667,10 @@ else
   fail "SKILL.md not found after install"
 fi
 
-if [[ -f "${SKILL_DIR}/scripts/report.sh" ]]; then
-  info "Metering scripts present"
+if [[ -f "${SKILL_DIR}/scripts/guardrail-check.sh" ]]; then
+  info "Guardrail scripts present"
 else
-  warn "Metering scripts missing — cron metering will not work"
+  warn "Guardrail scripts missing — cron enforcement will not work"
 fi
 
 if grep -q "${OPENCLAW_HOME}" "${OPENCLAW_CONFIG}" 2>/dev/null; then
@@ -576,7 +683,12 @@ fi
 if command_exists openclaw; then
   echo ""
   echo "    Checking skill visibility..."
-  if openclaw skills list 2>/dev/null | grep -q "${SKILL_NAME}"; then
+  # Capture first, then grep: piping `openclaw skills list` straight into
+  # `grep -q` is unsafe under `set -o pipefail` — `grep -q` exits on first match
+  # and SIGPIPEs the still-writing producer (141), which pipefail then reports as
+  # the pipeline status, racing the gate to a spurious "not visible" result.
+  _skills_list="$(openclaw skills list 2>/dev/null || true)"
+  if grep -q "${SKILL_NAME}" <<<"${_skills_list}"; then
     info "Skill '${SKILL_NAME}' visible to OpenClaw"
   else
     warn "Skill not yet visible. You may need to restart the OpenClaw gateway."

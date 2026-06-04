@@ -1,0 +1,60 @@
+{
+  "labels": {
+    "research": {
+      "description": "Reading docs, exploring the codebase, or searching the web to learn before acting",
+      "examples": [
+        "find all usages of X",
+        "what does this API return"
+      ]
+    },
+    "analysis": {
+      "description": "Diagnosing a problem, profiling behavior, or characterizing a system",
+      "examples": [
+        "why is this test failing",
+        "trace the data flow for X"
+      ]
+    },
+    "generation": {
+      "description": "Writing new code, tests, configuration, or documentation from scratch",
+      "examples": [
+        "write a function that does X",
+        "add tests for module Y"
+      ]
+    },
+    "review": {
+      "description": "Reviewing existing work — docs, designs, or diffs — for correctness or fit",
+      "examples": [
+        "review this PR",
+        "does this doc make sense"
+      ]
+    },
+    "code_review": {
+      "description": "Reviewing code specifically for correctness, style, or architectural fit",
+      "examples": [
+        "review this function",
+        "check this diff for bugs"
+      ]
+    },
+    "refactor": {
+      "description": "Restructuring existing code without changing observable behavior",
+      "examples": [
+        "extract this into a helper",
+        "rename these variables"
+      ]
+    },
+    "planning": {
+      "description": "Producing a plan, roadmap, design doc, or task breakdown",
+      "examples": [
+        "break this into subtasks",
+        "design the schema for X"
+      ]
+    },
+    "debugging": {
+      "description": "Reproducing and fixing a defect or unexpected behavior",
+      "examples": [
+        "this test fails intermittently",
+        "fix this error"
+      ]
+    }
+  }
+}

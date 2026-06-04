@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Revenium Cron Runner
-# Called by crontab every 15 minutes. Sources revenium config before running.
+# Called by crontab every minute by default (interval set in install-cron.sh).
+# Sources revenium config before running.
 # =============================================================================
 
 set -euo pipefail
@@ -64,13 +65,50 @@ run_report() {
   fi
 }
 
+# Run the metering + guardrail-check pass under a mutual-exclusion lock so two
+# overlapping cron ticks can't race on the offsets/status files and double-meter.
+# This matters at short intervals: the cron can run as often as every minute,
+# while report.sh is allowed up to 120s, so a run may still be active when the
+# next tick fires. Prefer `flock` (util-linux; auto-releases on process death);
+# fall back to a portable atomic `mkdir` lock where flock is absent (e.g. macOS),
+# mirroring the timeout/gtimeout degradation above.
+# D-04: markers directory for per-session marker JSONL files.
+# Inlined rather than sourcing common.sh to keep cron.sh self-contained.
+# MARKERS_DIR lives under the skill state directory (OpenClaw collapsed model).
+MARKERS_DIR="${OPENCLAW_HOME}/skills/revenium/markers"
+
+# D-04: prune_markers — delete marker files older than ~7 days.
+# Fail-open: prune failure MUST NOT block the tick (T-04-17).
+# Uses find -mtime +7 (BSD/GNU portable, mirrors -mmin usage at line 88).
+# Runs AFTER report.sh + guardrail-check.sh so it cannot starve enforcement.
+prune_markers() {
+  find "${MARKERS_DIR}" -name '*.jsonl' -mtime +7 -delete 2>/dev/null
+}
+
 LOCK_FILE="${OPENCLAW_HOME:-${HOME}/.openclaw}/revenium-metering.lock"
-(
-  flock -n 9 || exit 0
-  # Budget check runs FIRST so the halt state in budget-status.json always
-  # refreshes — even if report.sh hangs or fails below. The API value it
-  # reads will be one cycle stale relative to the reporter, but a stale
-  # halt check is vastly better than a missing one.
-  bash "${SKILL_DIR}/scripts/budget-check.sh" || true
-  run_report "$@" || true
-) 9>"${LOCK_FILE}"
+if command -v flock &>/dev/null; then
+  (
+    flock -n 9 || exit 0
+    run_report "$@" || true
+    bash "${SKILL_DIR}/scripts/guardrail-check.sh" || true
+    prune_markers || true
+  ) 9>"${LOCK_FILE}"
+else
+  # No flock (e.g. macOS): atomic mkdir lock. `mkdir` fails if the dir exists,
+  # giving us flock -n semantics. A trap releases it on normal exit; reclaim a
+  # stale lock left by a killed run (>10 min old) so the cron can't wedge
+  # permanently. `find -mmin` is portable across macOS (BSD) and GNU find.
+  LOCK_DIR="${LOCK_FILE}.d"
+  if [[ -d "${LOCK_DIR}" ]] && [[ -n "$(find "${LOCK_DIR}" -prune -mmin +10 2>/dev/null)" ]]; then
+    rmdir "${LOCK_DIR}" 2>/dev/null || true
+  fi
+  if mkdir "${LOCK_DIR}" 2>/dev/null; then
+    trap 'rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT
+    run_report "$@" || true
+    bash "${SKILL_DIR}/scripts/guardrail-check.sh" || true
+    prune_markers || true
+  else
+    # Another run holds the lock — skip this tick (matches flock -n behavior).
+    exit 0
+  fi
+fi

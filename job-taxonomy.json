@@ -1,0 +1,81 @@
+{
+  "labels": {
+    "feature_development": {
+      "description": "Implementing a new capability, endpoint, component, or user-facing behavior from scratch",
+      "examples": [
+        "add a pagination feature to the search results",
+        "implement the new user profile settings page"
+      ]
+    },
+    "bug_fix": {
+      "description": "Diagnosing and correcting a specific defect or regression in existing behavior",
+      "examples": [
+        "fix the null pointer exception in the payment flow",
+        "resolve the race condition causing duplicate submissions"
+      ]
+    },
+    "code_review": {
+      "description": "Reviewing a diff, PR, or code block for correctness, style, security, or architectural fit",
+      "examples": [
+        "review this pull request for the authentication module",
+        "check this diff for potential security issues"
+      ]
+    },
+    "refactoring": {
+      "description": "Restructuring existing code to improve clarity, reduce duplication, or improve maintainability without changing behavior",
+      "examples": [
+        "extract the validation logic into a shared helper module",
+        "rename and reorganize the payment service classes"
+      ]
+    },
+    "research": {
+      "description": "Investigating a technology, approach, library, or unfamiliar codebase before making implementation decisions",
+      "examples": [
+        "evaluate which rate-limiting library fits our stack best",
+        "understand how the upstream API handles pagination"
+      ]
+    },
+    "debugging": {
+      "description": "Reproducing, isolating, and diagnosing the root cause of an unexpected failure or error",
+      "examples": [
+        "trace why the integration test fails only in CI",
+        "reproduce and identify the cause of the 500 error on login"
+      ]
+    },
+    "testing": {
+      "description": "Writing, expanding, or fixing a test suite — unit, integration, end-to-end, or performance tests",
+      "examples": [
+        "add unit tests for the billing calculation module",
+        "write integration tests for the webhook delivery pipeline"
+      ]
+    },
+    "documentation": {
+      "description": "Writing or updating developer documentation, runbooks, API references, or inline code comments",
+      "examples": [
+        "document the deployment runbook for the new service",
+        "update the API reference with the new endpoint signatures"
+      ]
+    },
+    "devops": {
+      "description": "Work on infrastructure, CI/CD, deployment configuration, monitoring, or operational tooling",
+      "examples": [
+        "add a GitHub Actions workflow for automated release tagging",
+        "configure the Kubernetes liveness probe for the new service"
+      ]
+    },
+    "planning": {
+      "description": "Producing a plan, design document, task breakdown, or architectural decision record before implementation",
+      "examples": [
+        "design the database schema for the new reporting feature",
+        "break the migration project into phased implementation tasks"
+      ]
+    },
+    "interrupted": {
+      "description": "Terminal job type for an arc that was cut short by a budget halt or an explicit user cancellation before completion",
+      "examples": [
+        "session halted by budget enforcement while implementing feature",
+        "user pivoted before the refactoring arc was completed"
+      ]
+    }
+  }
+}
