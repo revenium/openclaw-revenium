@@ -366,6 +366,12 @@ echo "${HALT_OUTPUT}"
 # Extract shadow-transition payload. Always present in HALT_OUTPUT;
 # defaults to '[]' when no rule transitioned into shadow-block.
 SHADOW_TRANSITIONS_JSON=$(echo "${HALT_OUTPUT}" | sed -n 's/^SHADOW_TRANSITIONS=//p')
+# Extract warn-transition payload (GRDEV-02). Always present in HALT_OUTPUT;
+# defaults to '[]' when no rule transitioned into warn-onset this tick.
+WARN_TRANSITIONS_JSON=$(echo "${HALT_OUTPUT}" | sed -n 's/^WARN_TRANSITIONS=//p')
+# Extract haltedAt onset marker for GUARDRAIL:budget_guardrail_halt ledger key (GRDEV-01).
+# Present only when HALT_TRANSITION=true; empty otherwise.
+HALTED_AT=$(echo "${HALT_OUTPUT}" | sed -n 's/^HALTED_AT=//p')
 
 # ---------------------------------------------------------------------------
 # (H) Legacy budget-status.json cleanup — runs AFTER guardrail-status.json is
@@ -470,4 +476,186 @@ PY
     fi
   done < "${SHADOW_TMP}"
   rm -f "${SHADOW_TMP}"
+fi
+
+# ---------------------------------------------------------------------------
+# (M) Guardrail event metering — fail-open (D-11 / GRDEV-01..05).
+# Status file is durable and notifications dispatched before this point.
+# Every error path returns 0; callers wrap with || true.
+# set -euo pipefail is active — any non-zero return would abort the script,
+# so the function MUST return 0 on all paths (never `return 1` or `exit`).
+# ---------------------------------------------------------------------------
+
+# Ensure the dedup ledger exists (idempotent).
+touch "${GUARDRAIL_LEDGER_FILE}" 2>/dev/null || true
+
+# Resolve root session for agent attribution (D-07 / GRDEV-04).
+# macOS-portable: ls -t for mtime ordering (no find -printf on macOS).
+_guardrail_newest_session_id=""
+_guardrail_newest_session_id=$(
+  ls -t "${SESSIONS_DIR}"/*.jsonl 2>/dev/null | head -1 \
+  | xargs basename 2>/dev/null | sed 's/\.jsonl$//'
+) || true
+_guardrail_root_sid="${_guardrail_newest_session_id}"
+if [[ -n "${_guardrail_newest_session_id}" ]]; then
+  _guardrail_root_sid=$(get_root_session_id "${_guardrail_newest_session_id}") || true
+  _guardrail_root_sid="${_guardrail_root_sid:-${_guardrail_newest_session_id}}"
+fi
+_guardrail_agent_val="${REVENIUM_AGENT_PREFIX}${_guardrail_root_sid}"
+
+# Resolve most-recently-opened open job for --agentic-job-id attribution (D-08).
+# Uses env-passing heredoc (Bash 3.2 safe — no ${} inside <<'PY').
+# Returns the job id with the highest line index (latest created), or empty if none.
+_guardrail_open_job_id=""
+_guardrail_open_job_id=$(
+  JOBS_LEDGER_FILE="${JOBS_LEDGER_FILE}" \
+  python3 - <<'PY' 2>/dev/null || true
+import os, re
+ledger = os.environ.get('JOBS_LEDGER_FILE', '')
+created = {}   # id -> line index for newest-first ordering
+closed = set()
+try:
+    lines = open(ledger, encoding='utf-8').readlines()
+    for i, line in enumerate(lines):
+        line = line.strip()
+        m = re.match(r'^JOB:([^:]+):created:', line)
+        if m: created[m.group(1)] = i
+        m = re.match(r'^JOB:([^:]+):outcome:', line)
+        if m: closed.add(m.group(1))
+except Exception:
+    pass
+open_jobs = [(v, k) for k, v in created.items() if k not in closed]
+if open_jobs:
+    print(sorted(open_jobs)[-1][1])  # highest line index = most-recently-created
+PY
+) || true
+
+# _emit_guardrail_event — emit one synthetic revenium meter completion call.
+# Arguments:
+#   $1 event_type   — budget_guardrail_halt | budget_guardrail_warn | budget_guardrail_shadow
+#   $2 rule_id      — ruleId string (for ledger key)
+#   $3 onset_marker — stable onset stamp (haltedAt ISO or per-tick now) for ledger key
+#   $4 agent_val    — openclaw-<root_sid>
+#   $5 job_id       — agentic job id (may be empty — D-08: omit when empty)
+#
+# Returns 0 on ALL paths (success, dedup skip, or failure).
+# MUST be called with || true by the caller (set -euo pipefail is active).
+_emit_guardrail_event() {
+  local event_type="$1"
+  local rule_id="$2"
+  local onset_marker="$3"
+  local agent_val="$4"
+  local job_id="$5"
+
+  # Ledger dedup gate (D-10 secondary backstop — primary gate is the Python transition guard).
+  local ledger_key
+  ledger_key="GUARDRAIL:${event_type}:${rule_id}:${onset_marker}"
+  if grep -qF "${ledger_key}" "${GUARDRAIL_LEDGER_FILE}" 2>/dev/null; then
+    return 0   # already emitted this onset — skip silently
+  fi
+
+  # Get current UTC time for synthetic request/response timestamps.
+  local now
+  now=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())" 2>/dev/null \
+        || date -u +%Y-%m-%dT%H:%M:%SZ) || true
+
+  # Build argv array (T-09-01-01 bash-array discipline — NEVER eval/string-join).
+  # All flags use cmd+=(--flag "${value}") to prevent word-splitting on values.
+  local cmd
+  cmd=(
+    revenium meter completion
+    --model "guardrail-enforcement"
+    --provider "revenium"
+    --input-tokens 0
+    --output-tokens 0
+    --total-tokens 0
+    --cache-read-tokens 0
+    --cache-creation-tokens 0
+    --stop-reason "COST_LIMIT"
+    --request-time "${now}"
+    --completion-start-time "${now}"
+    --response-time "${now}"
+    --request-duration 0
+    --agent "${agent_val}"
+    --task-type "${event_type}"
+    --operation-type "GUARDRAIL"
+    --quiet
+  )
+  # Optional: --organization-name (mirrors report.sh pattern, lines 277-279)
+  if [[ -n "${ORG_NAME:-}" ]]; then
+    cmd+=(--organization-name "${ORG_NAME}")
+  fi
+  # Optional: --agentic-job-id (D-08: omit when no open job)
+  if [[ -n "${job_id}" ]]; then
+    cmd+=(--agentic-job-id "${job_id}")
+  fi
+
+  # Invoke and capture exit code (mirrors post_to_revenium pattern, report.sh lines 304-315).
+  local out exit_code
+  out=$("${cmd[@]}" 2>&1) && exit_code=0 || exit_code=$?
+  if [[ "${exit_code}" -eq 0 ]]; then
+    printf '%s\n' "${ledger_key}" >> "${GUARDRAIL_LEDGER_FILE}" || true
+    info "GUARDRAIL: emitted ${event_type} for rule ${rule_id}"
+  else
+    warn "GUARDRAIL: meter call failed (exit=${exit_code}) — fail-open, continuing"
+  fi
+  return 0
+}
+
+# --- Halt emission (GRDEV-01) ---
+# Emit budget_guardrail_halt when halt_transition fired this tick.
+if echo "${HALT_OUTPUT}" | grep -q '^HALT_TRANSITION=true$'; then
+  HALTED_RULE_ID_M=$(echo "${HALT_OUTPUT}" | sed -n 's/^HALTED_RULE_ID=//p') || true
+  _emit_guardrail_event \
+    "budget_guardrail_halt" \
+    "${HALTED_RULE_ID_M}" \
+    "${HALTED_AT}" \
+    "${_guardrail_agent_val}" \
+    "${_guardrail_open_job_id}" || true
+fi
+
+# --- Warn emission (GRDEV-02) ---
+# Emit budget_guardrail_warn for each rule in WARN_TRANSITIONS_JSON (onset only).
+# Uses mktemp + while IFS='|' read loop (Bash 3.2 safe — no <<< in subshells).
+if [[ -n "${WARN_TRANSITIONS_JSON}" && "${WARN_TRANSITIONS_JSON}" != "[]" ]]; then
+  WARN_TMP=$(mktemp) || true
+  WARN_TRANSITIONS_JSON="${WARN_TRANSITIONS_JSON}" python3 - <<'PY' > "${WARN_TMP}" 2>/dev/null || true
+import json, os
+for r in json.loads(os.environ['WARN_TRANSITIONS_JSON']):
+    print(f"{r['ruleId']}")
+PY
+  _guardrail_warn_now=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())" 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ) || true
+  while IFS= read -r WARN_RULE_ID; do
+    [[ -z "${WARN_RULE_ID}" ]] && continue
+    _emit_guardrail_event \
+      "budget_guardrail_warn" \
+      "${WARN_RULE_ID}" \
+      "${_guardrail_warn_now}" \
+      "${_guardrail_agent_val}" \
+      "${_guardrail_open_job_id}" || true
+  done < "${WARN_TMP}"
+  rm -f "${WARN_TMP}" || true
+fi
+
+# --- Shadow emission (GRDEV-03) ---
+# Emit budget_guardrail_shadow for each rule in SHADOW_TRANSITIONS_JSON (onset only).
+# Uses mktemp + while IFS read loop (Bash 3.2 safe — no <<< in subshells).
+if [[ -n "${SHADOW_TRANSITIONS_JSON}" && "${SHADOW_TRANSITIONS_JSON}" != "[]" ]]; then
+  SHADOW_METER_TMP=$(mktemp) || true
+  SHADOW_TRANSITIONS_JSON="${SHADOW_TRANSITIONS_JSON}" python3 - <<'PY' > "${SHADOW_METER_TMP}" 2>/dev/null || true
+import json, os
+for r in json.loads(os.environ['SHADOW_TRANSITIONS_JSON']):
+    print(f"{r['ruleId']}")
+PY
+  _guardrail_shadow_now=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())" 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ) || true
+  while IFS= read -r SHADOW_RULE_ID; do
+    [[ -z "${SHADOW_RULE_ID}" ]] && continue
+    _emit_guardrail_event \
+      "budget_guardrail_shadow" \
+      "${SHADOW_RULE_ID}" \
+      "${_guardrail_shadow_now}" \
+      "${_guardrail_agent_val}" \
+      "${_guardrail_open_job_id}" || true
+  done < "${SHADOW_METER_TMP}"
+  rm -f "${SHADOW_METER_TMP}" || true
 fi
