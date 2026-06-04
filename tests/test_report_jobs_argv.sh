@@ -304,12 +304,21 @@ else
   fail "JLIFE-03 D-07: --result CANCELLED NOT found (RED)"
 fi
 
-# --- D-07: NO --outcome-type token EVER appears
+# --- JOUT-01: exactly ONE --outcome-type token, only for the SUCCESS arc (J1),
+# and its value is CONVERTED. GROUP A = J1 SUCCESS + J2 FAILED + J3 CANCELLED,
+# so FAILED/CANCELLED must contribute zero --outcome-type tokens.
 outcome_type_count_a=$(count_grep "^--outcome-type$" "${ARGV_FILE_A}")
-if [[ "${outcome_type_count_a}" -eq 0 ]]; then
-  pass "D-07: no --outcome-type token in captured argv"
+if [[ "${outcome_type_count_a}" -eq 1 ]]; then
+  pass "JOUT-01: exactly 1 --outcome-type token (SUCCESS arc only)"
 else
-  fail "D-07: found ${outcome_type_count_a} --outcome-type tokens (should be 0)"
+  fail "JOUT-01: expected 1 --outcome-type token (SUCCESS-only), got ${outcome_type_count_a}"
+fi
+
+outcome_type_val_a=$(awk '/^--outcome-type$/{getline; print}' "${ARGV_FILE_A}" 2>/dev/null | head -1 || true)
+if [[ "${outcome_type_val_a}" == "CONVERTED" ]]; then
+  pass "JOUT-01: --outcome-type value is CONVERTED"
+else
+  fail "JOUT-01: --outcome-type value expected CONVERTED, got '${outcome_type_val_a}'"
 fi
 
 # --- D-04: NO --environment token EVER appears

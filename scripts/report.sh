@@ -1065,7 +1065,10 @@ print(json.dumps([{'role': 'user', 'content': text}]))
     # yet (defer/warn, retry next tick, Pitfall 3); (3) else proceed.
     # CRITICAL (D-12 / Pitfall 1): own exit locals; NEVER touch failed_count/
     # reported_count; NEVER return/exit process_session; NEVER reach CR-02 gate.
-    # D-07: NO --outcome-type ever. D-08: failure_reason via --metadata FAILED-only.
+    # JOUT-01: SUCCESS arcs map to --outcome-type CONVERTED (ports Hermes) so the
+    # job's business Outcome Type is not left at Revenium's PENDING default;
+    # FAILED/CANCELLED carry no --outcome-type. D-08: failure_reason via
+    # --metadata FAILED-only.
     # ---------------------------------------------------------------------------
     if [[ "${JOBS_CLI_CAPABLE}" == "true" && -n "${agentic_job_id}" \
        && "${root_sid}" == "${session_id}" ]]; then
@@ -1075,7 +1078,12 @@ print(json.dumps([{'role': 'user', 'content': text}]))
         warn "outcome deferred: id=${agentic_job_id_log} — create not yet confirmed (retry next tick)"
       else
         local outcome_cmd=( revenium jobs outcome "${agentic_job_id}" --result "${job_status}" --quiet )
-        # D-07: NO --outcome-type ever.
+        # JOUT-01: business outcome — a SUCCESS arc maps to CONVERTED so the job's
+        # Outcome Type is not left at Revenium's PENDING default. SUCCESS only;
+        # FAILED/CANCELLED carry no --outcome-type (Revenium default applies).
+        if [[ "${job_status}" == "SUCCESS" ]]; then
+          outcome_cmd+=(--outcome-type CONVERTED)
+        fi
         # D-08: failure_reason via --metadata only for FAILED status, json.dumps via env heredoc.
         # T-06-08: agent-supplied prose may contain quotes/braces — json.dumps is the ONLY safe path.
         local outcome_metadata=""
