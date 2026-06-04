@@ -1117,6 +1117,7 @@ PY
   # toolCall scan loop — AFTER completion metering (TOOLEV-04 sequencing rule).
   # Scans the same session file for toolCall content items; for each:
   #   1. _register_tool (create-once, registry ledger gated)
+  #   2. _meter_tool_event (at-most-once, tool-events ledger gated)
   # CRITICAL: NEVER touch failed_count/reported_count; NEVER return/exit.
   # Gated on TOOLS_CLI_CAPABLE (TOOLEV-04).
   # ---------------------------------------------------------------------------
@@ -1190,7 +1191,10 @@ PY
       local tool_id tool_type
       tool_id=$(normalize_tool_id "${tool_name}")
       tool_type=$(classify_tool_type "${tool_name}")
+      # Sanitize before ledger key / log (T-04-08): 64-char truncation applied in helpers
       _register_tool "${tool_name}" "${tool_id}" "${tool_type}"
+      _meter_tool_event "${tc_id}" "${tool_id}" "${parent_ts:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
+        "${duration_ms:-0}" "${is_error:-false}" "${error_msg:-}" "${root_sid}"
     done < "${tool_scan_tmp}"
 
     rm -f "${tool_scan_tmp}"

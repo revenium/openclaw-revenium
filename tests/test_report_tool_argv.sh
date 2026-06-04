@@ -303,8 +303,12 @@ else
 fi
 
 # TOOLEV-04 event idempotency: meter tool-event must appear exactly once.
-# Count adjacent "meter\ntool-event" pairs via awk.
-meter_tool_event_count=$(count_adjacent "meter" "tool-event" "${ARGV_FILE_I_MERGED}")
+# Use --duration-ms count instead of count_adjacent("meter","tool-event") because
+# the TOOLS_CLI_CAPABLE probe (`revenium meter tool-event --help`) also emits
+# consecutive "meter\ntool-event" tokens in the argv file on every cron tick.
+# --duration-ms ONLY appears in real `meter tool-event` posts, not in --help probes.
+# (Pattern from test_report_jobs_argv.sh lines 491-493: probe-awareness via distinct flag.)
+meter_tool_event_count=$(count_grep "^--duration-ms$" "${ARGV_FILE_I_MERGED}")
 if [[ "${meter_tool_event_count}" -eq 1 ]]; then
   pass "TOOLEV-04 event idempotency: meter tool-event called exactly once across two runs (tool-events ledger dedup)"
 else
