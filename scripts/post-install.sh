@@ -553,6 +553,58 @@ PYEOF
 fi
 
 # ---------------------------------------------------------------------------
+# 7b. Inject metering directives (task classification + job declaration) into AGENTS.md
+# ---------------------------------------------------------------------------
+# These are MANDATORY COMPLETION GATES: OpenClaw loads SKILL.md on demand, so a
+# "classify/declare every turn" directive only fires reliably when it lives in
+# AGENTS.md (read before every response), like the guardrail check above. The
+# directive text is shipped in references/ and injected here so it survives
+# reinstall and applies on every install. Idempotent + updatable: any prior
+# metering block (sentinel-wrapped OR bare-header) is stripped before re-inject.
+step "Injecting metering directives into AGENTS.md"
+
+METERING_SRC="${SKILL_DIR}/references/agents-metering-directives.md"
+
+if [[ ! -f "${AGENTS_MD}" ]]; then
+  warn "AGENTS.md not found at ${AGENTS_MD} — skipping metering directive injection"
+elif [[ ! -f "${METERING_SRC}" ]]; then
+  warn "Metering directive source not found at ${METERING_SRC} — skipping"
+else
+  AGENTS_MD="${AGENTS_MD}" METERING_SRC="${METERING_SRC}" python3 <<'PYEOF'
+import os, re
+
+path = os.environ["AGENTS_MD"]
+block = open(os.environ["METERING_SRC"]).read().strip() + "\n"
+
+with open(path) as f:
+    content = f.read()
+
+# Strip any prior metering block — sentinel-wrapped form...
+content = re.sub(
+    r'\n*<!-- BEGIN revenium-metering-directives -->.*?<!-- END revenium-metering-directives -->\n*',
+    '\n', content, flags=re.S)
+# ...and older bare-header form (hand-edited installs without sentinels).
+parts = re.split(r'(?m)^(?=## )', content)
+parts = [p for p in parts if not p.startswith('## Revenium Metering ')]
+content = ''.join(parts)
+
+# Place it right after the guardrail block, else before ## Memory, else append.
+anchor = "This applies to ALL operations — chat, tool calls, code, questions, everything. No task is exempt."
+if anchor in content:
+    content = content.replace(anchor, anchor + "\n\n" + block, 1)
+elif "## Memory" in content:
+    content = content.replace("## Memory", block + "\n## Memory", 1)
+else:
+    content = content.rstrip() + "\n\n" + block
+
+with open(path, "w") as f:
+    f.write(content)
+print("metering directives synced")
+PYEOF
+  info "Injected/updated metering directives in AGENTS.md"
+fi
+
+# ---------------------------------------------------------------------------
 # 8. Configure bootstrap-extra-files hook for isolated sessions
 # ---------------------------------------------------------------------------
 step "Configuring budget guard for isolated sessions"
