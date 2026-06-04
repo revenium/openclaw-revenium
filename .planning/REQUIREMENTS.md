@@ -47,12 +47,12 @@ Which phases cover which requirements. Filled during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| GRDEV-01 | Phase 9 | Planned |
-| GRDEV-02 | Phase 9 | Planned |
-| GRDEV-03 | Phase 9 | Planned |
-| GRDEV-04 | Phase 9 | Planned |
-| GRDEV-05 | Phase 9 | Planned |
-| GRDEV-06 | Phase 9 | Planned |
+| GRDEV-01 | Phase 9 | Complete |
+| GRDEV-02 | Phase 9 | Complete |
+| GRDEV-03 | Phase 9 | Complete |
+| GRDEV-04 | Phase 9 | Complete |
+| GRDEV-05 | Phase 9 | Complete |
+| GRDEV-06 | Phase 9 | Complete |
 | TOOLEV-01 | Phase 10 | Planned |
 | TOOLEV-02 | Phase 10 | Planned |
 | TOOLEV-03 | Phase 10 | Planned |
