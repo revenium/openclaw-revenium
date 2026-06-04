@@ -261,7 +261,7 @@ _register_tool() {
 
 ### Pattern 5: Tool-Event Emission — At-Most-Once per toolCall.id
 
-**What:** Each `toolCall` content item in an assistant message maps to one `meter tool-event` call. Idempotency key: `TOOLEV:<toolcall_id>` in the reported ledger (same `LEDGER_FILE` as completions, or a prefix-namespaced key in it).
+**What:** Each `toolCall` content item in an assistant message maps to one `meter tool-event` call. Idempotency key: `TOOLEV:<toolcall_id>` in a **separate** `TOOL_EVENTS_LEDGER_FILE` (`${OPENCLAW_HOME}/revenium-tool-events.ledger`) — NOT the completion `LEDGER_FILE` — per the RESOLVED Open Question 2 below (keeps tool-event dedup isolated from the CR-02 offset gate). PATTERNS.md and the 10-02 plans are authoritative and use `TOOL_EVENTS_LEDGER_FILE`.
 
 **Duration computation:** `toolCall.id` (on the content item) matches `toolResult.message.toolCallId` (on the following toolResult message). Timestamps: parent assistant message `.timestamp` (start) to toolResult message `.timestamp` (end). Delta = duration-ms. Use 0 when the toolResult is not found.
 
@@ -279,7 +279,8 @@ _meter_tool_event() {
   local root_sid="$7"
 
   local ledger_key="TOOLEV:${toolcall_id}"
-  if grep -qF "${ledger_key}" "${LEDGER_FILE}" 2>/dev/null; then
+  # Separate tool-events ledger — NOT the completion LEDGER_FILE (CR-02 isolation, RESOLVED OQ2)
+  if grep -qF "${ledger_key}" "${TOOL_EVENTS_LEDGER_FILE}" 2>/dev/null; then
     return 0  # already metered — idempotent skip
   fi
 
@@ -303,7 +304,7 @@ _meter_tool_event() {
   ev_out=$("${ev_cmd[@]}" 2>&1) && ev_exit=0 || ev_exit=$?
 
   if [[ "${ev_exit}" -eq 0 ]]; then
-    printf '%s\n' "${ledger_key}" >> "${LEDGER_FILE}"
+    printf '%s\n' "${ledger_key}" >> "${TOOL_EVENTS_LEDGER_FILE}"
     info "Tool event metered: tool_id=${tool_id} duration=${duration_ms}ms"
   else
     warn "Tool event failed: id=${tool_id} toolcall=${toolcall_id} exit=${ev_exit} — fail-open"
@@ -393,7 +394,7 @@ PY
 - **Scanning for toolCall before completion metering:** Tool work must always run AFTER the completion metering loop so a tool-work failure can never block completion records from being written. This is the same sequencing rule as `handle_halt()` after the session loop.
 - **Using `success:false` by default:** The `meter tool-event --success` flag defaults to `false` when omitted. Always pass `--success` explicitly to avoid every tool-event appearing failed.
 - **Single loop over completions trying to also extract toolCalls:** The completion loop processes assistant messages that have `usage` data. Not every toolUse message has both usage and toolCall items in the correct position for a simple inline check. A second dedicated extraction pass (or a Python heredoc over the full file) is cleaner and matches the existing markers/jobs extraction pattern.
-- **Storing toolCall events in a separate ledger from completions:** Using a ledger-key prefix (`TOOLEV:<id>`) in the existing `LEDGER_FILE` (or `TOOL_REGISTRY_LEDGER_FILE` for registrations) is simpler than adding a third ledger file. The reported-ledger already deduplicates TX: entries by message ID; TOOLEV: prefixed entries in the same file work identically.
+- **Storing toolCall events in a separate ledger from completions:** **DECIDED — use a separate `TOOL_EVENTS_LEDGER_FILE` (`revenium-tool-events.ledger`), not the completion `LEDGER_FILE`.** Although a `TOOLEV:<id>` prefix inside `LEDGER_FILE` would dedup identically, keeping tool-event keys out of the reported-ledger isolates them from the CR-02 offset-advance gate (which keys on completion failures). Two dedicated ledgers — `TOOL_REGISTRY_LEDGER_FILE` for registrations, `TOOL_EVENTS_LEDGER_FILE` for events — is the authoritative design (see RESOLVED Open Question 2; PATTERNS.md and the 10-02 plans follow this).
 - **Bash `${var,,}` for lowercasing:** Requires bash 4+. macOS has bash 3.2. Use `python3` env-heredoc for lowercase (existing codebase pattern).
 
 ---
@@ -700,17 +701,16 @@ TOOL_REGISTRY_LEDGER_FILE="${OPENCLAW_HOME}/revenium-tools.ledger"
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does `--workflow-id` on `meter tool-event` cause Revenium to roll tool-events up under the agentic job in the dashboard?**
+   - **RESOLVED: omit `--workflow-id` for v1.2; attribution stops at `--agent openclaw-<root_sid>`.** Job rollup for tool-events is out of scope for this milestone (CONTEXT D-05). If stakeholders later want it, test `--workflow-id <agentic_job_id>` on the live host first — documented as a follow-on.
    - What we know: The CLI accepts `--workflow-id`; it maps to `workflowId` in the API payload. The `meter completion` path uses `--agentic-job-id` (a distinct field). No CLI flag named `--agentic-job-id` exists on `meter tool-event`.
-   - What's unclear: Whether the Revenium server equates `workflowId` with `agenticJobId` for rollup, or whether they are independent dimensions.
-   - Recommendation: Omit for v1.2 and document as a follow-on. If stakeholder wants job rollup for tool-events, test `--workflow-id <agentic_job_id>` on the live host first.
+   - What's unclear (deferred): Whether the Revenium server equates `workflowId` with `agenticJobId` for rollup, or whether they are independent dimensions.
 
 2. **Does a `TOOLEV:<toolcall_id>` key in the reported ledger (`LEDGER_FILE`) interact correctly with the offset-advance gate (CR-02)?**
+   - **RESOLVED: use a separate `TOOL_EVENTS_LEDGER_FILE` (`${OPENCLAW_HOME}/revenium-tool-events.ledger`), NOT `LEDGER_FILE`.** This is the authoritative decision and is reflected in PATTERNS.md and both 10-02 plan tasks. Keeping tool-event dedup keys out of the completion reported-ledger avoids any coupling with the well-tested CR-02 offset gate.
    - What we know: CR-02 gates `set_offset` on `failed_count == 0`. Tool-event failures must never increment `failed_count`.
-   - What's unclear: Whether the planner should keep tool-event keys in `LEDGER_FILE` or use a separate file.
-   - Recommendation: Use a separate `TOOL_EVENTS_LEDGER_FILE` (analogous to `TOOL_REGISTRY_LEDGER_FILE`) to avoid any coupling with the offset gate. The completion ledger's CR-02 gate is well-tested; adding tool-event keys could confuse future readers.
 
 ---
 
@@ -902,10 +902,10 @@ This fixture produces: one TOOL_CALL completion (asst-001), one CHAT completion 
 | --tool-type BUILTIN semantic correctness | MEDIUM | CLI accepts without error; server-side enum not inspected |
 | 409 response text for tools create | LOW | Inferred from jobs create; not confirmed live |
 
-### Open Questions
+### Open Questions (RESOLVED)
 
-- Does `--workflow-id <agentic_job_id>` on `meter tool-event` cause Revenium to associate tool-events with the agentic job in the dashboard? (Recommend: test on live host before adopting)
-- Should tool-event dedup keys live in `LEDGER_FILE` (with `TOOLEV:` prefix) or in a separate `revenium-tool-events.ledger`? (Recommend: separate file for cleaner CR-02 isolation)
+- `--workflow-id <agentic_job_id>` on `meter tool-event`: **RESOLVED — omit for v1.2** (attribution stops at `--agent`; test on live host before adopting if job rollup is later wanted).
+- Tool-event dedup key location: **RESOLVED — use a separate `TOOL_EVENTS_LEDGER_FILE` (`revenium-tool-events.ledger`)**, not `LEDGER_FILE`, for clean CR-02 isolation. Authoritative; matches PATTERNS.md and the 10-02 plans.
 
 ### Ready for Planning
 

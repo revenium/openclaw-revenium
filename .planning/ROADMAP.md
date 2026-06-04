@@ -75,11 +75,17 @@ Plans:
   3. Tool-event metering does not double-count against existing `TOOL_CALL` completions (TOOLEV-03)
   4. Tool registry + tool-event work is fail-open and idempotency-gated against duplicate registrations/events (TOOLEV-04)
 
-**Plans:** 3 plans
-Plans:
+**Plans:** 3 plansPlans:
+**Wave 1**
 
 - [ ] 10-00-PLAN.md — Wave 0 test scaffolding: tests/test_report_tool_argv.sh (TOOLEV-01..04 argv assertions) + stub-revenium.sh tools/tool-event switches (RED gate)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 10-01-PLAN.md — Registry foundation: common.sh tool ledger constants, TOOLS_CLI_CAPABLE probe, normalize_tool_id/classify_tool_type, _register_tool create-once (TOOLEV-01/04)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 10-02-PLAN.md — Tool-event emission: _meter_tool_event + toolCall scan loop in process_session, explicit --success, no double-count, fail-open (TOOLEV-02/03/04)
 
 ## Progress
