@@ -1,5 +1,22 @@
 # Milestones
 
+## v1.2 Metering Completeness (Shipped: 2026-06-04)
+
+**Phases completed:** 2 phases, 6 plans, 10 tasks
+**Git range:** v1.1..HEAD — 45 commits, 38 files changed (+8,054 / −179)
+
+**Delivered:** Close the metering-visibility gaps found while debugging v1.1 in production — guardrail enforcement and tool usage are now observable as first-class Revenium transactions (`GUARDRAIL` / tool-events), not just `CHAT`/`TOOL_CALL` completions, so spend has no blind spots.
+
+**Key accomplishments:**
+
+- **Phase 9 — Guardrail Event Metering:** every halt / warn / shadow-mode breach emits exactly one `GUARDRAIL` transaction (`meter completion --operation-type GUARDRAIL`, zero-token), transition-gated (`state=='warn'`, `HALTED_AT`/`WARN_TRANSITIONS` emit) and ledger-deduped so repeated cron ticks never re-emit; attributed to the root agent + open `--agentic-job-id`. Section M `_emit_guardrail_event` is fully fail-open. Dead `GUARDRAIL` operation-type heuristic deleted from `report.sh` (GRDEV-06). 18/18 guardrail-argv tests + GRDEV-06 assertion green.
+- **Phase 10 — Tool Registry & Tool-Event Metering:** `TOOLS_CLI_CAPABLE` probe, `normalize_tool_id`/`classify_tool_type` helpers, and `_register_tool` create-once into `revenium-tools.ledger` (TOOLEV-01/04); `_meter_tool_event` + `toolCall` scan loop in `process_session` emit one `revenium meter tool-event` per call with explicit `--success` and at-most-once ledger dedup, without double-counting the existing `TOOL_CALL` completions (TOOLEV-02/03). Anchored ledger dedup to prevent prefix false-matches; valid tool-type enum (CUSTOM, not BUILTIN). Fully fail-open.
+- **Test infrastructure:** hermetic argv-capture harnesses (`test_guardrail_argv.sh`, `test_report_tool_argv.sh`) plus `stub-revenium.sh` extended with guardrails / tools / `meter tool-event` switches and failure injection — full RED→GREEN coverage of every argv contract; all three live CLI questions resolved with no fallbacks.
+
+**Known deferred items at close:** 2 (see STATE.md → Deferred Items). Phase 9 UAT left 1 pending scenario and verification `human_needed` — both gated on a live guardrail-halt test on host 172.16.1.247, deferred in favor of validation through production use on the test host.
+
+---
+
 ## v1.1 Agentic Job Tracking (Shipped: 2026-06-04)
 
 **Phases completed:** 4 phases, 10 plans, 14 tasks

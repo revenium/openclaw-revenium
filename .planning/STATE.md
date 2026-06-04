@@ -2,33 +2,32 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Metering Completeness
-status: milestone_complete
-last_updated: 2026-06-04T04:42:24.535Z
-last_activity: 2026-06-04 -- Phase 10 execution started
+status: Awaiting next milestone
+last_updated: "2026-06-04T22:38:48.136Z"
+last_activity: 2026-06-04 — Milestone v1.2 completed and archived
 progress:
   total_phases: 2
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 6
   completed_plans: 6
-  percent: 50
-stopped_at: Milestone complete (Phase 10 was final phase)
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-03)
+See: .planning/PROJECT.md (updated 2026-06-04 after v1.2 milestone)
 
-**Core value:** Agents never silently blow through token budgets — every completion is guardrail-checked and metered, and the user retains control over continuing past a threshold. v1.1 adds: every completion is attributed to an agentic job, opened and closed with a terminal outcome.
-**Current focus:** Milestone complete
+**Core value:** Agents never silently blow through token budgets — every turn is guardrail-checked and the user keeps control past a threshold — and **every cost-incurring activity** (agent completions, guardrail enforcement events, and tool invocations) is metered and attributed by root session, task type, and agentic job, so spend is fully observable in Revenium with no blind spots.
+**Current focus:** v1.2 shipped — awaiting next milestone (`/gsd-new-milestone`)
 
 ## Current Position
 
-Phase: 10
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-06-04
+Phase: Milestone v1.2 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-04 — Milestone v1.2 completed and archived
 
 ## Performance Metrics
 
@@ -92,11 +91,18 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 7]: Marker-race — job markers are written after the completions they belong to (same timing as v1.0 task-type markers); root job ID may not resolve on first cron tick. JROLL-02 mandates omit-and-retry rather than shipping a sub-session ID.
-- [Phase 8]: Synthetic interrupted job (`guardrail-halt-<hex>`) must integrate with the existing halt flow (`guardrail-check.sh` / BUDGET-GUARD.md) without re-triggering metering of a halted turn.
-- [Carried, Phase 4]: subagent→root spend rollup confirmed end-to-end for completions; Phase 7 must verify the same path carries `agentic_job_id` overrides.
+None blocking. Standing follow-up carried forward: Phase 9 live guardrail-halt E2E on host 172.16.1.247 (see Deferred Items) — needs a forced halt on the real host to confirm a GUARDRAIL transaction lands in Revenium.
+
+Resolved during v1.1/v1.2 (cleared): Phase 7 marker-race (omit-and-retry shipped), Phase 8 synthetic-interrupted-job halt integration (handle_halt shipped), Phase 4 subagent→root job_id rollup (verified at resolver/unit level).
 
 ## Deferred Items
+
+Items acknowledged and deferred at v1.2 milestone close on 2026-06-04:
+
+| Category | Item | Status | Note |
+|----------|------|--------|------|
+| uat_gap | 09-HUMAN-UAT | partial | 1 pending scenario: force a live guardrail halt on host 172.16.1.247 and confirm a GUARDRAIL transaction lands in Revenium. Deferred — validated in production use on the test host rather than formal UAT here. |
+| verification_gap | 09-VERIFICATION | human_needed | Phase 9 shipped with human_needed verification, gated on the same live halt test; guardrail-event metering is in production use. |
 
 Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 

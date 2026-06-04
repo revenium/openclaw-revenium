@@ -8,18 +8,21 @@ A global OpenClaw skill that uses the `revenium` CLI to **enforce token-budget g
 
 Agents never silently blow through token budgets — every turn is guardrail-checked and the user retains control over continuing past a threshold — **and** every completion is metered and attributed (by root session + task type) so spend is observable in Revenium.
 
-## Current Milestone: v1.2 Metering Completeness
+## Current State
 
-**Goal:** Close the metering-visibility gaps found while debugging v1.1 in production — make guardrail enforcement and tool usage observable as first-class Revenium transactions, not just Chat/Tool Call completions.
+**Shipped v1.2 Metering Completeness (2026-06-04)** — guardrail enforcement events and tool usage are now first-class Revenium transactions (`GUARDRAIL` / tool-events), closing the metering-visibility blind spots found while debugging v1.1 in production. Combined with v1.0 (guardrails + completion metering) and v1.1 (agentic job tracking), the skill now meters **every cost-incurring activity** — agent completions, guardrail enforcement events, and tool invocations — attributed by root session, task type, and agentic job.
 
-**Target features:**
-- Guardrail-event metering — emit a `GUARDRAIL` transaction (`meter completion --operation-type GUARDRAIL --task-type budget_guardrail_<halt|warn|shadow>`) once per halt, warn, and shadow would-have-halted transition, deduped via a ledger and fully fail-open, from `guardrail-check.sh` (Phase 9)
-- Remove the dead/buggy operation-type heuristic in `report.sh` (greps tool-call args for the wrong filename and would tag every turn anyway) so completions stay correctly CHAT/TOOL_CALL (Phase 9)
-- Tool registry + tool-event metering — register tools via `revenium tools create` and/or meter invocations via `meter tool-event` so tool usage is observable, without double-counting the existing TOOL_CALL completions (Phase 10 — needs its own discuss/spec)
+**Status:** Awaiting next milestone. No active development phase.
 
-**Context:** Revenium renders a completion's `operationType` as the transaction "type" column (CHAT→Chat, TOOL_CALL→Tool Call, GUARDRAIL→Guardrail) — confirmed with stakeholder. These gaps surfaced during v1.1 production debugging on the test host.
+**Open follow-up:** Phase 9 live guardrail-halt UAT/verification on host 172.16.1.247 deferred (validated through production use; see STATE.md → Deferred Items).
 
-**Explicitly deferred this milestone:** per-tick API-poll overhead metering (high volume/noise); per-job-type budget guardrails (still observability-only).
+### Next Milestone Goals (candidates)
+
+Carried-forward / deferred requirements that could seed the next milestone:
+- **GRDEV-F1** — meter per-tick guardrail API-poll overhead as aggregated enforcement cost (deferred v1.2 for volume/noise)
+- **JCLASS-01** — LLM `on_session_end` classifier plugin for automatic job/task inference (gated on confirming OpenClaw session-end hook support)
+- **JGUARD-01** — per-job-type budget rules in `setup-guardrails.sh --interactive`
+- **JOUT-01** — business-outcome reporting (`--outcome-type CONVERTED`, ROI/conversion metrics)
 
 ## Requirements
 
@@ -41,7 +44,11 @@ Agents never silently blow through token budgets — every turn is guardrail-che
 
 ### Active
 
-v1.2 Metering Completeness — all phases ✓ complete. Phase 9 (guardrail-event metering as GUARDRAIL transactions, GRDEV-01..06) and Phase 10 (tool registry + tool-event metering, TOOLEV-01..04) both delivered and verified. Live E2E confirmation of tool registry/tool-event flow against host 172.16.1.247 remains as UAT follow-up.
+No active milestone — v1.2 shipped. Run `/gsd-new-milestone` to scope the next one (candidates listed under **Current State → Next Milestone Goals**).
+
+**Open UAT follow-ups carried across milestones:**
+- Phase 9 (v1.2): live guardrail-halt E2E on host 172.16.1.247 — confirm a `GUARDRAIL` transaction lands in Revenium (UAT/verification `human_needed`, deferred).
+- Phase 10 (v1.2): live tool-registry / tool-event E2E confirmation against host 172.16.1.247.
 
 **v1.1 post-ship fix (validated live):** the agent-written-marker pipeline (task classification + job declaration) never fired in production because OpenClaw loads `SKILL.md` on-demand — the "every turn" directives were never in the agent's context. Fixed by injecting hardened completion-gate directives into `~/.openclaw/workspace/AGENTS.md` via `post-install.sh`; end-to-end verified (agent self-writes markers → cron → job created + closed SUCCESS in Revenium).
 
@@ -60,6 +67,8 @@ v1.2 Metering Completeness — all phases ✓ complete. Phase 9 (guardrail-event
 ## Context
 
 - **Shipped v1.0** (2026-06-03): 4 phases, 14 plans, 26 tasks, ~81-day calendar span, 107 feat/fix/docs commits. ~39 automated tests (bash + python) across `tests/`.
+- **Shipped v1.1** (2026-06-04): 4 phases (5–8), 10 plans, 14 tasks — agentic job tracking ported onto the agent-written-marker architecture; 71/71 cumulative hermetic tests.
+- **Shipped v1.2** (2026-06-04): 2 phases (9–10), 6 plans, 10 tasks, 45 commits, +8,054/−179 across 38 files — guardrail-event + tool-registry/tool-event metering. New hermetic argv harnesses (`test_guardrail_argv.sh`, `test_report_tool_argv.sh`) + extended `stub-revenium.sh`.
 - **Tech stack:** bash scripts + a small Python sidecar (`get-root-session-id.py`), JSON config/taxonomy, markdown agent instructions (SKILL.md). No build system; `set -euo pipefail` discipline; atomic writes via `tempfile.mkstemp` + `os.replace`.
 - **`revenium` CLI:** config at `~/.config/revenium/config.yaml`; env overrides `REVENIUM_API_KEY`/`REVENIUM_TEAM_ID`/`REVENIUM_API_URL`. Key commands used: `config show`, `guardrails budget-rules {create,list,get,update}`, `guardrails enforcement-rules get`, `meter completion` (with `--task-type`/`--agent`).
 - **OpenClaw integration:** skill installed at `~/.openclaw/skills/revenium/`; sessions at `~/.openclaw/agents/main/sessions/*.jsonl`; cron (`cron.sh`) runs `report.sh` + `guardrail-check.sh` every minute; markers at `~/.openclaw/skills/revenium/markers/{sid}.jsonl`.
@@ -91,7 +100,11 @@ v1.2 Metering Completeness — all phases ✓ complete. Phase 9 (guardrail-event
 | Agent-written `kind:"job"` markers (not classifier plugin) for v1.1 | Consistent with v1.0 task-type architecture; avoids unconfirmed OpenClaw session-end hook dependency | ✓ Foundation shipped (Phase 5) |
 | Dedicated `write-job-marker.sh` (D-06: new writer, not an extension of `write-marker.sh`) | Keep task-type writer untouched; job writer diverges on named flags + 7 mandatory fields | ✓ Good (Phase 5 — write-marker.sh byte-for-byte unchanged) |
 | Marker directives belong in `AGENTS.md`, not `SKILL.md` (v1.1 post-ship) | OpenClaw loads SKILL.md on-demand, so "classify/declare every turn" directives never reached the agent; AGENTS.md is read before every response. Soft wording was skipped too — only a hard *completion-gate* framing works | ✓ Good — agent reliably writes task/job markers (validated live); injected via post-install.sh |
-| Revenium renders completion `operationType` as the transaction "type" (CHAT/TOOL_CALL/GUARDRAIL) | Confirmed with stakeholder; basis for v1.2 guardrail-event metering | ✓ Drives v1.2 Phase 9 |
+| Revenium renders completion `operationType` as the transaction "type" (CHAT/TOOL_CALL/GUARDRAIL) | Confirmed with stakeholder; basis for v1.2 guardrail-event metering | ✓ Good (drove v1.2 Phase 9) |
+| Guardrail-event metering lives in `guardrail-check.sh` Section M, strictly last + fail-open | Enforcement (status write + notifications) must never be blocked by a metering round-trip | ✓ Good (Phase 9) |
+| Tool registry/tool-event metering in `report.sh` scan loop, never touching `meter completion`/`--operation-type` | Keeps tool-events fully separate from the existing `TOOL_CALL` completions → no double-counting | ✓ Good (Phase 10, TOOLEV-03) |
+| Anchored, prefix-safe ledger dedup for tools/events (`grep -qxF`-style exact match) | Unanchored dedup false-matched prefixes (`read` vs `read-file`); two code-review BLOCKERs | ✓ Good — fixed + regression-locked (Phase 10) |
+| `revenium tools create --tool-type` is a strict server-side enum (use CUSTOM/MCP_SERVER, not BUILTIN) | BUILTIN rejected live; dry-run does not catch it — probed against the real host | ✓ Good (Phase 10 post-ship fix, commit 7e5b9f9) |
 
 ## Evolution
 
@@ -111,4 +124,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-04 — v1.2 Phase 10 (tool registry + tool-event metering, TOOLEV-01..04) complete & verified; 2 code-review BLOCKERs (unanchored ledger dedup) fixed + regression-locked. All v1.2 phases done; live E2E deferred to UAT.*
+*Last updated: 2026-06-04 after v1.2 Metering Completeness milestone — guardrail-event + tool-registry/tool-event metering shipped (Phases 9–10). Awaiting next milestone; Phase 9 live guardrail-halt E2E deferred to UAT.*
