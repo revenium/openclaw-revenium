@@ -771,20 +771,25 @@ and testing against the live Revenium API on the test host.**
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Is `--transaction-id` required for `revenium meter completion`?**
    - What we know: report.sh always passes it; the CLI help output is not captured here.
    - What's unclear: Whether the API enforces it server-side.
    - Recommendation: Wave 0 task must run `revenium meter completion --help | grep transaction-id` and test a call without it. If required, generate `GUARDRAIL_<type>_<sha1_of_onset_key[:8]>` as the synthetic id.
+   - **RESOLVED (2026-06-04, host 172.16.1.247, Team DZxzEl):** `--transaction-id` is OPTIONAL. Listed in `--help` WITHOUT `(required)`, and a call omitting it returned EXIT=0 and created a real event. **No synthetic transaction-id is needed. The implementation MUST NOT add `--transaction-id`.**
 
 2. **Does `revenium meter completion` accept zero for all token/cost fields?**
    - What we know: The CLI is designed for LLM completions; zero may trigger validation.
    - Recommendation: Same Wave 0 test — attempt a zero-token synthetic call against the Revenium API on the test host. If rejected, use `--input-tokens 0 --output-tokens 0 --total-tokens 1` (sentinel 1) with a comment explaining the synthetic nature.
+   - **RESOLVED (2026-06-04, host 172.16.1.247, Team DZxzEl):** Zero token values ARE accepted. `--input-tokens 0 --output-tokens 0 --total-tokens 0` was accepted by both dry-run (body showed inputTokenCount:0/outputTokenCount:0/totalTokenCount:0) and the real API (event created, EXIT=0). **No `--total-tokens 1` sentinel is needed.**
 
 3. **Does `revenium meter completion --help` show `--stop-reason COST_LIMIT` as a valid enum value?**
    - What we know: report.sh uses `map_stop_reason` to map OpenClaw stop reasons to Revenium enums. `COST_LIMIT` is used in the REQUIREMENTS.md spec.
    - Recommendation: Verify against `revenium meter completion --help` on the test host.
+   - **RESOLVED (2026-06-04, host 172.16.1.247, Team DZxzEl):** `COST_LIMIT` IS a valid `--stop-reason` enum. `--help` enumerates it as `(END, END_SEQUENCE, TIMEOUT, TOKEN_LIMIT, COST_LIMIT, COMPLETION_LIMIT, ERROR, CANCELLED)`, and the call with `--stop-reason COST_LIMIT` returned EXIT=0. **No alternate stop-reason fallback is needed.**
+   - **BONUS:** `--operation-type GUARDRAIL` passes through the live CLI even though `--help` documents the enum WITHOUT listing GUARDRAIL. The dry-run body showed `operationType:GUARDRAIL` and the real API created the event with EXIT=0. The phase's `--operation-type GUARDRAIL` design is confirmed working.
+   - **CLEANUP NOTE:** A trial event (id 81f8cc86-a1d3-4c51-92f8-92105ed7e9bf, created 2026-06-04T02:25:56Z) was created during verification — zero-token/zero-cost on test tenant Team DZxzEl. `revenium meter` has NO delete subcommand (events are immutable usage records); the trial event is benign and was left in place.
 
 ---
 
