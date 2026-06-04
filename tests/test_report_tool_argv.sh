@@ -20,7 +20,7 @@
 #   - One TOOL_CALL completion (asst-001, stopReason toolUse, 150 tokens)
 #   - One CHAT completion (asst-002, stopReason stop, 380 tokens)
 #   - One toolCall (toolu_test001, name=read) with toolResult 250ms later
-#   - Tool registry should register "read" as BUILTIN
+#   - Tool registry should register "read" as CUSTOM (BUILTIN is not a valid API enum)
 #   - Tool-event should emit for toolu_test001 with --duration-ms 250 --success
 #
 # SECURITY (T-04-09 / V5):
@@ -181,11 +181,19 @@ else
   fail "TOOLEV-01: tools create --tool-id read NOT found in argv (RED)"
 fi
 
-# TOOLEV-01: tools create called with --tool-type BUILTIN
-if argv_vals "--tool-type" "${ARGV_FILE_T}" | grep -q "^BUILTIN$"; then
-  pass "TOOLEV-01: tools create --tool-type BUILTIN found in argv"
+# TOOLEV-01: tools create called with --tool-type CUSTOM (built-in tools).
+# NOTE: must be a valid Revenium enum value — the API rejects "BUILTIN" HTTP 400.
+if argv_vals "--tool-type" "${ARGV_FILE_T}" | grep -q "^CUSTOM$"; then
+  pass "TOOLEV-01: tools create --tool-type CUSTOM found in argv"
 else
-  fail "TOOLEV-01: tools create --tool-type BUILTIN NOT found in argv (RED)"
+  fail "TOOLEV-01: tools create --tool-type CUSTOM NOT found in argv"
+fi
+
+# TOOLEV-01: never emit an invalid tool-type the API would reject (HTTP 400).
+if argv_vals "--tool-type" "${ARGV_FILE_T}" | grep -qvE "^(SDK|MCP_SERVER|AI_SERVICE|REST_API|LOCAL_FUNCTION|CUSTOM)$"; then
+  fail "TOOLEV-01: an invalid --tool-type value was emitted (API would reject HTTP 400)"
+else
+  pass "TOOLEV-01: all --tool-type values are valid Revenium enum members"
 fi
 
 # TOOLEV-01: tools registry ledger written after successful registration
@@ -352,6 +360,47 @@ else
 fi
 
 rm -f "${ARGV_FILE_X}"
+
+# ===========================================================================
+# GROUP E: Empty tool-name skip (no garbage empty --tool-id rows)
+# Some toolCall content items carry an empty/missing name. Registering or
+# metering those emits `tools create --tool-id ""` / `meter tool-event
+# --tool-id ""` — garbage that the API rejects and that pollutes the ledger.
+# report.sh must skip them entirely.
+# ===========================================================================
+TMP_HOME_E=$(make_openclaw_home)
+ARGV_FILE_E=$(mktemp "${TMPDIR:-/tmp}/test-rpt-tools-argv-e.XXXXXX")
+
+# Fixture: one assistant toolCall with an EMPTY name + its toolResult.
+EMPTY_FIXTURE='{"type":"session","version":3,"id":"test-tool-sid-empty","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp"}
+{"type":"message","id":"asst-e1","parentId":"00000000","timestamp":"2026-01-01T10:01:05.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"toolu_empty001","name":"","arguments":{}}],"stopReason":"toolUse","model":"claude-sonnet-4-6","api":"anthropic-messages","provider":"anthropic","usage":{"input":10,"output":5,"cacheRead":0,"cacheWrite":0,"totalTokens":15}}}
+{"type":"message","id":"result-e1","parentId":"asst-e1","timestamp":"2026-01-01T10:01:05.250Z","message":{"role":"toolResult","toolCallId":"toolu_empty001","toolName":"","isError":false,"content":[{"type":"text","text":"ok"}]}}'
+printf '%s\n' "${EMPTY_FIXTURE}" > "${TMP_HOME_E}/agents/main/sessions/empty-tool-sid.jsonl"
+
+run_report "${TMP_HOME_E}" "${ARGV_FILE_E}"
+
+# No tools create at all (the only tool had an empty name → skipped).
+if [[ "$(count_adjacent "tools" "create" "${ARGV_FILE_E}")" -eq 0 ]]; then
+  pass "TOOLEV-01 empty-skip: empty-name toolCall produces zero tools create"
+else
+  fail "TOOLEV-01 empty-skip: empty-name toolCall still emitted a tools create (garbage)"
+fi
+
+# No real tool-event (no --duration-ms) for the empty-name toolCall.
+if [[ "$(count_grep "^--duration-ms$" "${ARGV_FILE_E}")" -eq 0 ]]; then
+  pass "TOOLEV-02 empty-skip: empty-name toolCall produces zero meter tool-event"
+else
+  fail "TOOLEV-02 empty-skip: empty-name toolCall still emitted a meter tool-event (garbage)"
+fi
+
+# Defensive: no empty-string --tool-id was ever passed.
+if argv_vals "--tool-id" "${ARGV_FILE_E}" | grep -q "^$"; then
+  fail "TOOLEV empty-skip: an empty --tool-id value was emitted"
+else
+  pass "TOOLEV empty-skip: no empty --tool-id values emitted"
+fi
+
+rm -f "${ARGV_FILE_E}"
 
 # ===========================================================================
 # GROUP P: Fail-open probe (TOOLEV-04)

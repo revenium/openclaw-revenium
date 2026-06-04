@@ -227,15 +227,18 @@ normalize_tool_id() {
 
 # ---------------------------------------------------------------------------
 # classify_tool_type — return --tool-type value for revenium tools create.
-# MCP tool names contain __ (double-underscore) by OpenClaw convention.
-# All others are built-in Claude Code tools.
+# MCP tool names contain __ (double-underscore) by OpenClaw convention → MCP_SERVER.
+# All others are built-in Claude Code tools → CUSTOM.
+# The Revenium API enforces a fixed enum: [SDK, MCP_SERVER, AI_SERVICE, REST_API,
+# LOCAL_FUNCTION, CUSTOM]. "BUILTIN" is NOT valid and is rejected HTTP 400, so
+# built-ins are reported as CUSTOM (the type the existing tenant tools already use).
 # ---------------------------------------------------------------------------
 classify_tool_type() {
   local name="$1"
   if [[ "${name}" == *"__"* ]]; then
     echo "MCP_SERVER"
   else
-    echo "BUILTIN"
+    echo "CUSTOM"
   fi
 }
 
@@ -1167,6 +1170,10 @@ try:
                             if c.get('type') == 'text':
                                 err_text = c.get('text', '')[:256]
                                 break
+                    # Strip newlines/tabs/field-separator so a multi-line error
+                    # can never split into a spurious TSV row (WR-02) or shift fields.
+                    for _ch in ('\n', '\r', '\t', '\x1f'):
+                        err_text = err_text.replace(_ch, ' ')
                     tool_results[tc_id] = {
                         'result_ts': r.get('timestamp', ''),
                         'is_error': 'true' if msg.get('isError') else 'false',
@@ -1181,17 +1188,25 @@ for tc_id, tc in tool_calls.items():
     duration_ms = 0
     if start_ts and end_ts:
         duration_ms = max(0, int((end_ts - start_ts).total_seconds() * 1000))
-    print('{}\t{}\t{}\t{}\t{}\t{}'.format(
+    # Join with \x1f (unit separator), NOT \t: read's IFS treats tab as
+    # whitespace and COLLAPSES empty fields, which would shift every column
+    # whenever a tool name (or other middle field) is empty. \x1f is
+    # non-whitespace, so empty fields are preserved positionally.
+    print('\x1f'.join([
         tc_id, tc['name'], tc['parent_msg_ts'],
-        duration_ms, tr.get('is_error', 'false'), tr.get('error_msg', ''),
-    ))
+        str(duration_ms), tr.get('is_error', 'false'), tr.get('error_msg', ''),
+    ]))
 PY
 
-    while IFS=$'\t' read -r tc_id tool_name parent_ts duration_ms is_error error_msg; do
+    while IFS=$'\x1f' read -r tc_id tool_name parent_ts duration_ms is_error error_msg; do
       [[ -z "${tc_id}" ]] && continue
+      # Skip toolCalls with no usable tool name — registering / metering an empty
+      # --tool-id produces garbage rows (tools create fails, tool-event is noise).
+      [[ -z "${tool_name}" || "${tool_name}" == "unknown" ]] && continue
       local tool_id tool_type
       tool_id=$(normalize_tool_id "${tool_name}")
       tool_type=$(classify_tool_type "${tool_name}")
+      [[ -z "${tool_id}" ]] && continue
       # Sanitize before ledger key / log (T-04-08): 64-char truncation applied in helpers
       _register_tool "${tool_name}" "${tool_id}" "${tool_type}"
       _meter_tool_event "${tc_id}" "${tool_id}" "${parent_ts:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \

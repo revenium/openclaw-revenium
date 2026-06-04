@@ -212,6 +212,22 @@ if [[ "$1 $2" == "tools create" ]]; then
     echo "Error: 500 tools service unavailable" >&2
     exit 1
   fi
+  # Mirror the real API's tool-type enum enforcement: the live endpoint rejects
+  # any --tool-type outside this set with HTTP 400 (confirmed against
+  # api.revenium.ai — "BUILTIN" is NOT valid). Keeps the hermetic test honest so
+  # an invalid classify_tool_type value is caught here, not in production.
+  _stub_tt=""
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "--tool-type" ]]; then _stub_tt="${2:-}"; break; fi
+    shift
+  done
+  case "${_stub_tt}" in
+    SDK|MCP_SERVER|AI_SERVICE|REST_API|LOCAL_FUNCTION|CUSTOM) : ;;
+    *)
+      echo "Error: Request failed (HTTP 400): Value '${_stub_tt}' is not valid. Allowed values: [SDK, MCP_SERVER, AI_SERVICE, REST_API, LOCAL_FUNCTION, CUSTOM]" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 # ---------------------------------------------------------------------------
