@@ -30,7 +30,6 @@ LEDGER_FILE="${OPENCLAW_HOME}/revenium-reported.ledger"
 LOG_FILE="${OPENCLAW_HOME}/revenium-metering.log"
 SKILL_DIR="${OPENCLAW_HOME}/skills/revenium"
 CONFIG_FILE="${SKILL_DIR}/config.json"
-BUDGET_STATUS_FILE="${SKILL_DIR}/budget-status.json"
 OFFSETS_FILE="${OPENCLAW_HOME}/revenium-offsets.json"
 JOBS_LEDGER_FILE="${REVENIUM_JOBS_LEDGER_FILE:-${OPENCLAW_HOME}/revenium-jobs.ledger}"
 
@@ -841,14 +840,11 @@ PY
     fi
 
     # Determine operation type from message content:
-    #   GUARDRAIL — completion reads budget-status.json (budget enforcement check)
     #   TOOL_CALL — completion invokes tools (stopReason=toolUse)
     #   CHAT      — regular text response
     local raw_stop_reason operation_type="CHAT"
     raw_stop_reason=$(echo "${line}" | jq -r '.message.stopReason // "stop"')
-    if echo "${line}" | jq -e '.message.content[] | select(.type=="toolCall") | .arguments' 2>/dev/null | grep -q "budget-status.json"; then
-      operation_type="GUARDRAIL"
-    elif [[ "${raw_stop_reason}" == "toolUse" || "${raw_stop_reason}" == "tool_use" ]]; then
+    if [[ "${raw_stop_reason}" == "toolUse" || "${raw_stop_reason}" == "tool_use" ]]; then
       operation_type="TOOL_CALL"
     fi
 

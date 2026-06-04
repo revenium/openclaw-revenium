@@ -299,6 +299,18 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Assert: no --operation-type GUARDRAIL ever emitted (GRDEV-06)
+# report.sh only ever assigns CHAT or TOOL_CALL; GUARDRAIL is emitted
+# exclusively by guardrail-check.sh (Plan 01), never by report.sh.
+# ---------------------------------------------------------------------------
+argv_vals() { awk -v flag="$1" '$0==flag{getline;print}' "${ARGV_FILE}" 2>/dev/null || true; }
+if argv_vals "--operation-type" | grep -q "^GUARDRAIL$"; then
+  fail "GRDEV-06: --operation-type GUARDRAIL found in report.sh argv (dead heuristic still active)"
+else
+  pass "GRDEV-06: no --operation-type GUARDRAIL in report.sh argv (only CHAT/TOOL_CALL)"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
