@@ -38,7 +38,7 @@ Post-ship fix: the agent-written-marker pipeline never fired in production (Open
 
 **Milestone Goal:** Close the metering-visibility gaps found while debugging v1.1 in production — make guardrail enforcement and tool usage observable as first-class Revenium transactions, not just Chat/Tool Call completions. (Revenium renders a completion's `operationType` as the transaction type: CHAT→Chat, TOOL_CALL→Tool Call, GUARDRAIL→Guardrail.)
 
-- [ ] **Phase 9: Guardrail Event Metering** — emit a GUARDRAIL transaction on each halt / warn / shadow enforcement transition, deduped + fail-open
+- [x] **Phase 9: Guardrail Event Metering** — emit a GUARDRAIL transaction on each halt / warn / shadow enforcement transition, deduped + fail-open (completed 2026-06-04)
 - [ ] **Phase 10: Tool Registry & Tool-Event Metering** — register tools and meter tool invocations in Revenium (needs discuss/spec)
 
 ## Phase Details
@@ -56,11 +56,11 @@ Post-ship fix: the agent-written-marker pipeline never fired in production (Open
   4. Each guardrail transaction is attributed to the agent (root session) and carries the open `--agentic-job-id` when a job is in progress (GRDEV-04)
   5. Guardrail-event metering is fully fail-open — a metering error never blocks the status write, halt/warn/shadow notification, or cron tick — and `report.sh` no longer emits the dead operation-type `GUARDRAIL` heuristic (GRDEV-05, GRDEV-06)
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 Plans:
 
 - [x] 09-00-PLAN.md — Wave 0: test scaffolding (tests/test_guardrail_argv.sh, stub-revenium.sh guardrails switch) + resolve live meter-completion CLI questions
-- [ ] 09-01-PLAN.md — Core metering: common.sh ledger constants, warn-onset detection, Section M _emit_guardrail_event (halt/warn/shadow), attribution + dedup, fail-open
+- [x] 09-01-PLAN.md — Core metering: common.sh ledger constants, warn-onset detection, Section M _emit_guardrail_event (halt/warn/shadow), attribution + dedup, fail-open
 - [x] 09-02-PLAN.md — Remove dead report.sh GUARDRAIL heuristic (D-12 / GRDEV-06) + test assertion
 
 ### Phase 10: Tool Registry & Tool-Event Metering
@@ -89,5 +89,5 @@ Plans:
 | 6. Job Lifecycle Wiring | v1.1 | 3/3 | Complete | 2026-06-03 |
 | 7. Root-Session Job Rollup | v1.1 | 2/2 | Complete | 2026-06-03 |
 | 8. Halt → CANCELLED Outcome | v1.1 | 2/2 | Complete | 2026-06-03 |
-| 9. Guardrail Event Metering | v1.2 | 2/3 | In Progress|  |
+| 9. Guardrail Event Metering | v1.2 | 3/3 | Complete   | 2026-06-04 |
 | 10. Tool Registry & Tool-Event Metering | v1.2 | 0/? | Not started | — |
