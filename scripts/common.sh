@@ -56,6 +56,13 @@ JOB_TAXONOMY_FILE="${STATE_DIR}/job-taxonomy.json"
 MARKERS_DIR="${STATE_DIR}/markers"
 SESSIONS_DIR="${OPENCLAW_HOME}/agents/main/sessions"
 
+# Phase 9 path constants (GRDEV-01..05).
+# GUARDRAIL_LEDGER_FILE: append-only dedup ledger for guardrail event metering.
+# JOBS_LEDGER_FILE: read-only consumer from guardrail-check.sh for open-job attribution.
+#   Identical path to report.sh's JOBS_LEDGER_FILE (must stay in sync).
+GUARDRAIL_LEDGER_FILE="${OPENCLAW_HOME}/revenium-guardrail.ledger"
+JOBS_LEDGER_FILE="${REVENIUM_JOBS_LEDGER_FILE:-${OPENCLAW_HOME}/revenium-jobs.ledger}"
+
 # Agent name constant: defaults to "OpenClaw". Override via env to scope
 # guardrail rule filters when multiple distinct installs share one API key.
 # Used for --filter AGENT:IS:${REVENIUM_AGENT_NAME} in setup-guardrails.sh

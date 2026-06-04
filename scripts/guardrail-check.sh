@@ -95,6 +95,7 @@ PY
 AUTONOMOUS=$(read_config_field autonomousMode)
 NOTIFY_CHANNEL=$(read_config_field notifyChannel)
 NOTIFY_TARGET=$(read_config_field notifyTarget)
+ORG_NAME=$(read_config_field organizationName)
 
 # (E) Resolve teamId from revenium config show.
 # Confirmed output format: "Team ID:    5jdO2v" (03-01-SUMMARY verification).
@@ -286,6 +287,28 @@ for nr in new_rules:
                 'hardLimit': nr['hardLimit'],
             })
 
+# Warn-onset transition detection (D-03 / GRDEV-02): mirrors shadow_transitions pattern
+# above but gates on state=='warn' (warnBreached but NOT breached) and excludes shadowMode.
+# Reuses prev_rules_by_id already built above — no second construction.
+# Pitfall 1: use state=='warn' NOT state=='block'.
+# Pitfall 6: exclude shadowMode rules to avoid double-emitting (shadow path handles them).
+warn_transitions = []
+for nr in new_rules:
+    # warnBreached but NOT breached (state=='warn', not 'block') and not shadow
+    if nr.get('state') == 'warn' and not nr.get('shadowMode', False):
+        pr = prev_rules_by_id.get(nr.get('ruleId'))
+        # onset edge: no prev rule OR prev was NOT in warn state
+        if (pr is None) or (pr.get('state') != 'warn'):
+            warn_transitions.append({
+                'ruleId': nr['ruleId'],
+                'name': nr['name'],
+                'metricType': nr.get('metricType', ''),
+                'windowType': nr.get('windowType', ''),
+                'currentValue': nr['currentValue'],
+                'hardLimit': nr['hardLimit'],
+                'warnThreshold': nr.get('warnThreshold', 0),
+            })
+
 # Build output document (Pattern 6 schema)
 data = {
     'halted': new_halted,
@@ -326,9 +349,13 @@ if halt_transition and halted_rule:
     print(f"HALTED_WINDOW_TYPE={halted_rule['windowType']}")
     print(f"HALTED_CURRENT_VALUE={halted_rule['currentValue']}")
     print(f"HALTED_HARD_LIMIT={halted_rule['hardLimit']}")
+    print(f"HALTED_AT={halted_at}")
 # Emit shadow-mode transitions as a single JSON-encoded line for bash to parse.
 # Always emitted (defaults to '[]') so bash sed extraction is deterministic.
 print(f"SHADOW_TRANSITIONS={json.dumps(shadow_transitions)}")
+# Emit warn-onset transitions as a single JSON-encoded line for bash to parse.
+# Always emitted (defaults to '[]') so bash sed extraction is deterministic (GRDEV-02).
+print(f"WARN_TRANSITIONS={json.dumps(warn_transitions)}")
 PY
 ) || { warn "guardrail status update failed — status file may be stale"; exit 0; }
 
