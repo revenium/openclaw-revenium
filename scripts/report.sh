@@ -32,6 +32,8 @@ SKILL_DIR="${OPENCLAW_HOME}/skills/revenium"
 CONFIG_FILE="${SKILL_DIR}/config.json"
 OFFSETS_FILE="${OPENCLAW_HOME}/revenium-offsets.json"
 JOBS_LEDGER_FILE="${REVENIUM_JOBS_LEDGER_FILE:-${OPENCLAW_HOME}/revenium-jobs.ledger}"
+TOOL_REGISTRY_LEDGER_FILE="${OPENCLAW_HOME}/revenium-tools.ledger"
+TOOL_EVENTS_LEDGER_FILE="${OPENCLAW_HOME}/revenium-tool-events.ledger"
 
 # ---------------------------------------------------------------------------
 # Phase 4 constants (METER-03 / TRACE-01/02 / D-07)
@@ -110,6 +112,8 @@ fi
 
 touch "${LEDGER_FILE}"
 touch "${JOBS_LEDGER_FILE}"
+touch "${TOOL_REGISTRY_LEDGER_FILE}"
+touch "${TOOL_EVENTS_LEDGER_FILE}"
 
 # ---------------------------------------------------------------------------
 # Read optional organization name from config.json
@@ -205,6 +209,77 @@ with os.fdopen(fd, 'w') as f:
     json.dump(d, f)
 os.rename(tmp, path)
 PY
+}
+
+# ---------------------------------------------------------------------------
+# normalize_tool_id — convert raw session tool name to stable URL-safe --tool-id.
+# Rules: __ → -- (MCP separator); _ → -; lowercase via python3 (Bash 3.2 safe).
+# Examples: web_fetch→web-fetch; mcp__ctx7__search→mcp--ctx7--search
+# ---------------------------------------------------------------------------
+normalize_tool_id() {
+  local raw="$1"
+  local normalized="${raw//__/--}"
+  normalized="${normalized//_/-}"
+  TOOL_NAME="${normalized}" python3 -c "import os; print(os.environ['TOOL_NAME'].lower())" 2>/dev/null \
+    || printf '%s' "${normalized}"
+}
+
+# ---------------------------------------------------------------------------
+# classify_tool_type — return --tool-type value for revenium tools create.
+# MCP tool names contain __ (double-underscore) by OpenClaw convention.
+# All others are built-in Claude Code tools.
+# ---------------------------------------------------------------------------
+classify_tool_type() {
+  local name="$1"
+  if [[ "${name}" == *"__"* ]]; then
+    echo "MCP_SERVER"
+  else
+    echo "BUILTIN"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# _register_tool — register a tool in Revenium on first sight (TOOLEV-01/04).
+# Idempotent: skip if TOOL:<tool_id> already in TOOL_REGISTRY_LEDGER_FILE.
+# 409-as-success backstop: mirrors jobs create (D-06 equivalent).
+# Fail-open: returns 0 on all paths; never blocks tool-event emission.
+# CRITICAL (mirrors D-12): NEVER touch failed_count/reported_count.
+# ---------------------------------------------------------------------------
+_register_tool() {
+  local tool_name="$1"
+  local tool_id="$2"
+  local tool_type="$3"
+
+  if grep -qF "TOOL:${tool_id}" "${TOOL_REGISTRY_LEDGER_FILE}" 2>/dev/null; then
+    return 0  # already registered — idempotent skip
+  fi
+
+  local reg_cmd=( revenium tools create --name "${tool_name}" --tool-id "${tool_id}" \
+                  --tool-type "${tool_type}" --quiet )
+  [[ -n "${ORG_NAME:-}" ]] && reg_cmd+=(--organization-name "${ORG_NAME}")
+
+  local reg_out reg_exit
+  reg_out=$("${reg_cmd[@]}" 2>&1) && reg_exit=0 || reg_exit=$?
+
+  local reg_success=false
+  if [[ "${reg_exit}" -eq 0 ]]; then
+    reg_success=true
+  elif echo "${reg_out}" | grep -qi "409\|already.exist\|conflict"; then
+    reg_success=true  # 409-as-success backstop (mirrors jobs create D-06)
+  fi
+
+  if [[ "${reg_success}" == "true" ]]; then
+    local reg_ts
+    reg_ts=$(python3 -c "import time; print(f'{time.time():.3f}')" 2>/dev/null || date +%s)
+    printf 'TOOL:%s:%s\n' "${tool_id}" "${reg_ts}" >> "${TOOL_REGISTRY_LEDGER_FILE}"
+    local tool_id_log="${tool_id:0:64}"
+    info "Tool registered: name=${tool_name} id=${tool_id_log} type=${tool_type}"
+  else
+    local tool_id_log="${tool_id:0:64}"
+    warn "Tool registration failed: id=${tool_id_log} exit=${reg_exit} — tool-event emission continues"
+    # Fail-open: do NOT return non-zero; do NOT block tool-event emission
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -987,6 +1062,89 @@ PY
     info "Session ${session_id}: reported ${reported_count} events, ${failed_count} failures"
   fi
 
+  # ---------------------------------------------------------------------------
+  # toolCall scan loop — AFTER completion metering (TOOLEV-04 sequencing rule).
+  # Scans the same session file for toolCall content items; for each:
+  #   1. _register_tool (create-once, registry ledger gated)
+  # CRITICAL: NEVER touch failed_count/reported_count; NEVER return/exit.
+  # Gated on TOOLS_CLI_CAPABLE (TOOLEV-04).
+  # ---------------------------------------------------------------------------
+  if [[ "${TOOLS_CLI_CAPABLE}" == "true" ]]; then
+    local tool_scan_tmp
+    tool_scan_tmp=$(mktemp)
+
+    SESSION_FILE="${session_file}" python3 - <<'PY' 2>/dev/null > "${tool_scan_tmp}" || true
+import json, os
+from datetime import datetime, timezone
+
+sf = os.environ.get('SESSION_FILE', '')
+
+def parse_ts(s):
+    try: return datetime.fromisoformat(s.replace('Z', '+00:00'))
+    except Exception: pass
+    for fmt in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ'):
+        try: return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+        except Exception: pass
+    return None
+
+tool_calls = {}   # toolcall_id -> {name, parent_msg_ts}
+tool_results = {} # toolcall_id -> {result_ts, is_error, error_msg}
+try:
+    with open(sf, encoding='utf-8') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line: continue
+            try: r = json.loads(line)
+            except: continue
+            if r.get('type') != 'message': continue
+            msg = r.get('message', {})
+            if msg.get('role') == 'assistant':
+                for item in msg.get('content', []):
+                    if item.get('type') == 'toolCall' and item.get('id'):
+                        tool_calls[item['id']] = {
+                            'name': item.get('name', 'unknown'),
+                            'parent_msg_ts': r.get('timestamp', ''),
+                        }
+            elif msg.get('role') == 'toolResult':
+                tc_id = msg.get('toolCallId')
+                if tc_id:
+                    err_text = ''
+                    if msg.get('isError'):
+                        for c in msg.get('content', []):
+                            if c.get('type') == 'text':
+                                err_text = c.get('text', '')[:256]
+                                break
+                    tool_results[tc_id] = {
+                        'result_ts': r.get('timestamp', ''),
+                        'is_error': 'true' if msg.get('isError') else 'false',
+                        'error_msg': err_text,
+                    }
+except Exception:
+    pass
+for tc_id, tc in tool_calls.items():
+    tr = tool_results.get(tc_id, {})
+    start_ts = parse_ts(tc['parent_msg_ts'])
+    end_ts = parse_ts(tr.get('result_ts', ''))
+    duration_ms = 0
+    if start_ts and end_ts:
+        duration_ms = max(0, int((end_ts - start_ts).total_seconds() * 1000))
+    print('{}\t{}\t{}\t{}\t{}\t{}'.format(
+        tc_id, tc['name'], tc['parent_msg_ts'],
+        duration_ms, tr.get('is_error', 'false'), tr.get('error_msg', ''),
+    ))
+PY
+
+    while IFS=$'\t' read -r tc_id tool_name parent_ts duration_ms is_error error_msg; do
+      [[ -z "${tc_id}" ]] && continue
+      local tool_id tool_type
+      tool_id=$(normalize_tool_id "${tool_name}")
+      tool_type=$(classify_tool_type "${tool_name}")
+      _register_tool "${tool_name}" "${tool_id}" "${tool_type}"
+    done < "${tool_scan_tmp}"
+
+    rm -f "${tool_scan_tmp}"
+  fi
+
   # Persist the line offset so next run skips already-processed lines.
   # CR-02: only advance past lines that were all handled. If any completion
   # failed to post (network/API/auth transient), do NOT advance — leave the
@@ -1247,6 +1405,19 @@ if revenium jobs --help >/dev/null 2>&1 && \
   JOBS_CLI_CAPABLE=true
 else
   warn "revenium jobs/--agentic-job-id not available — job work skipped; metering continues as v1.0."
+fi
+
+# TOOLS_CLI_CAPABLE — one-time dual capability probe per cron tick (TOOLEV-04).
+# Set true only if BOTH `revenium tools --help` exits 0 AND
+# `revenium meter tool-event --help` output contains --tool-id.
+# On probe failure, warn once and leave TOOLS_CLI_CAPABLE=false so all tool
+# work is skipped; metering continues as v1.1 (job-aware).
+TOOLS_CLI_CAPABLE=false
+if revenium tools --help >/dev/null 2>&1 && \
+   revenium meter tool-event --help 2>&1 | grep -q -- '--tool-id'; then
+  TOOLS_CLI_CAPABLE=true
+else
+  warn "revenium tools/meter tool-event not available — tool work skipped; metering continues as v1.1."
 fi
 
 main "$@"

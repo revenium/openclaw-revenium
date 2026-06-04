@@ -269,9 +269,11 @@ meter_help_probes=0
 if [[ -f "${ARGV_FILE}" ]]; then
   meter_completions=$(grep -c "^meter$" "${ARGV_FILE}" 2>/dev/null) || meter_completions=0
   task_type_count=$(grep -c "^--task-type$" "${ARGV_FILE}" 2>/dev/null) || task_type_count=0
-  # Count `meter` `completion` `--help` token triples (capability probe).
+  # Count `meter` `completion` `--help` token triples (JOBS_CLI_CAPABLE capability probe).
   meter_help_probes=$(awk 'p2=="meter"&&p1=="completion"&&$0=="--help"{c++}{p2=p1;p1=$0}END{print c+0}' "${ARGV_FILE}" 2>/dev/null) || meter_help_probes=0
-  meter_completions=$((meter_completions - meter_help_probes))
+  # Count `meter` `tool-event` `--help` token triples (TOOLS_CLI_CAPABLE capability probe, Phase 10).
+  meter_tool_event_help_probes=$(awk 'p2=="meter"&&p1=="tool-event"&&$0=="--help"{c++}{p2=p1;p1=$0}END{print c+0}' "${ARGV_FILE}" 2>/dev/null) || meter_tool_event_help_probes=0
+  meter_completions=$((meter_completions - meter_help_probes - meter_tool_event_help_probes))
 fi
 
 if [[ "${meter_completions}" -gt 0 && "${task_type_count}" -eq "${meter_completions}" ]]; then
