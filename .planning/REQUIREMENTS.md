@@ -15,7 +15,7 @@
 - [x] **GRDEV-03**: A **shadow-mode** would-have-halted transition emits exactly one GUARDRAIL transaction (`--task-type budget_guardrail_shadow`), once per shadow breach
 - [x] **GRDEV-04**: Each guardrail transaction is attributed to the agent (root session, `--agent openclaw-<root_session_id>`) and carries the open `--agentic-job-id` when a job is in progress
 - [x] **GRDEV-05**: Guardrail-event metering is fully **fail-open** — any metering error never blocks guardrail enforcement (status write, halt/warn/shadow notification) or the cron tick
-- [ ] **GRDEV-06**: The dead/buggy operation-type `GUARDRAIL` heuristic is **removed** from `report.sh` (it greps tool-call args for the wrong filename and would tag every turn) so normal completions are only ever `CHAT` or `TOOL_CALL`
+- [x] **GRDEV-06**: The dead/buggy operation-type `GUARDRAIL` heuristic is **removed** from `report.sh` (it greps tool-call args for the wrong filename and would tag every turn) so normal completions are only ever `CHAT` or `TOOL_CALL`
 
 ### Tool Registry & Tool-Event Metering (TOOLEV) — Phase 10
 
