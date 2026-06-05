@@ -69,7 +69,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 8. Halt → CANCELLED Outcome | v1.1 | 2/2 | Complete | 2026-06-03 |
 | 9. Guardrail Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
 | 10. Tool Registry & Tool-Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
-| 11. Structural Marker Enforcement | v1.3 | 3/3 | Complete | 2026-06-05 |
+| 11. Structural Marker Enforcement | v1.3 | 3/3 | Complete    | 2026-06-05 |
 
 ## Phase Details
 
@@ -89,7 +89,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
   4. `scripts/verify-markers.sh` reports, per session, completions vs. markers so the gap is observable before/after
   5. No change to budget-rule logic, `config.json` `ruleIds`, or the `guardrail-status.json` halt/warn contract; existing `report.sh` `unclassified` default + completion_id correlation preserved
 
-**Plans:** 3/3 plans executed (complete)
+**Plans:** 3/3 plans complete
 
 Plans:
 - [x] 11-01-PLAN.md — Build the revenium-marker-gate plugin package (source, node:test suite, committed dist/index.js) — SC-1, SC-2, SC-3
