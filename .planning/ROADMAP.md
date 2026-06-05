@@ -5,15 +5,15 @@
 - ✅ **v1.0 Budget Guardrails & Metering** — Phases 1–4 (shipped 2026-06-03)
 - ✅ **v1.1 Agentic Job Tracking** — Phases 5–8 (shipped 2026-06-04)
 - ✅ **v1.2 Metering Completeness** — Phases 9–10 (shipped 2026-06-04)
-- 🚧 **v1.3 Reliable Attribution** — Phase 11+ (in progress)
+- ✅ **v1.3 Reliable Attribution** — Phase 11 (shipped 2026-06-05)
 
 ## Phases
 
-### 🚧 v1.3 Reliable Attribution (In Progress)
+### ✅ v1.3 Reliable Attribution (Shipped 2026-06-05)
 
 **Milestone Goal:** Make task/job marker attribution reliable on real installs — markers must not depend on the LLM remembering an end-of-turn directive. Diagnosed live on the ClawHub host (`98.82.34.123`, opus-4-8): the v1.1 AGENTS.md directive is present and in-context, yet the agent drops the end-of-turn `write-marker.sh` gate (~1 of 64 completions marked). The fix is a typed OpenClaw `before_agent_finalize` plugin that forces classification before the agent can yield.
 
-- [ ] **Phase 11: Structural Marker Enforcement via before_agent_finalize plugin** (0/3) — see details below
+- [x] **Phase 11: Structural Marker Enforcement via before_agent_finalize plugin** (3/3) — completed 2026-06-05
 
 <details>
 <summary>✅ v1.0 Budget Guardrails & Metering (Phases 1–4) — SHIPPED 2026-06-03</summary>
@@ -69,7 +69,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 8. Halt → CANCELLED Outcome | v1.1 | 2/2 | Complete | 2026-06-03 |
 | 9. Guardrail Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
 | 10. Tool Registry & Tool-Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
-| 11. Structural Marker Enforcement | v1.3 | 2/3 | In Progress|  |
+| 11. Structural Marker Enforcement | v1.3 | 3/3 | Complete | 2026-06-05 |
 
 ## Phase Details
 
@@ -89,9 +89,9 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
   4. `scripts/verify-markers.sh` reports, per session, completions vs. markers so the gap is observable before/after
   5. No change to budget-rule logic, `config.json` `ruleIds`, or the `guardrail-status.json` halt/warn contract; existing `report.sh` `unclassified` default + completion_id correlation preserved
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans executed (complete)
 
 Plans:
 - [x] 11-01-PLAN.md — Build the revenium-marker-gate plugin package (source, node:test suite, committed dist/index.js) — SC-1, SC-2, SC-3
 - [x] 11-02-PLAN.md — verify-markers.sh per-session completions-vs-markers diagnostic + test; report.sh/guardrail regression — SC-4, SC-5
-- [ ] 11-03-PLAN.md — post-install.sh idempotent plugin install + enable + inspect; ClawHub host E2E validation — SC-1, SC-2, SC-3
+- [x] 11-03-PLAN.md — post-install.sh idempotent plugin install + enable + inspect; ClawHub host E2E validation — SC-1, SC-2, SC-3 (confirmed on live host)
