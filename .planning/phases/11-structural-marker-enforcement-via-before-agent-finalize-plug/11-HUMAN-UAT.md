@@ -1,9 +1,10 @@
 ---
-status: partial
+status: accepted
 phase: 11-structural-marker-enforcement-via-before-agent-finalize-plug
 source: [11-VERIFICATION.md]
 started: 2026-06-05T00:00:00Z
 updated: 2026-06-05T00:00:00Z
+note: "User waived the numeric coverage record 2026-06-05 (qualitative host validation accepted as sufficient). Optional follow-up: capture before/after verify-markers.sh % on a future host session."
 ---
 
 ## Current Test

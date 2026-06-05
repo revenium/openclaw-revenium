@@ -1,9 +1,10 @@
 ---
 phase: 11-structural-marker-enforcement-via-before-agent-finalize-plug
 verified: 2026-06-05T00:00:00Z
-status: human_needed
-score: 10/11 must-haves verified
-overrides_applied: 0
+status: passed
+score: 10/11 must-haves verified (1 waived)
+overrides_applied: 1
+override_note: "SC-1 numeric coverage record waived by user 2026-06-05 — gate behavior confirmed working end-to-end on the live ClawHub host ('working great', attribution flowing on the Revenium side); only the before/after percentages were lost when terminal history cleared. Tracked as a non-blocking follow-up in 11-HUMAN-UAT.md."
 human_verification:
   - test: "Re-run scripts/verify-markers.sh on the ClawHub host (98.82.34.123) before and after a batch of substantive turns and record the numeric before/after coverage percentages."
     expected: "Coverage rises well above ~1/64 baseline. Exact numbers captured and added to 11-03-SUMMARY.md."
@@ -14,7 +15,7 @@ human_verification:
 
 **Phase Goal:** Per-turn task classification is structurally enforced, not LLM-compliance-dependent — a typed OpenClaw `before_agent_finalize` plugin (`revenium-marker-gate`) forces the agent to run `write-marker.sh` before it can finalize a substantive turn, bounded (`retry.maxAttempts`) and fail-open (never blocks the reply). Plus a `scripts/verify-markers.sh` diagnostic that makes the completions-vs-markers gap measurable.
 **Verified:** 2026-06-05T00:00:00Z
-**Status:** human_needed
+**Status:** passed (SC-1 numeric record waived by user — see override_note)
 **Re-verification:** No — initial verification
 
 ---
