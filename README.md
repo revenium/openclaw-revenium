@@ -6,6 +6,13 @@ Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) a
 
 - [OpenClaw](https://docs.openclaw.ai) installed and running
 - [ClawHub](https://docs.openclaw.ai) CLI: `npm i -g clawhub`
+- The [`revenium` CLI](https://github.com/revenium/revenium-cli) — installed via [Homebrew](https://brew.sh) (works on both macOS and Linux):
+
+  ```bash
+  brew install revenium/tap/revenium
+  ```
+
+  The skill is gated on this binary and won't load without it. (`post-install.sh` also installs it automatically via Homebrew if it's missing — see [step 3](#3-run-post-install-setup).)
 - [Revenium](https://app.revenium.ai/connections) API key, Team ID, Tenant ID, and Owner ID
 
 ## Installation
