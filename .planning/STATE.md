@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Metering Completeness
-status: Awaiting next milestone
-last_updated: "2026-06-04T22:38:48.136Z"
-last_activity: 2026-06-04 - Completed quick task 260604-qo0: job SUCCESS → outcome-type CONVERTED
+milestone: v1.3
+milestone_name: Reliable Attribution
+status: Phase 11 added — needs discuss/plan
+last_updated: "2026-06-05T00:00:00.000Z"
+last_activity: 2026-06-05 - Added Phase 11 (structural marker enforcement via before_agent_finalize plugin)
 progress:
   total_phases: 2
   completed_phases: 2
@@ -20,7 +20,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04 after v1.2 milestone)
 
 **Core value:** Agents never silently blow through token budgets — every turn is guardrail-checked and the user keeps control past a threshold — and **every cost-incurring activity** (agent completions, guardrail enforcement events, and tool invocations) is metered and attributed by root session, task type, and agentic job, so spend is fully observable in Revenium with no blind spots.
-**Current focus:** v1.2 shipped — awaiting next milestone (`/gsd-new-milestone`)
+**Current focus:** v1.3 Reliable Attribution — Phase 11 (structural marker enforcement) added; run `/gsd-discuss-phase 11` next. Research seed at `.planning/research/marker-enforcement-before-agent-finalize.md`.
 
 ## Current Position
 
@@ -78,6 +78,10 @@ Recent decisions affecting current work:
 - [v1.1]: Job tracking is observability-only — per-job-type budget rules deferred; enforcement stays on `AGENT:STARTS_WITH` with server-side job rollup
 - [Phase 4]: Task-type correlation by `completion_id` + marker-after fallback (markers land after the completion they classify) — same correlation concern applies to job markers
 - [Phase 4]: `AGENT:STARTS_WITH:openclaw-` attribution (D-07) — root-session rollup; job rollup (Phase 7) extends this resolver
+
+### Roadmap Evolution
+
+- Phase 11 added (2026-06-05): Structural Marker Enforcement via before_agent_finalize plugin — starts milestone v1.3 Reliable Attribution. Origin: live diagnosis on ClawHub host 98.82.34.123 showed the agent drops the end-of-turn marker gate even with AGENTS.md directives present. Research seed: `.planning/research/marker-enforcement-before-agent-finalize.md`.
 
 ### Pending Todos
 

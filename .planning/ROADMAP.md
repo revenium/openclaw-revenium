@@ -5,8 +5,15 @@
 - ✅ **v1.0 Budget Guardrails & Metering** — Phases 1–4 (shipped 2026-06-03)
 - ✅ **v1.1 Agentic Job Tracking** — Phases 5–8 (shipped 2026-06-04)
 - ✅ **v1.2 Metering Completeness** — Phases 9–10 (shipped 2026-06-04)
+- 🚧 **v1.3 Reliable Attribution** — Phase 11+ (in progress)
 
 ## Phases
+
+### 🚧 v1.3 Reliable Attribution (In Progress)
+
+**Milestone Goal:** Make task/job marker attribution reliable on real installs — markers must not depend on the LLM remembering an end-of-turn directive. Diagnosed live on the ClawHub host (`98.82.34.123`, opus-4-8): the v1.1 AGENTS.md directive is present and in-context, yet the agent drops the end-of-turn `write-marker.sh` gate (~1 of 64 completions marked). The fix is a typed OpenClaw `before_agent_finalize` plugin that forces classification before the agent can yield.
+
+- [ ] **Phase 11: Structural Marker Enforcement via before_agent_finalize plugin** — see details below
 
 <details>
 <summary>✅ v1.0 Budget Guardrails & Metering (Phases 1–4) — SHIPPED 2026-06-03</summary>
@@ -62,3 +69,24 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 8. Halt → CANCELLED Outcome | v1.1 | 2/2 | Complete | 2026-06-03 |
 | 9. Guardrail Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
 | 10. Tool Registry & Tool-Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
+| 11. Structural Marker Enforcement | v1.3 | 0/? | Not started | - |
+
+## Phase Details
+
+### Phase 11: Structural Marker Enforcement via before_agent_finalize plugin
+
+**Goal:** Per-turn task classification is structurally enforced, not LLM-compliance-dependent — a typed OpenClaw `before_agent_finalize` plugin (`revenium-marker-gate`) forces the agent to run `write-marker.sh` before it can finalize a substantive turn, bounded (`retry.maxAttempts`) and fail-open (never blocks the reply). Plus a `scripts/verify-markers.sh` diagnostic that makes the completions-vs-markers gap measurable.
+
+**Depends on:** Phase 10. New tech surface (TypeScript OpenClaw plugin) — needs `/gsd-discuss-phase 11` + research before planning.
+
+**Research seed:** [`.planning/research/marker-enforcement-before-agent-finalize.md`](research/marker-enforcement-before-agent-finalize.md) — live diagnosis, the `before_agent_finalize` contract, plugin design, and open questions (plugin home/distribution, task-only vs job gating, `session_end` job-closure, host validation).
+
+**Success Criteria** (what must be TRUE):
+
+  1. A `before_agent_finalize` plugin hook detects that a substantive turn produced no task marker and sends the agent back one bounded pass to run `write-marker.sh` — verified on the ClawHub host (`98.82.34.123`, opus-4-8) raising marked-completion coverage well above the current ~1-in-64 baseline
+  2. The gate is **fail-open and bounded**: `retry.maxAttempts` caps the forced passes; if the agent still doesn't classify, the harness finalizes anyway — a hook error or timeout never blocks the user's reply
+  3. The plugin needs no `allowConversationAccess` (observes `exec` tool calls only) and is packaged/installable on a ClawHub host alongside the skill
+  4. `scripts/verify-markers.sh` reports, per session, completions vs. markers so the gap is observable before/after
+  5. No change to budget-rule logic, `config.json` `ruleIds`, or the `guardrail-status.json` halt/warn contract; existing `report.sh` `unclassified` default + completion_id correlation preserved
+
+**Plans:** 0 plans — run `/gsd-discuss-phase 11` then `/gsd-plan-phase 11` to break down.
