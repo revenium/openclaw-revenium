@@ -572,19 +572,21 @@ Plugin is installed to `~/.openclaw/extensions/revenium-marker-gate/`. [VERIFIED
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED — recommendations adopted by the Phase 11 plans)
 
-1. **exec tool `toolKind` field availability in before_tool_call**
+> All three were resolved by adopting the stated recommendation; the plans implement them and the host E2E (11-03 Task 2) confirms them. Plus assumption A1 (exec command field name): 11-01 Task 2 now coalesces `params.command` → `params.code` and logs the observed param keys once-per-process for host confirmation.
+
+1. **RESOLVED — exec tool `toolKind` field availability in before_tool_call**
    - What we know: `toolName === "exec"` is confirmed. `toolKind` is in the `policyAdjustedToolIdentity` spread passed to before_tool_call event, but its value for the exec tool is not confirmed.
    - What's unclear: Whether `event.toolKind === "exec"` is a more reliable alternative to `event.toolName === "exec"` when the tool is renamed.
    - Recommendation: Log `toolName` in the initial deployed version; fall back to also checking `"bash"` as a second toolName.
 
-2. **Gateway restart required after post-install.sh**
+2. **RESOLVED — Gateway restart required after post-install.sh**
    - What we know: `openclaw plugins install` prints "Restart the gateway to load plugins."
    - What's unclear: Whether post-install.sh can trigger a gateway restart or whether it must only install and document that a restart is needed.
    - Recommendation: post-install.sh installs and patches config; documents that a gateway restart is required. Do not auto-restart from a skill's post-install script.
 
-3. **verify-markers.sh cron session exclusion on the ClawHub host**
+3. **RESOLVED — verify-markers.sh cron session exclusion on the ClawHub host**
    - What we know: `sessions.json` maps cron session keys. The host uses Docker sandbox with cron-triggered sessions.
    - What's unclear: Whether the host's `sessions.json` format matches what write-marker.sh expects (confirmed locally but not verified on 98.82.34.123 in the verify-markers.sh context).
    - Recommendation: Reuse write-marker.sh's exact cron-exclusion logic — it is proven on the host already.

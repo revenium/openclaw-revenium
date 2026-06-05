@@ -1,8 +1,8 @@
 ---
 phase: 11
 slug: structural-marker-enforcement-via-before-agent-finalize-plug
-status: draft
-nyquist_compliant: false
+status: approved
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-06-04
 ---
@@ -85,4 +85,4 @@ created: 2026-06-04
 - [ ] Feedback latency < 30s (automated tier)
 - [ ] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-06-04 (plan-checker PASS; plans satisfy Nyquist Dimension 8 — `wave_0_complete` flips to true once the Wave 0 test files are built during execution)
