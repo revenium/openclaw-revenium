@@ -1,0 +1,17 @@
+{
+  "name": "revenium-marker-gate",
+  "version": "1.0.0",
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./dist/index.js"]
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.6.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
