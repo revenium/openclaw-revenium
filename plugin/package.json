@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "openclaw": {
-    "extensions": ["./dist/index.js"]
+    "extensions": [
+      "./dist/index.js"
+    ]
   },
   "scripts": {
     "build": "tsc"
@@ -12,6 +14,8 @@
     "openclaw": ">=2026.6.1"
   },
   "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.0.0"
   }
 }

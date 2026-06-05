@@ -6,7 +6,11 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
-    "declaration": false
+    "declaration": false,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": false
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.js", "src/**/*.test.ts", "node_modules"]
 }
