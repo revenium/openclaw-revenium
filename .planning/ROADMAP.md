@@ -85,7 +85,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 
   1. A `before_agent_finalize` plugin hook detects that a substantive turn produced no task marker and sends the agent back one bounded pass to run `write-marker.sh` — verified on the ClawHub host (`98.82.34.123`, opus-4-8) raising marked-completion coverage well above the current ~1-in-64 baseline
   2. The gate is **fail-open and bounded**: `retry.maxAttempts` caps the forced passes; if the agent still doesn't classify, the harness finalizes anyway — a hook error or timeout never blocks the user's reply
-  3. The plugin needs no `allowConversationAccess` (observes `exec` tool calls only) and is packaged/installable on a ClawHub host alongside the skill
+  3. The plugin reads no conversation content — it observes `exec` tool calls only via the `before_tool_call` hook (not a conversation hook); it sets `allowConversationAccess: true` solely because the SDK requires that flag to register the `before_agent_finalize` + `agent_end` hooks (both are `CONVERSATION_HOOK_NAMES`; without the flag they are silently blocked). `post-install.sh` sets the flag and verifies via `openclaw plugins inspect` that `before_agent_finalize` is registered. The plugin is packaged/installable on a ClawHub host alongside the skill
   4. `scripts/verify-markers.sh` reports, per session, completions vs. markers so the gap is observable before/after
   5. No change to budget-rule logic, `config.json` `ruleIds`, or the `guardrail-status.json` halt/warn contract; existing `report.sh` `unclassified` default + completion_id correlation preserved
 
