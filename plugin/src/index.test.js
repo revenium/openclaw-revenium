@@ -86,6 +86,30 @@ describe("before_tool_call - exec tracking", () => {
     assert.equal(execRuns.size, 0);
   });
 
+  // WR-02: marker detection must match the actual invocation of write-marker.sh,
+  // not an arbitrary substring that merely contains the script name.
+  test("WR-02: command merely MENTIONING write-marker.sh (echo into notes) is NOT classified", () => {
+    handleBeforeToolCall(RUN_A, "exec", { command: 'echo "remember to run write-marker.sh later" >> notes.txt' });
+    assert.ok(execRuns.has(RUN_A), "execRuns should contain runId (exec did run)");
+    assert.ok(!markedTaskRuns.has(RUN_A), "markedTaskRuns must NOT contain runId for a mention-only command");
+  });
+
+  test("WR-02: lookalike filename my-write-marker.sh.bak is NOT classified", () => {
+    handleBeforeToolCall(RUN_A, "bash", { command: "bash my-write-marker.sh.bak" });
+    assert.ok(execRuns.has(RUN_A), "execRuns should contain runId (exec did run)");
+    assert.ok(!markedTaskRuns.has(RUN_A), "markedTaskRuns must NOT contain runId for a .bak lookalike");
+  });
+
+  test("WR-02: real invocation `write-marker.sh` (bare, no path) IS classified", () => {
+    handleBeforeToolCall(RUN_A, "bash", { command: "write-marker.sh coding" });
+    assert.ok(markedTaskRuns.has(RUN_A), "bare write-marker.sh invocation must be classified");
+  });
+
+  test("WR-02: real invocation with full path and bash prefix IS classified", () => {
+    handleBeforeToolCall(RUN_A, "exec", { command: "bash ~/.openclaw/skills/revenium/scripts/write-marker.sh debugging" });
+    assert.ok(markedTaskRuns.has(RUN_A), "bash <path>/write-marker.sh invocation must be classified");
+  });
+
   test("non-string params.command AND non-string params.code → guarded, adds to execRuns, no throw", () => {
     // Both params fields are non-string; the guard should prevent .includes() on them.
     assert.doesNotThrow(() => handleBeforeToolCall(RUN_A, "exec", { command: 42, code: null }));

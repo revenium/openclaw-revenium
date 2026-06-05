@@ -16,6 +16,12 @@ export const markedTaskRuns = new Set(); // runIds that invoked write-marker.sh
 // exec observation so the real command field name is confirmable from host
 // logs during the 11-03 Task 2 E2E (resolves open question A1).
 let _loggedFirstExec = false;
+// Marker invocation matcher (WR-02). A bare `cmd.includes("write-marker.sh")`
+// false-positives on any string merely *containing* the token. Require
+// write-marker.sh to appear as the script actually being invoked: at a command
+// boundary, optionally prefixed by `bash `/`sh `/a path, and immediately
+// followed by whitespace or end-of-string.
+const MARKER_INVOKE = /(?:(?:^|[;|&(\n])\s*(?:bash\s+|sh\s+|\S*\/)?|\s+(?:bash\s+|sh\s+|\S*\/))write-marker\.sh(?:\s|$)/;
 /**
  * Reset tracking state (used by tests to isolate cases).
  */
@@ -56,7 +62,8 @@ export function handleBeforeToolCall(runId, toolName, params, opts = {}) {
         return;
     }
     execRuns.add(runId);
-    if (cmd.includes("write-marker.sh")) {
+    // Match the actual invocation of write-marker.sh, not an arbitrary substring (WR-02).
+    if (MARKER_INVOKE.test(cmd)) {
         markedTaskRuns.add(runId);
     }
 }

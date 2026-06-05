@@ -19,6 +19,25 @@ export const markedTaskRuns = new Set(); // runIds that invoked write-marker.sh
 // logs during the 11-03 Task 2 E2E (resolves open question A1).
 let _loggedFirstExec = false;
 
+// Marker invocation matcher (WR-02). A bare `cmd.includes("write-marker.sh")`
+// false-positives on any string merely *containing* the token — e.g. an echo
+// into a notes file ("...run write-marker.sh later..."), a comment, or a
+// `my-write-marker.sh.bak` lookalike. We require write-marker.sh to be the
+// script genuinely being invoked, matching exactly one of:
+//   (a) interpreter-invoked:  `bash write-marker.sh`, `sh  write-marker.sh`
+//   (b) path-invoked:         `./write-marker.sh`, `/abs/write-marker.sh`,
+//                             `rel/dir/write-marker.sh`
+//   (c) command-position:     the token is the first word of the command, i.e.
+//                             at start-of-string or right after a shell command
+//                             separator (`;`, `|`, `&`, `(`, `\n`).
+// In every case the token must be immediately followed by whitespace or
+// end-of-string, so `write-marker.sh.bak` does NOT match. `.sh` escapes the dot
+// to a literal. A bare `write-marker.sh` sitting mid-sentence after an ordinary
+// word (e.g. `run write-marker.sh`) is deliberately NOT matched — that is the
+// mention-only false positive WR-02 targets.
+const MARKER_INVOKE =
+  /(?:(?:^|[;|&(\n])\s*(?:bash\s+|sh\s+|\S*\/)?|\s+(?:bash\s+|sh\s+|\S*\/))write-marker\.sh(?:\s|$)/;
+
 /**
  * Reset tracking state (used by tests to isolate cases).
  */
@@ -65,7 +84,9 @@ export function handleBeforeToolCall(runId, toolName, params, opts = {}) {
   }
 
   execRuns.add(runId);
-  if (cmd.includes("write-marker.sh")) {
+  // Match the actual invocation of write-marker.sh, not an arbitrary substring
+  // (WR-02): a command that merely mentions the script name must NOT classify.
+  if (MARKER_INVOKE.test(cmd)) {
     markedTaskRuns.add(runId);
   }
 }
