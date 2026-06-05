@@ -21,6 +21,9 @@ import {
   handleBeforeToolCall,
   handleBeforeAgentFinalize,
   handleAgentEnd,
+  safeBeforeAgentFinalize,
+  safeBeforeToolCall,
+  safeAgentEnd,
 } from "./gate.js";
 
 // Shared runIds for tests
@@ -242,5 +245,48 @@ describe("agent_end - cleanup", () => {
     // Now if somehow the same runId reappears in a new turn (shouldn't happen, but test it)
     const result = handleBeforeAgentFinalize(RUN_A);
     assert.equal(result, undefined, "after cleanup, gate should see no exec for this runId");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CR-01 — fail-open boundary: a throw in any gate handler must NEVER reject the
+// hook promise. The safe* wrappers contain the try/catch at the host boundary.
+// We force the underlying handler to throw via the injectable `impl` parameter
+// (the same shape index.ts wires up) and assert the boundary swallows it.
+// ---------------------------------------------------------------------------
+
+describe("CR-01 - fail-open boundary (handler throw path)", () => {
+  const boom = () => {
+    throw new Error("forced gate failure");
+  };
+
+  test("safeBeforeAgentFinalize returns undefined (does not throw/reject) when the gate throws", () => {
+    let result;
+    // Suppress the fail-open log line during the test.
+    assert.doesNotThrow(() => {
+      result = safeBeforeAgentFinalize(RUN_A, { log: () => {} }, boom);
+    }, "boundary must not rethrow when the gate throws");
+    assert.equal(result, undefined, "a thrown gate must resolve to undefined (pass-through, no block)");
+  });
+
+  test("safeBeforeAgentFinalize resolves to undefined as an async hook (promise does not reject)", async () => {
+    // Mirror index.ts: the handler is an async callback returning the wrapper result.
+    const handler = async () => safeBeforeAgentFinalize(RUN_A, { log: () => {} }, boom);
+    const value = await handler(); // must resolve, never reject
+    assert.equal(value, undefined, "rejected promise would have thrown here; must be undefined");
+  });
+
+  test("safeBeforeAgentFinalize still returns the real revise action when the gate does NOT throw", () => {
+    handleBeforeToolCall(RUN_A, "exec", { command: "cat README.md" });
+    const result = safeBeforeAgentFinalize(RUN_A); // default impl = real handler
+    assert.ok(result && result.action === "revise", "non-throwing path must preserve normal behavior");
+  });
+
+  test("safeBeforeToolCall swallows a throwing gate (best-effort observation)", () => {
+    assert.doesNotThrow(() => safeBeforeToolCall(RUN_A, "exec", { command: "ls" }, {}, boom));
+  });
+
+  test("safeAgentEnd swallows a throwing gate (best-effort cleanup)", () => {
+    assert.doesNotThrow(() => safeAgentEnd(RUN_A, boom));
   });
 });

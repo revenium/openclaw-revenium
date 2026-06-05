@@ -14,9 +14,9 @@
  */
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import {
-  handleBeforeToolCall,
-  handleBeforeAgentFinalize,
-  handleAgentEnd,
+  safeBeforeToolCall,
+  safeBeforeAgentFinalize,
+  safeAgentEnd,
 } from "./gate.js";
 
 export default definePluginEntry({
@@ -24,21 +24,36 @@ export default definePluginEntry({
   name: "Revenium Marker Gate",
   description: "Forces write-marker.sh before finalizing a substantive turn.",
   register(api) {
+    // FAIL-OPEN GUARANTEE (CR-01): every handler body is wrapped in try/catch so
+    // a throw from the gate logic can NEVER reject the hook promise. The safe*
+    // wrappers in gate.js contain the same containment (so the property is
+    // unit-testable without the openclaw peer); the local try/catch here is a
+    // defensive second layer that also guards the ctx/event dereferences below.
+
     // before_tool_call: NOT a conversation hook — no allowConversationAccess needed.
-    api.on("before_tool_call", async (event: { toolName: string; params: Record<string, unknown> }, ctx: { runId?: string }) => {
-      handleBeforeToolCall(ctx.runId, event.toolName, event.params);
+    api.on("before_tool_call", async (event: { toolName: string; params: Record<string, unknown> } | undefined, ctx: { runId?: string } | undefined) => {
+      try {
+        safeBeforeToolCall(ctx?.runId, event?.toolName, event?.params);
+      } catch { /* fail-open: observation is best-effort, never block the turn */ }
     });
 
     // before_agent_finalize: IS a conversation hook — requires allowConversationAccess: true
     // in the openclaw config (see post-install.sh for the config patch).
-    api.on("before_agent_finalize", async (_event: unknown, ctx: { runId?: string }) => {
-      return handleBeforeAgentFinalize(ctx.runId);
+    // A thrown error MUST resolve to undefined (pass-through), never a rejection.
+    api.on("before_agent_finalize", async (_event: unknown, ctx: { runId?: string } | undefined) => {
+      try {
+        return safeBeforeAgentFinalize(ctx?.runId, { log: (msg: string) => api.log?.(msg) });
+      } catch {
+        return undefined; // fail-open: never block the reply
+      }
     });
 
     // agent_end: IS a conversation hook — requires allowConversationAccess: true.
     // Cleans up per-runId state to prevent memory leaks on long-lived gateways.
-    api.on("agent_end", async (_event: unknown, ctx: { runId?: string }) => {
-      handleAgentEnd(ctx.runId);
+    api.on("agent_end", async (_event: unknown, ctx: { runId?: string } | undefined) => {
+      try {
+        safeAgentEnd(ctx?.runId);
+      } catch { /* fail-open */ }
     });
   },
 });

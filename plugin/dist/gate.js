@@ -115,3 +115,53 @@ export function handleAgentEnd(runId) {
         markedTaskRuns.delete(runId);
     }
 }
+// ---------------------------------------------------------------------------
+// Fail-open boundary wrappers (CR-01). A throw from the gate logic must NEVER
+// reject the hook promise: before_agent_finalize resolves to undefined
+// (pass-through); the observe/cleanup wrappers swallow silently.
+// ---------------------------------------------------------------------------
+/**
+ * Fail-open wrapper for before_agent_finalize.
+ * @param {string|undefined} runId
+ * @param {{ log?: (msg: string) => void }} [opts]
+ * @param {(runId: string|undefined) => any} [impl]
+ * @returns {any}
+ */
+export function safeBeforeAgentFinalize(runId, opts = {}, impl = handleBeforeAgentFinalize) {
+    try {
+        return impl(runId);
+    }
+    catch (err) {
+        try {
+            const logFn = opts && opts.log ? opts.log : console.error;
+            logFn(`[revenium-marker-gate] finalize error (fail-open): ${err}`);
+        }
+        catch { /* logging must never break fail-open */ }
+        return undefined; // fail-open: never block the reply
+    }
+}
+/**
+ * Fail-open wrapper for before_tool_call (observation is best-effort).
+ * @param {string|undefined} runId
+ * @param {string} toolName
+ * @param {Record<string,unknown>} params
+ * @param {{ log?: (msg: string) => void }} [opts]
+ * @param {(runId: any, toolName: any, params: any, opts: any) => void} [impl]
+ */
+export function safeBeforeToolCall(runId, toolName, params, opts = {}, impl = handleBeforeToolCall) {
+    try {
+        impl(runId, toolName, params, opts);
+    }
+    catch { /* fail-open: observation is best-effort, never block the turn */ }
+}
+/**
+ * Fail-open wrapper for agent_end (cleanup is best-effort).
+ * @param {string|undefined} runId
+ * @param {(runId: any) => void} [impl]
+ */
+export function safeAgentEnd(runId, impl = handleAgentEnd) {
+    try {
+        impl(runId);
+    }
+    catch { /* fail-open */ }
+}

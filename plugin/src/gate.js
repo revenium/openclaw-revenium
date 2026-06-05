@@ -139,3 +139,67 @@ export function handleAgentEnd(runId) {
     markedTaskRuns.delete(runId);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Fail-open boundary wrappers (CR-01).
+//
+// The phase's central safety requirement is that the gate must NEVER block or
+// break the agent reply on error. index.ts registers `async` hook callbacks; if
+// a gate function ever throws (today they are throw-free, but fail-open must be
+// guaranteed structurally, not assumed), the rejected promise would propagate to
+// the host's dispatcher instead of resolving to a pass-through. These wrappers
+// contain the try/catch at the boundary so a throw can NEVER reject the hook
+// promise: before_agent_finalize resolves to `undefined` (pass-through / no
+// block); the observe/cleanup wrappers swallow silently (best-effort).
+//
+// They are exported (and accept an injectable `impl`) so node:test can force the
+// underlying handler to throw and assert the boundary still returns `undefined`
+// and does not reject — without needing the openclaw peer to load index.ts.
+// ---------------------------------------------------------------------------
+
+/**
+ * Fail-open wrapper for before_agent_finalize.
+ *
+ * @param {string|undefined} runId
+ * @param {{ log?: (msg: string) => void }} [opts] - Optional host logger.
+ * @param {(runId: string|undefined) => any} [impl] - Injectable handler (tests).
+ * @returns {any} The revise action, or undefined (never throws).
+ */
+export function safeBeforeAgentFinalize(runId, opts = {}, impl = handleBeforeAgentFinalize) {
+  try {
+    return impl(runId);
+  } catch (err) {
+    try {
+      const logFn = opts && opts.log ? opts.log : console.error;
+      logFn(`[revenium-marker-gate] finalize error (fail-open): ${err}`);
+    } catch { /* logging must never break fail-open */ }
+    return undefined; // fail-open: never block the reply
+  }
+}
+
+/**
+ * Fail-open wrapper for before_tool_call (observation is best-effort).
+ *
+ * @param {string|undefined} runId
+ * @param {string} toolName
+ * @param {Record<string,unknown>} params
+ * @param {{ log?: (msg: string) => void }} [opts]
+ * @param {(runId: any, toolName: any, params: any, opts: any) => void} [impl]
+ */
+export function safeBeforeToolCall(runId, toolName, params, opts = {}, impl = handleBeforeToolCall) {
+  try {
+    impl(runId, toolName, params, opts);
+  } catch { /* fail-open: observation is best-effort, never block the turn */ }
+}
+
+/**
+ * Fail-open wrapper for agent_end (cleanup is best-effort).
+ *
+ * @param {string|undefined} runId
+ * @param {(runId: any) => void} [impl]
+ */
+export function safeAgentEnd(runId, impl = handleAgentEnd) {
+  try {
+    impl(runId);
+  } catch { /* fail-open */ }
+}
