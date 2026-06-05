@@ -13,7 +13,7 @@
 
 **Milestone Goal:** Make task/job marker attribution reliable on real installs — markers must not depend on the LLM remembering an end-of-turn directive. Diagnosed live on the ClawHub host (`98.82.34.123`, opus-4-8): the v1.1 AGENTS.md directive is present and in-context, yet the agent drops the end-of-turn `write-marker.sh` gate (~1 of 64 completions marked). The fix is a typed OpenClaw `before_agent_finalize` plugin that forces classification before the agent can yield.
 
-- [ ] **Phase 11: Structural Marker Enforcement via before_agent_finalize plugin** — see details below
+- [ ] **Phase 11: Structural Marker Enforcement via before_agent_finalize plugin** (0/3) — see details below
 
 <details>
 <summary>✅ v1.0 Budget Guardrails & Metering (Phases 1–4) — SHIPPED 2026-06-03</summary>
@@ -69,7 +69,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 8. Halt → CANCELLED Outcome | v1.1 | 2/2 | Complete | 2026-06-03 |
 | 9. Guardrail Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
 | 10. Tool Registry & Tool-Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
-| 11. Structural Marker Enforcement | v1.3 | 0/? | Not started | - |
+| 11. Structural Marker Enforcement | v1.3 | 0/3 | Planned | - |
 
 ## Phase Details
 
@@ -89,4 +89,9 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
   4. `scripts/verify-markers.sh` reports, per session, completions vs. markers so the gap is observable before/after
   5. No change to budget-rule logic, `config.json` `ruleIds`, or the `guardrail-status.json` halt/warn contract; existing `report.sh` `unclassified` default + completion_id correlation preserved
 
-**Plans:** 0 plans — run `/gsd-discuss-phase 11` then `/gsd-plan-phase 11` to break down.
+**Plans:** 3 plans (2 waves)
+
+Plans:
+- [ ] 11-01-PLAN.md — Build the revenium-marker-gate plugin package (source, node:test suite, committed dist/index.js) — SC-1, SC-2, SC-3
+- [ ] 11-02-PLAN.md — verify-markers.sh per-session completions-vs-markers diagnostic + test; report.sh/guardrail regression — SC-4, SC-5
+- [ ] 11-03-PLAN.md — post-install.sh idempotent plugin install + enable + inspect; ClawHub host E2E validation — SC-1, SC-2, SC-3
