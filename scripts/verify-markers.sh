@@ -16,12 +16,42 @@
 #
 # Read-only: writes no files, does not tee, does not invoke guardrail or
 # config writers (SC-5 / D-07 preservation).
+#
+# NOTE (WR-01): this script deliberately does NOT source common.sh. Sourcing it
+# runs `mkdir -p "${STATE_DIR}"` at source time, which would materialize the
+# skill state dir tree as a side effect — violating the read-only contract above
+# (surprising on a host where the skill is not yet installed). We instead derive
+# the two path constants we need (SESSIONS_DIR, MARKERS_DIR) inline, mirroring
+# common.sh's OPENCLAW_HOME discovery and constant definitions exactly, with no
+# directory creation. common.sh is left untouched so report.sh / guardrail-check.sh
+# keep their existing behavior.
 # =============================================================================
 
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-. "${SCRIPT_DIR}/common.sh"
+# ---------------------------------------------------------------------------
+# OPENCLAW_HOME discovery — mirrors common.sh (multi-candidate probe).
+# ---------------------------------------------------------------------------
+if [[ -z "${OPENCLAW_HOME:-}" ]]; then
+  _oc_home=""
+  for _candidate in "${HOME}/.openclaw" "/home/ubuntu/.openclaw"; do
+    if [[ -d "${_candidate}/agents" ]]; then
+      _oc_home="${_candidate}"
+      break
+    fi
+  done
+  OPENCLAW_HOME="${_oc_home:-${HOME}/.openclaw}"
+  unset _oc_home _candidate
+fi
+
+# ---------------------------------------------------------------------------
+# Path constants needed by this diagnostic — mirror common.sh exactly.
+# STATE_DIR is the collapsed skill dir; MARKERS_DIR / SESSIONS_DIR are read-only
+# inputs here. NO mkdir — read-only (WR-01 / SC-5).
+# ---------------------------------------------------------------------------
+STATE_DIR="${OPENCLAW_HOME}/skills/revenium"
+MARKERS_DIR="${STATE_DIR}/markers"
+SESSIONS_DIR="${OPENCLAW_HOME}/agents/main/sessions"
 
 # Pass path constants via env — never interpolate bash variables inside <<'PY'
 SESSIONS_DIR="${SESSIONS_DIR}" \
