@@ -12,7 +12,7 @@ Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) a
   brew install revenium/tap/revenium
   ```
 
-  The skill is gated on this binary and won't load without it. (`post-install.sh` also installs it automatically via Homebrew if it's missing — see [step 3](#3-run-post-install-setup).)
+  The skill is gated on this binary and won't load without it. (`post-install.sh` also installs it automatically via Homebrew if it's missing — see [step 2](#2-run-post-install-setup).)
 - [Revenium](https://app.revenium.ai/connections) API key, Team ID, Tenant ID, and Owner ID
 
 ## Installation
@@ -27,25 +27,9 @@ clawhub install --force --dir ~/.openclaw/skills revenium
 
 > Installing for local development or testing from this Git repo instead of ClawHub? See [Installing from the GitHub repo](#installing-from-the-github-repo-local-development) below.
 
-### 2. Set Revenium credentials on the host
+### 2. Run post-install setup
 
-Set your credentials in the host terminal **before** running post-install, so they get injected into the sandbox:
-
-```bash
-revenium config set key <API_KEY>
-revenium config set team-id <TEAM_ID>
-revenium config set tenant-id <TENANT_ID>
-revenium config set owner-id <OWNER_ID>
-revenium config show          # confirm the values are set
-```
-
-The `revenium` CLI stores these at `~/.config/revenium/config.yaml`.
-
-> **Credentials reach the sandbox as a snapshot, not live.** OpenClaw's sandbox hard-blocks mounting credential paths (anything under `~/.config`), so the skill cannot bind-mount your `revenium` config into the container. Instead, post-install reads your host credentials and injects them as `REVENIUM_*` environment variables into the sandbox. This means **any time you set or rotate credentials, you must re-run post-install and restart the gateway** (steps 3–4) to refresh them. Setting `revenium config set` from inside an agent session has no effect on the sandbox.
-
-### 3. Run post-install setup
-
-ClawHub does not run post-install scripts, so run the setup script to install any missing prerequisites and configure OpenClaw sandbox access:
+ClawHub does not run post-install scripts, so run the setup script **first** — it installs any missing prerequisites (including the `revenium` CLI itself, which the next step needs) and configures OpenClaw sandbox access:
 
 ```bash
 bash ~/.openclaw/skills/revenium/scripts/post-install.sh
@@ -67,7 +51,27 @@ This will:
 8. Deploy `BUDGET-GUARD.md` into the workspace so enforcement is injected into isolated/cron sessions too
 9. Verify the installation
 
+> **On this first run your Revenium credentials aren't set yet**, so post-install will warn that it couldn't inject them into the sandbox — that's expected. You'll set them and re-run post-install in [step 3](#3-set-revenium-credentials-on-the-host-then-re-run-post-install).
+
 > **Already have prerequisites installed?** Pass `--skip-prereqs` to skip Homebrew installs and fail immediately if anything is missing.
+
+### 3. Set Revenium credentials on the host, then re-run post-install
+
+Now that the `revenium` CLI is installed (step 2), set your credentials on the host and re-run post-install so they get injected into the sandbox:
+
+```bash
+revenium config set key <API_KEY>
+revenium config set team-id <TEAM_ID>
+revenium config set tenant-id <TENANT_ID>
+revenium config set owner-id <OWNER_ID>
+revenium config show          # confirm the values are set
+
+bash ~/.openclaw/skills/revenium/scripts/post-install.sh   # re-run to snapshot creds into the sandbox
+```
+
+The `revenium` CLI stores these at `~/.config/revenium/config.yaml`.
+
+> **Credentials reach the sandbox as a snapshot, not live.** OpenClaw's sandbox hard-blocks mounting credential paths (anything under `~/.config`), so the skill cannot bind-mount your `revenium` config into the container. Instead, post-install reads your host credentials and injects them as `REVENIUM_*` environment variables into the sandbox. This means **any time you set or rotate credentials, you must re-run post-install and restart the gateway** (steps 3–4) to refresh them. Setting `revenium config set` from inside an agent session has no effect on the sandbox.
 
 ### 4. Restart the OpenClaw gateway
 
@@ -110,7 +114,7 @@ bash ~/.openclaw/skills/revenium/scripts/uninstall-cron.sh
 Use this when you want to run or test unreleased changes (e.g. a feature branch) instead of the ClawHub release. The key constraints, both enforced by OpenClaw's sandbox:
 
 - The skill must be a **real directory** inside `~/.openclaw/skills/` — **do not symlink** a clone from elsewhere. OpenClaw rejects skills whose path resolves outside the skills root (`reason=symlink-escape`).
-- Credentials are injected into the sandbox as a **snapshot** at post-install time — set them first, and re-run post-install after any change.
+- Credentials are injected into the sandbox as a **snapshot** at post-install time. Because post-install is also what installs the `revenium` CLI, the order is: run post-install once (installs the CLI) → `revenium config set …` → re-run post-install to snapshot the creds. Re-run post-install after any later credential change too.
 
 ### 1. Clone directly into the skills directory
 
@@ -124,15 +128,20 @@ git config core.fileMode false   # post-install chmods scripts; this stops mode
                                  # changes from dirtying the tree and blocking pulls
 ```
 
-### 2. Set credentials, run post-install, restart
+### 2. Run post-install, set credentials, re-run post-install, restart
 
 ```bash
-# Set Revenium credentials on the host FIRST (snapshot into the sandbox)
+# Run post-install FIRST — it installs the `revenium` CLI (and jq) if missing.
+# On this first run creds aren't set yet, so it warns it couldn't inject them — expected.
+bash ~/.openclaw/skills/revenium/scripts/post-install.sh
+
+# Now that the CLI exists, set Revenium credentials on the host...
 revenium config set key <API_KEY>
 revenium config set team-id <TEAM_ID>
 revenium config set tenant-id <TENANT_ID>
 revenium config set owner-id <OWNER_ID>
 
+# ...and re-run post-install to snapshot them into the sandbox, then restart.
 bash ~/.openclaw/skills/revenium/scripts/post-install.sh
 openclaw gateway restart
 ```
@@ -160,7 +169,7 @@ openclaw gateway restart   # if post-install was re-run
 
 Setup happens automatically the first time the agent tries to perform an operation (or run `/revenium` to start it manually). The agent will:
 
-1. Confirm your **Revenium API key**, **Team ID**, **Tenant ID**, and **Owner ID** are visible in the sandbox (set on the host, per [step 2](#2-set-revenium-credentials-on-the-host))
+1. Confirm your **Revenium API key**, **Team ID**, **Tenant ID**, and **Owner ID** are visible in the sandbox (set on the host, per [step 3](#3-set-revenium-credentials-on-the-host-then-re-run-post-install))
 2. Ask for a **budget threshold** (e.g., `5.00`)
 3. Ask for a **budget period** (DAILY, WEEKLY, MONTHLY, or QUARTERLY)
 4. Optionally enable **shadow mode** (record breaches without enforcing) and **autonomous mode** (halt-on-exceed with notifications to Slack, Discord, Telegram, etc.)
