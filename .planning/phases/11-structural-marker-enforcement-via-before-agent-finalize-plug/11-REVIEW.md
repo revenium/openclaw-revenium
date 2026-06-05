@@ -19,6 +19,12 @@ findings:
   info: 4
   total: 11
 status: issues_found
+remediation:
+  applied: 2026-06-05
+  resolved: [CR-01, WR-01, WR-02]
+  resolved_commits: [ba8e8c4, 42ce513, 3458c22]
+  deferred: [WR-03, WR-04, WR-05, WR-06, IN-01, IN-02, IN-03, IN-04]
+  post_fix_tests: "node 30/30, shell suites 5/5 green; dist parity verified"
 ---
 
 # Phase 11: Code Review Report
