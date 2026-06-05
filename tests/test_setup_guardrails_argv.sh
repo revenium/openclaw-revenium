@@ -4,6 +4,8 @@
 #   (a) base rule: AGENT:STARTS_WITH:openclaw- + --group-by AGENT
 #   (b) per-task rule: AGENT:STARTS_WITH:openclaw- + TASK_TYPE:IS:<label> + --group-by TASK_TYPE
 #   (c) gate: when --help lacks TASK_TYPE, picker is skipped (only base rule created)
+# Suite C (260605-enh): idempotent dedup — list-before-create ordering, single-match
+#   adopt, multi-match warn+skip, and label-in-name.
 #
 # REVENIUM_BIN env var injects the stub after ensure_path runs (setup-guardrails.sh
 # prepends $(dirname REVENIUM_BIN) to PATH, defeating ensure_path's brew-prepend).
@@ -48,19 +50,29 @@ mkdir -p "${FAKE_SKILL_DIR}"
 # Seed taxonomy (common.sh sets TAXONOMY_FILE=${STATE_DIR}/task-taxonomy.json)
 cp "${REPO_ROOT}/task-taxonomy.json" "${FAKE_SKILL_DIR}/task-taxonomy.json"
 
-# Invocation log file
+# Invocation log file (budget-rules create)
 INVOCATION_FILE="${TMPDIR_ROOT}/invocations.txt"
 : > "${INVOCATION_FILE}"
 
+# Update invocation log (budget-rules update)
+UPDATE_FILE="${TMPDIR_ROOT}/updates.txt"
+: > "${UPDATE_FILE}"
+
+# Order file (LIST/CREATE/UPDATE tags for ordering assertions)
+ORDER_FILE="${TMPDIR_ROOT}/order.txt"
+: > "${ORDER_FILE}"
+
 # ---------------------------------------------------------------------------
-# Stub: revenium — env-driven (INVOCATION_FILE, HELP_HAS_TASK_TYPE exported
-# by run_interactive; REVENIUM_BIN tells setup-guardrails.sh to prepend our
-# bin dir to PATH after ensure_path, so the stub wins).
+# Stub: revenium — env-driven (INVOCATION_FILE, HELP_HAS_TASK_TYPE,
+# STUB_REVENIUM_BUDGET_RULES_JSON, ORDER_FILE exported by run_interactive;
+# REVENIUM_BIN tells setup-guardrails.sh to prepend our bin dir to PATH
+# after ensure_path, so the stub wins).
 # ---------------------------------------------------------------------------
 cat > "${STUB_BIN}/revenium" <<'STUB'
 #!/usr/bin/env bash
 # stubbed revenium for integration testing
-# reads INVOCATION_FILE and HELP_HAS_TASK_TYPE from env
+# reads INVOCATION_FILE, HELP_HAS_TASK_TYPE, STUB_REVENIUM_BUDGET_RULES_JSON,
+# ORDER_FILE, UPDATE_FILE from env
 
 ARGS_STR="$*"
 case "${ARGS_STR}" in
@@ -83,7 +95,14 @@ case "${ARGS_STR}" in
     exit 0
     ;;
   *"budget-rules list"*)
-    printf '[]\n'
+    if [[ -n "${ORDER_FILE:-}" ]]; then
+      printf 'LIST\n' >> "${ORDER_FILE}"
+    fi
+    if [[ -n "${STUB_REVENIUM_BUDGET_RULES_JSON:-}" ]]; then
+      printf '%s\n' "${STUB_REVENIUM_BUDGET_RULES_JSON}"
+    else
+      printf '[]\n'
+    fi
     exit 0
     ;;
   *"budget-rules get"*)
@@ -95,12 +114,27 @@ case "${ARGS_STR}" in
   *"budget-rules delete"*)
     exit 0
     ;;
+  *"budget-rules update"*)
+    if [[ -n "${UPDATE_FILE:-}" ]]; then
+      printf 'UPDATE\n' >> "${UPDATE_FILE}"
+      for arg in "$@"; do
+        printf '%s\n' "${arg}" >> "${UPDATE_FILE}"
+      done
+    fi
+    if [[ -n "${ORDER_FILE:-}" ]]; then
+      printf 'UPDATE\n' >> "${ORDER_FILE}"
+    fi
+    exit 0
+    ;;
   *"budget-rules create"*)
     if [[ -n "${INVOCATION_FILE:-}" ]]; then
       printf 'INVOKE\n' >> "${INVOCATION_FILE}"
       for arg in "$@"; do
         printf '%s\n' "${arg}" >> "${INVOCATION_FILE}"
       done
+    fi
+    if [[ -n "${ORDER_FILE:-}" ]]; then
+      printf 'CREATE\n' >> "${ORDER_FILE}"
     fi
     printf '{"id":"rule-stub-test","shadowMode":false}\n'
     exit 0
@@ -183,18 +217,27 @@ assert_not_contains() {
 # run_interactive: reset capture, seed config.json, run the script
 # $1: "1" = HELP_HAS_TASK_TYPE (TASK_TYPE in help); "" = absent
 # $2: stdin content
+# $3: optional extra env vars (e.g. "REVENIUM_BUDGET_LABEL=myhost")
 # ---------------------------------------------------------------------------
 run_interactive() {
   local help_has_task_type="$1"
   local stdin_input="$2"
+  local extra_env="${3:-}"
 
   : > "${INVOCATION_FILE}"
+  : > "${UPDATE_FILE}"
+  : > "${ORDER_FILE}"
   printf '{}\n' > "${FAKE_SKILL_DIR}/config.json"
 
-  OPENCLAW_HOME="${FAKE_HOME}" \
-  INVOCATION_FILE="${INVOCATION_FILE}" \
-  HELP_HAS_TASK_TYPE="${help_has_task_type}" \
-  REVENIUM_BIN="${STUB_BIN}/revenium" \
+  env \
+    OPENCLAW_HOME="${FAKE_HOME}" \
+    INVOCATION_FILE="${INVOCATION_FILE}" \
+    UPDATE_FILE="${UPDATE_FILE}" \
+    ORDER_FILE="${ORDER_FILE}" \
+    HELP_HAS_TASK_TYPE="${help_has_task_type}" \
+    REVENIUM_BIN="${STUB_BIN}/revenium" \
+    STUB_REVENIUM_BUDGET_RULES_JSON="${STUB_REVENIUM_BUDGET_RULES_JSON:-}" \
+    ${extra_env} \
     bash "${REPO_ROOT}/scripts/setup-guardrails.sh" --interactive <<EOF
 ${stdin_input}
 EOF
@@ -285,6 +328,184 @@ if [[ "${CONFIG_B}" -eq 1 ]]; then
   pass "B3: config.json has 1 ruleId (base rule only)"
 else
   fail "B3: expected 1 ruleId in config.json, got ${CONFIG_B}"
+fi
+
+# ===========================================================================
+# SUITE C: Idempotent dedup — list-before-create ordering, adopt, warn+skip,
+#          label-in-name (260605-enh)
+# ===========================================================================
+echo ""
+echo "=== Suite C: idempotent dedup (260605-enh) ==="
+
+# 4-line stdin for MONTHLY base rule (no per-task picker): limit=100, period=MONTHLY,
+# autonomous=no, shadow=no.  Pass help_has_task_type="" so picker is skipped.
+STDIN_C="100
+MONTHLY
+no
+no"
+
+# ---------------------------------------------------------------------------
+# C1: list-before-create ordering
+# ---------------------------------------------------------------------------
+STUB_REVENIUM_BUDGET_RULES_JSON='[]' \
+  run_interactive "" "${STDIN_C}" "" > /dev/null 2>&1 || true
+
+# Read ORDER_FILE and verify LIST appears before the first CREATE
+order_check=$(python3 - <<PY
+try:
+    with open("${ORDER_FILE}") as f:
+        tags = [l.strip() for l in f if l.strip() in ('LIST','CREATE','UPDATE')]
+    # Find position of first LIST and first CREATE
+    first_list = next((i for i,t in enumerate(tags) if t == 'LIST'), None)
+    first_create = next((i for i,t in enumerate(tags) if t == 'CREATE'), None)
+    if first_list is None:
+        print("no_list")
+    elif first_create is None:
+        print("no_create")
+    elif first_list < first_create:
+        print("ok")
+    else:
+        print("wrong_order")
+except Exception as e:
+    print("error:" + str(e))
+PY
+)
+
+if [[ "${order_check}" == "ok" ]]; then
+  pass "C1: LIST tag appears before first CREATE tag in ORDER_FILE"
+else
+  fail "C1: expected LIST before CREATE, got: ${order_check}"
+fi
+
+# ---------------------------------------------------------------------------
+# C2: single-match adopt — zero creates, update --name, ruleIds=["existing-1"]
+# ---------------------------------------------------------------------------
+FIXTURE_ONE='[{"id":"existing-1","name":"old name","windowType":"MONTHLY","groupBy":"AGENT","filters":[{"dimension":"AGENT","operator":"STARTS_WITH","value":"openclaw-"}]}]'
+
+STUB_REVENIUM_BUDGET_RULES_JSON="${FIXTURE_ONE}" \
+  run_interactive "" "${STDIN_C}" "" > /dev/null 2>&1 || true
+
+NUM_C2=$(count_invocations)
+if [[ "${NUM_C2}" -eq 0 ]]; then
+  pass "C2a: zero budget-rules create invocations on single-match adopt"
+else
+  fail "C2a: expected 0 create invocations, got ${NUM_C2}"
+fi
+
+# Check config.json ruleIds == ["existing-1"]
+config_c2_ids=$(python3 - <<PY
+import json
+try:
+    d = json.load(open('${FAKE_SKILL_DIR}/config.json'))
+    print(json.dumps(d.get('ruleIds', [])))
+except Exception:
+    print('error')
+PY
+)
+if [[ "${config_c2_ids}" == '["existing-1"]' ]]; then
+  pass "C2b: config.json ruleIds == [\"existing-1\"] on single-match adopt"
+else
+  fail "C2b: expected ruleIds=[\"existing-1\"], got ${config_c2_ids}"
+fi
+
+# Check UPDATE invocation for --name (names differ: "old name" vs label-bearing name)
+update_count_c2=$(python3 -c "
+try:
+    n = sum(1 for line in open('${UPDATE_FILE}') if line.strip() == 'UPDATE')
+    print(n)
+except Exception:
+    print(0)
+")
+if [[ "${update_count_c2}" -ge 1 ]]; then
+  pass "C2c: budget-rules update invoked (name differs — best-effort rename)"
+else
+  fail "C2c: expected at least 1 budget-rules update invocation, got ${update_count_c2}"
+fi
+
+# Check UPDATE invocation carries --name
+update_has_name=$(python3 - <<PY
+try:
+    with open("${UPDATE_FILE}") as f:
+        content = f.read()
+    print("ok" if "--name" in content else "missing")
+except Exception:
+    print("error")
+PY
+)
+if [[ "${update_has_name}" == "ok" ]]; then
+  pass "C2d: budget-rules update invocation contains --name"
+else
+  fail "C2d: budget-rules update missing --name arg. UPDATE_FILE content: $(cat ${UPDATE_FILE} | tr '\n' '|')"
+fi
+
+# ---------------------------------------------------------------------------
+# C3: multi-match warn+skip — zero creates, both delete commands printed,
+#     ruleIds=["existing-1"]
+# ---------------------------------------------------------------------------
+FIXTURE_TWO='[{"id":"existing-1","name":"rule1","windowType":"MONTHLY","groupBy":"AGENT","filters":[{"dimension":"AGENT","operator":"STARTS_WITH","value":"openclaw-"}]},{"id":"existing-2","name":"rule2","windowType":"MONTHLY","groupBy":"AGENT","filters":[{"dimension":"AGENT","operator":"STARTS_WITH","value":"openclaw-"}]}]'
+
+c3_output=$(STUB_REVENIUM_BUDGET_RULES_JSON="${FIXTURE_TWO}" \
+  run_interactive "" "${STDIN_C}" "" 2>&1 || true)
+
+NUM_C3=$(count_invocations)
+if [[ "${NUM_C3}" -eq 0 ]]; then
+  pass "C3a: zero budget-rules create invocations on multi-match warn+skip"
+else
+  fail "C3a: expected 0 create invocations, got ${NUM_C3}"
+fi
+
+# Check output warns about duplicates
+if printf '%s' "${c3_output}" | grep -qi "duplicate\|exist.*budget\|budget.*rules\|dup\|identical\|same.*scope\|multiple.*rules\|rules.*meter"; then
+  pass "C3b: output warns about duplicate/existing rules"
+else
+  fail "C3b: expected duplicate warning in output. Got: $(printf '%s' "${c3_output}" | head -20)"
+fi
+
+# Check both delete commands present in output
+if printf '%s' "${c3_output}" | grep -q "budget-rules delete existing-1"; then
+  pass "C3c: output contains delete command for existing-1"
+else
+  fail "C3c: missing 'budget-rules delete existing-1' in output. Got: $(printf '%s' "${c3_output}" | head -20)"
+fi
+if printf '%s' "${c3_output}" | grep -q "budget-rules delete existing-2"; then
+  pass "C3d: output contains delete command for existing-2"
+else
+  fail "C3d: missing 'budget-rules delete existing-2' in output. Got: $(printf '%s' "${c3_output}" | head -20)"
+fi
+
+# Check config.json ruleIds == ["existing-1"] (first id adopted)
+config_c3_ids=$(python3 - <<PY
+import json
+try:
+    d = json.load(open('${FAKE_SKILL_DIR}/config.json'))
+    print(json.dumps(d.get('ruleIds', [])))
+except Exception:
+    print('error')
+PY
+)
+if [[ "${config_c3_ids}" == '["existing-1"]' ]]; then
+  pass "C3e: config.json ruleIds == [\"existing-1\"] on multi-match (first adopted)"
+else
+  fail "C3e: expected ruleIds=[\"existing-1\"], got ${config_c3_ids}"
+fi
+
+# ---------------------------------------------------------------------------
+# C4: label in name — with empty fixture and REVENIUM_BUDGET_LABEL=myhost,
+#     create --name arg contains "myhost"
+# ---------------------------------------------------------------------------
+STUB_REVENIUM_BUDGET_RULES_JSON='[]' \
+  run_interactive "" "${STDIN_C}" "REVENIUM_BUDGET_LABEL=myhost" > /dev/null 2>&1 || true
+
+NUM_C4=$(count_invocations)
+if [[ "${NUM_C4}" -ge 1 ]]; then
+  inv1_c4=$(get_invocation 1)
+  if printf '%s' "${inv1_c4}" | grep -q "myhost"; then
+    pass "C4a: create --name carries REVENIUM_BUDGET_LABEL=myhost"
+  else
+    fail "C4a: expected 'myhost' in first create invocation. Args: $(printf '%s' "${inv1_c4}" | tr '\n' '|')"
+  fi
+else
+  fail "C4a: no create invocation found for C4 (expected at least 1)"
 fi
 
 # ===========================================================================
