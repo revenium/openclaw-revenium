@@ -55,6 +55,20 @@ DEFAULT FILTER SCOPING:
   Created rules default-scope to --filter AGENT:STARTS_WITH:${REVENIUM_AGENT_PREFIX:-openclaw-}
   so the rule matches all openclaw-{root_sid} and openclaw-{sid} completions (D-07).
 
+IDEMPOTENCY:
+  Re-running setup-guardrails against a tenant that already has a same-scope budget
+  rule adopts the existing rule (sets RULE_ID to its id, skips creation) rather than
+  creating a duplicate. If multiple same-scope rules are detected, setup warns, prints
+  the exact `revenium guardrails budget-rules delete <id> --yes` command for each, and
+  adopts the first without auto-deleting — a shared tenant may host other hosts' rules.
+
+REVENIUM_BUDGET_LABEL:
+  Optional env var. When set, its value is appended to the rule name as a
+  deployment-disambiguating label (e.g. "OpenClaw Monthly Budget — myhost").
+  Default: short hostname from `hostname -s` (or uname -n / HOSTNAME / "unknown").
+  Set REVENIUM_BUDGET_LABEL before invoking setup-guardrails.sh to produce
+  human-distinguishable rule names when multiple hosts share the same tenant.
+
 EXAMPLES:
   # Fresh install — interactive mode:
   setup-guardrails.sh --interactive
@@ -64,6 +78,9 @@ EXAMPLES:
 
   # Shadow mode — observe only:
   setup-guardrails.sh --interactive --shadow-mode
+
+  # Custom deployment label (host-unique rule name):
+  REVENIUM_BUDGET_LABEL=prod-server-1 setup-guardrails.sh --interactive
 USAGE
 }
 
@@ -249,6 +266,127 @@ period_titled() {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: short_host
+# Returns a short hostname for rule-name disambiguation. Order of preference:
+# REVENIUM_BUDGET_LABEL env (already used by callers), hostname -s, uname -n,
+# HOSTNAME shell var, then "unknown". Bash 3.2 safe; no herestrings.
+# ---------------------------------------------------------------------------
+short_host() {
+  local h
+  h=$(hostname -s 2>/dev/null) && [[ -n "${h}" ]] && { printf '%s' "${h}"; return; }
+  h=$(uname -n 2>/dev/null) && [[ -n "${h}" ]] && { printf '%s' "${h}"; return; }
+  [[ -n "${HOSTNAME:-}" ]] && { printf '%s' "${HOSTNAME}"; return; }
+  printf 'unknown'
+}
+
+# ---------------------------------------------------------------------------
+# Helper: budget_label
+# Returns the deployment label for rule names: REVENIUM_BUDGET_LABEL if set,
+# otherwise the output of short_host.
+# ---------------------------------------------------------------------------
+budget_label() {
+  if [[ -n "${REVENIUM_BUDGET_LABEL:-}" ]]; then
+    printf '%s' "${REVENIUM_BUDGET_LABEL}"
+  else
+    short_host
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Helper: find_existing_rules PERIOD GROUP_BY_ARG [EXTRA_FILTER]
+# Calls `revenium guardrails budget-rules list --output json`, then uses a
+# python3 env-passing heredoc to compare each rule's scope (filters, windowType
+# or period field, groupBy) against the desired scope. Prints matching rule ids,
+# one per line. Returns 0; empty output = no matches.
+# Fail-open: if the list call exits non-zero OR stdout is not valid JSON, the
+# function returns 0 with no output (treated as "none found" → caller proceeds
+# to create as normal). Bash 3.2 safe; no associative arrays, no herestrings.
+# ---------------------------------------------------------------------------
+find_existing_rules() {
+  local desired_period="$1"
+  local desired_group_by="$2"
+  local desired_extra_filter="${3:-}"
+
+  # Build the desired filter set as a colon-joined string:
+  # "AGENT:STARTS_WITH:<prefix>" always; extra_filter appended when non-empty.
+  local desired_filter_base="AGENT:STARTS_WITH:${REVENIUM_AGENT_PREFIX}"
+
+  local list_json
+  list_json=$(revenium guardrails budget-rules list --output json 2>/dev/null) || list_json=""
+
+  # Pass all values to python3 via env (bash 3.2: no herestrings).
+  LIST_JSON="${list_json}" \
+  DESIRED_PERIOD="${desired_period}" \
+  DESIRED_GROUP_BY="${desired_group_by}" \
+  DESIRED_FILTER_BASE="${desired_filter_base}" \
+  DESIRED_EXTRA_FILTER="${desired_extra_filter}" \
+  python3 - <<'PY'
+import json, os
+
+def normalize_filter(s):
+    """Normalize a DIM:OP:VALUE string: uppercase DIM and OP, preserve VALUE case."""
+    parts = s.split(':', 2)
+    if len(parts) == 3:
+        return '{}:{}:{}'.format(parts[0].upper(), parts[1].upper(), parts[2])
+    return s.upper()
+
+def make_filter_set(filters):
+    """Normalize a list of {dimension,operator,value} dicts to a frozenset of 'DIM:OP:VAL' strings."""
+    result = set()
+    for f in filters:
+        d = str(f.get('dimension', '')).upper()
+        o = str(f.get('operator', '')).upper()
+        v = str(f.get('value', ''))   # preserve value case
+        result.add('{}:{}:{}'.format(d, o, v))
+    return frozenset(result)
+
+list_json = os.environ.get('LIST_JSON', '')
+desired_period = os.environ.get('DESIRED_PERIOD', '').upper()
+desired_group_by = os.environ.get('DESIRED_GROUP_BY', 'AGENT').upper()
+desired_filter_base = os.environ.get('DESIRED_FILTER_BASE', '')
+desired_extra_filter = os.environ.get('DESIRED_EXTRA_FILTER', '')
+
+# Build desired filter set (normalize each colon-joined filter string)
+desired_filters = set()
+if desired_filter_base:
+    desired_filters.add(normalize_filter(desired_filter_base))
+if desired_extra_filter:
+    desired_filters.add(normalize_filter(desired_extra_filter))
+desired_filter_set = frozenset(desired_filters)
+
+try:
+    rules = json.loads(list_json)
+    if not isinstance(rules, list):
+        raise ValueError("not a list")
+except Exception:
+    # Fail-open: non-JSON or error → no output
+    import sys; sys.exit(0)
+
+for rule in rules:
+    try:
+        # Compare filters (order-insensitive normalized set)
+        rule_filter_set = make_filter_set(rule.get('filters', []))
+        if rule_filter_set != desired_filter_set:
+            continue
+
+        # Compare window type / period (field name varies: windowType or period)
+        rule_period = (rule.get('windowType') or rule.get('period') or '').upper()
+        if rule_period != desired_period:
+            continue
+
+        # Compare groupBy
+        rule_group_by = str(rule.get('groupBy') or 'AGENT').upper()
+        if rule_group_by != desired_group_by:
+            continue
+
+        # All match — print the id
+        print(rule['id'])
+    except Exception:
+        continue
+PY
+}
+
+# ---------------------------------------------------------------------------
 # Helper: create_rule RULE_NAME HARD_LIMIT WARN_THRESHOLD PERIOD
 # Single call site for rule creation (single base rule per D-02/D-03).
 # Sets RULE_ID and RULE_EXIT globals on return.
@@ -274,6 +412,73 @@ create_rule() {
   local group_by_override="${6:-}"   # optional: override --group-by (e.g. TASK_TYPE)
 
   local group_by_arg="${group_by_override:-AGENT}"
+
+  # ---------------------------------------------------------------------------
+  # Dedup branch: check for an existing same-scope rule before creating.
+  # find_existing_rules is fail-open: non-JSON or CLI error → empty output →
+  # falls through to the existing create logic unchanged.
+  # ---------------------------------------------------------------------------
+  local existing_ids_raw
+  existing_ids_raw=$(find_existing_rules "${period}" "${group_by_arg}" "${extra_filter}") || existing_ids_raw=""
+
+  # Count non-empty lines in the id list (bash 3.2 safe; no arrays)
+  local existing_count=0
+  local _line
+  while IFS= read -r _line; do
+    [[ -n "${_line}" ]] && existing_count=$((existing_count + 1))
+  done <<EOF
+${existing_ids_raw}
+EOF
+
+  if [[ "${existing_count}" -eq 1 ]]; then
+    # Single match — adopt, best-effort rename, skip create.
+    local existing_id="${existing_ids_raw}"
+    existing_id="${existing_id%%$'\n'*}"   # first line (already only one, but be safe)
+    existing_id=$(printf '%s' "${existing_id}" | tr -d '[:space:]')
+    RULE_ID="${existing_id}"
+    RULE_EXIT=0
+    local log_existing_name
+    # Fetch current display name for log (fail-open). Pass JSON via env — bash 3.2 safe.
+    local _get_json
+    _get_json=$(revenium guardrails budget-rules get "${RULE_ID}" --output json 2>/dev/null) || _get_json=""
+    log_existing_name=$(GET_JSON="${_get_json}" python3 - <<'PY'
+import json, os
+try:
+    d = json.loads(os.environ.get('GET_JSON', ''))
+    print((d.get('name') or '')[:64])
+except Exception:
+    print('')
+PY
+    ) || log_existing_name=""
+    info "Reusing existing budget rule ${RULE_ID} (${log_existing_name:0:64}) — skipping duplicate creation"
+    # Best-effort name update when display name differs from desired
+    if [[ -n "${log_existing_name}" && "${log_existing_name}" != "${rule_name}" ]]; then
+      revenium guardrails budget-rules update "${RULE_ID}" --name "${rule_name}" >/dev/null 2>&1 \
+        || warn "Could not rename rule ${RULE_ID} — non-critical"
+    fi
+    return
+  elif [[ "${existing_count}" -gt 1 ]]; then
+    # Multiple matches — warn, list delete commands, adopt first, skip create.
+    echo "WARNING: Found ${existing_count} existing same-scope budget rules — they all meter the same spend."
+    echo "To clean up duplicates, run the following delete commands (no auto-delete; a shared tenant may host other hosts' rules):"
+    local first_id=""
+    while IFS= read -r _line; do
+      _line=$(printf '%s' "${_line}" | tr -d '[:space:]')
+      [[ -z "${_line}" ]] && continue
+      echo "  revenium guardrails budget-rules delete ${_line} --yes"
+      warn "  revenium guardrails budget-rules delete ${_line} --yes"
+      if [[ -z "${first_id}" ]]; then
+        first_id="${_line}"
+      fi
+    done <<EOF
+${existing_ids_raw}
+EOF
+    RULE_ID="${first_id}"
+    RULE_EXIT=0
+    info "Adopting first existing rule ${RULE_ID} — skipping duplicate creation"
+    return
+  fi
+  # Zero matches → fall through to create as normal.
 
   local rule_json
   # T-03-09 mitigation: validate_hard_limit and validate_period enforce input
@@ -484,7 +689,9 @@ run_default() {
 
   local period_title
   period_title=$(period_titled "${PERIOD}")
-  local rule_name="OpenClaw ${period_title} Budget"
+  local _label
+  _label=$(budget_label)
+  local rule_name="OpenClaw ${period_title} Budget — ${_label}"
 
   create_rule "${rule_name}" "${HARD_LIMIT}" "${warn_threshold}" "${PERIOD}"
 
@@ -665,7 +872,9 @@ EOF
 
   local period_title
   period_title=$(period_titled "${period}")
-  local rule_name="OpenClaw ${period_title} Budget"
+  local _label
+  _label=$(budget_label)
+  local rule_name="OpenClaw ${period_title} Budget — ${_label}"
 
   # Create the base budget rule (--group-by AGENT; AGENT:STARTS_WITH filter from create_rule)
   create_rule "${rule_name}" "${hard_limit}" "${warn_threshold}" "${period}"

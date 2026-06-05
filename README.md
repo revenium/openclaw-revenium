@@ -178,6 +178,12 @@ Setup happens automatically the first time the agent tries to perform an operati
 
 Setup is atomic — if rule creation fails, no partial `ruleIds` are written.
 
+**Setup is idempotent.** Re-running setup (or installing on a fresh VM pointed at the same Revenium tenant) checks for an existing same-scope budget rule before creating a new one. If a match is found, setup adopts the existing rule rather than creating a duplicate. If multiple same-scope rules are detected (e.g., from earlier redundant runs), setup warns and prints the exact `revenium guardrails budget-rules delete <id> --yes` command for each — it does **not** auto-delete, since a shared tenant may host rules belonging to other hosts.
+
+Rule names include a deployment label suffix (e.g., `OpenClaw Monthly Budget — my-host`). Override the label via the `REVENIUM_BUDGET_LABEL` env var before invoking `setup-guardrails.sh` to produce human-distinguishable names when multiple hosts share the same Revenium tenant. Default: short hostname from `hostname -s`.
+
+> **Per-deployment budget scoping** (independent filter-scoped budget rules per deployment, rather than a single shared tenant budget) is a separate future capability and is currently out of scope.
+
 ## How It Works
 
 A background cron job (`cron.sh`) runs **every minute by default** and performs two stages. The interval is configurable (see [Cron interval](#cron-interval) below) — a shorter interval keeps guardrail enforcement closer to real-time, a longer one reduces how often the Revenium API is polled. Note that enforcement is only as fresh as the last cron run: a budget breach is detected on the next tick, so within one interval an autonomous agent can spend past the hard limit before `halted` flips.
