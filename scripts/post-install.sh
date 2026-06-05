@@ -605,6 +605,42 @@ PYEOF
 fi
 
 # ---------------------------------------------------------------------------
+# 7c. Install + enable the revenium-marker-gate plugin
+# ---------------------------------------------------------------------------
+# Installs the before_agent_finalize plugin that structurally enforces per-turn
+# task classification. Idempotent (--force overwrites previous version). The
+# allowConversationAccess flag is REQUIRED for before_agent_finalize and agent_end
+# to register — without it the hooks are silently blocked (OpenClaw registry
+# behaviour verified against 2026.6.1 source). Fail-open: every command uses
+# warn-and-continue, never fail. A gateway restart is required after this step
+# for the plugin to load in the current session.
+step "Installing revenium-marker-gate plugin"
+
+if command_exists openclaw; then
+  # Install (idempotent via --force; overwrites previous version)
+  openclaw plugins install "${SKILL_DIR}/plugin" --force 2>/dev/null \
+    || warn "plugin install failed — skipping"
+
+  # Enable with allowConversationAccess (required for before_agent_finalize + agent_end)
+  # Uses JSON5 stdin — objects merge recursively, safe to re-run
+  echo '{plugins: {entries: {"revenium-marker-gate": {enabled: true, hooks: {allowConversationAccess: true}}}}}' \
+    | openclaw config patch --stdin 2>/dev/null \
+    || warn "plugin config patch failed — skipping"
+
+  # Verify that before_agent_finalize is in hookNames — catches the silent-block failure mode
+  _inspect="$(openclaw plugins inspect revenium-marker-gate 2>/dev/null || true)"
+  if echo "${_inspect}" | grep -q "before_agent_finalize"; then
+    info "Plugin hook before_agent_finalize confirmed active"
+  else
+    warn "before_agent_finalize not in plugin hookNames — allowConversationAccess may not be set"
+  fi
+
+  info "NOTE: a gateway restart is required for the plugin to load in the current session"
+else
+  warn "openclaw CLI not found — skipping plugin install (revenium-marker-gate)"
+fi
+
+# ---------------------------------------------------------------------------
 # 8. Configure bootstrap-extra-files hook for isolated sessions
 # ---------------------------------------------------------------------------
 step "Configuring budget guard for isolated sessions"

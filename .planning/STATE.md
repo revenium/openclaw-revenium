@@ -1,16 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Metering Completeness
-status: Awaiting next milestone
-last_updated: "2026-06-04T22:38:48.136Z"
-last_activity: 2026-06-04 - Completed quick task 260604-qo0: job SUCCESS → outcome-type CONVERTED
+milestone: v1.3
+milestone_name: Reliable Attribution
+status: milestone_complete
+last_updated: 2026-06-05T12:48:26.320Z
+last_activity: 2026-06-05 -- Phase 11 plan 03 complete (11-03)
 progress:
-  total_phases: 2
-  completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
-  percent: 100
+  total_phases: 11
+  completed_phases: 3
+  total_plans: 9
+  completed_plans: 9
+  percent: 27
+stopped_at: Milestone complete (Phase 11 was final phase)
 ---
 
 # Project State
@@ -20,20 +21,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04 after v1.2 milestone)
 
 **Core value:** Agents never silently blow through token budgets — every turn is guardrail-checked and the user keeps control past a threshold — and **every cost-incurring activity** (agent completions, guardrail enforcement events, and tool invocations) is metered and attributed by root session, task type, and agentic job, so spend is fully observable in Revenium with no blind spots.
-**Current focus:** v1.2 shipped — awaiting next milestone (`/gsd-new-milestone`)
+**Current focus:** Milestone complete
 
 ## Current Position
 
-Phase: Milestone v1.2 complete
-Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-04 — Milestone v1.2 completed and archived
+Phase: 11
+Plan: Not started
+Status: Milestone complete
+Last activity: 2026-06-05
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 22 (v1.0)
+- Total plans completed: 25 (v1.0)
 - Average duration: ~5 min
 - Total execution time: ~5 min
 
@@ -50,6 +51,7 @@ Last activity: 2026-06-04 — Milestone v1.2 completed and archived
 | 08 | 2 | - | - |
 | 09 | 3 | - | - |
 | 10 | 3 | - | - |
+| 11 | 3 | - | - |
 
 **Recent Trend:**
 
@@ -78,6 +80,12 @@ Recent decisions affecting current work:
 - [v1.1]: Job tracking is observability-only — per-job-type budget rules deferred; enforcement stays on `AGENT:STARTS_WITH` with server-side job rollup
 - [Phase 4]: Task-type correlation by `completion_id` + marker-after fallback (markers land after the completion they classify) — same correlation concern applies to job markers
 - [Phase 4]: `AGENT:STARTS_WITH:openclaw-` attribution (D-07) — root-session rollup; job rollup (Phase 7) extends this resolver
+- [Phase 11]: `allowConversationAccess: true` required in config to register before_agent_finalize/agent_end hooks (D-05 revised) — SDK silently blocks without it; plugin reads no conversation content
+- [Phase 11]: post-install must not auto-restart the gateway — install step documents restart requirement and emits note only (Pitfall 6)
+
+### Roadmap Evolution
+
+- Phase 11 added (2026-06-05): Structural Marker Enforcement via before_agent_finalize plugin — starts milestone v1.3 Reliable Attribution. Origin: live diagnosis on ClawHub host 98.82.34.123 showed the agent drops the end-of-turn marker gate even with AGENTS.md directives present. Research seed: `.planning/research/marker-enforcement-before-agent-finalize.md`.
 
 ### Pending Todos
 
@@ -116,9 +124,9 @@ Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 ## Session Continuity
 
-Last session: 2026-06-04T03:20:32.797Z
-Stopped at: Phase 10 context gathered
-Resume file: .planning/phases/10-tool-registry-tool-event-metering/10-CONTEXT.md
+Last session: 2026-06-05T00:00:00.000Z
+Stopped at: Phase 11 plan 03 complete — v1.3 milestone complete
+Resume file: None
 
 ## Operator Next Steps
 

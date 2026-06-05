@@ -1,0 +1,9 @@
+{
+  "id": "revenium-marker-gate",
+  "name": "Revenium Marker Gate",
+  "description": "Forces write-marker.sh before finalizing a substantive turn.",
+  "version": "1.0.0",
+  "activation": { "onStartup": false },
+  "contracts": { "tools": [] },
+  "configSchema": {}
+}
