@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-04 after v1.2 milestone)
 Phase: 11
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-06-05
+Last activity: 2026-06-05 - Completed quick task 260605-enh: idempotent + uniquely-named Revenium budget rules
 
 ## Performance Metrics
 
@@ -97,6 +97,7 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 260327-o1o | Replace DONE session skip with line-offset tracking in report.sh | 2026-03-27 | 7481c0c | [260327-o1o-replace-done-session-skip-with-line-offs](./quick/260327-o1o-replace-done-session-skip-with-line-offs/) |
 | 260604-qo0 | Job Outcome Type stuck at PENDING — map SUCCESS arcs to --outcome-type CONVERTED (JOUT-01 slice) | 2026-06-04 | 532e3b7 | [260604-qo0-job-outcome-converted](./quick/260604-qo0-job-outcome-converted/) |
+| 260605-enh | Idempotent + uniquely-named Revenium budget rules in setup-guardrails.sh (stop duplicate cost-control rules; REVENIUM_BUDGET_LABEL) | 2026-06-05 | 63043ae | [260605-enh-idempotent-uniquely-named-revenium-budge](./quick/260605-enh-idempotent-uniquely-named-revenium-budge/) |
 
 ### Blockers/Concerns
 
