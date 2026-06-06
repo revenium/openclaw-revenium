@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Reliable Attribution
-status: milestone_complete
-last_updated: 2026-06-05T12:48:26.320Z
-last_activity: 2026-06-05 -- Phase 11 plan 03 complete (11-03)
+status: Awaiting next milestone
+last_updated: "2026-06-06T22:15:55.748Z"
+last_activity: 2026-06-06 — Milestone v1.3 completed and archived
 progress:
   total_phases: 11
   completed_phases: 3
   total_plans: 9
   completed_plans: 9
   percent: 27
-stopped_at: Milestone complete (Phase 11 was final phase)
 ---
 
 # Project State
@@ -25,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-04 after v1.2 milestone)
 
 ## Current Position
 
-Phase: 11
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-06-05 - Completed quick task 260605-enh: idempotent + uniquely-named Revenium budget rules
+Phase: Milestone v1.3 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-06 — Milestone v1.3 completed and archived
 
 ## Performance Metrics
 
@@ -106,6 +105,14 @@ None blocking. Standing follow-up carried forward: Phase 9 live guardrail-halt E
 Resolved during v1.1/v1.2 (cleared): Phase 7 marker-race (omit-and-retry shipped), Phase 8 synthetic-interrupted-job halt integration (handle_halt shipped), Phase 4 subagent→root job_id rollup (verified at resolver/unit level).
 
 ## Deferred Items
+
+Items acknowledged and deferred at v1.3 milestone close on 2026-06-06:
+
+| Category | Item | Status | Note |
+|----------|------|--------|------|
+| uat_gap | 11-HUMAN-UAT | accepted | SC-1 numeric coverage record waived by user — gate behavior confirmed working end-to-end on the live ClawHub host; only the before/after verify-markers.sh percentages were lost (terminal history cleared). 0 open scenarios. |
+| quick_task | 260327-o1o / 260604-qo0 / 260605-enh | missing (cosmetic) | All three quick tasks are COMPLETE with committed SUMMARYs; flagged only because their SUMMARY frontmatter lacks a `status:` field. No action needed. |
+| carry-forward | 09-HUMAN-UAT / 09-VERIFICATION | still open | Phase 9 live guardrail-halt E2E on host 172.16.1.247 — first deferred at v1.2 (below), still validated via production use rather than formal UAT. Re-surfaced at v1.3 close; remains a standing follow-up. |
 
 Items acknowledged and deferred at v1.2 milestone close on 2026-06-04:
 

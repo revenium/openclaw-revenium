@@ -1,5 +1,24 @@
 # Milestones
 
+## v1.3 Reliable Attribution (Shipped: 2026-06-06)
+
+**Phases completed:** 1 phase (Phase 11), 3 plans, 8 tasks
+**Git range:** v1.2..HEAD — Phase 11 + 1 related quick task (260605-enh)
+
+**Delivered:** Make task/job marker attribution reliable on real installs — markers no longer depend on the LLM remembering an end-of-turn directive. A typed OpenClaw `before_agent_finalize` plugin structurally forces classification before the agent can finalize a substantive turn, fixing the ~1-in-64 marked-completion baseline diagnosed live in production.
+
+**Key accomplishments:**
+
+- **Phase 11 — Structural Marker Enforcement:** the `revenium-marker-gate` TypeScript OpenClaw plugin (committed pre-built `dist/`) — `before_agent_finalize` returns a bounded (`retry.maxAttempts: 1`) revise action when an exec-running turn produced no task marker, forcing the agent to run `write-marker.sh`; `before_tool_call` observes exec without reading conversation content. Fail-open by contract (any gate throw resolves to pass-through), hardened at the host boundary with a throw-path test suite (CR-01). 30/30 `node:test`.
+- **`scripts/verify-markers.sh`:** a genuinely read-only (WR-01) per-session completions-vs-markers coverage diagnostic that makes the classification gap measurable (SC-4); 16/16 integration tests.
+- **`scripts/post-install.sh` §7c:** idempotent `openclaw plugins install --force` + config patch enabling `allowConversationAccess` (required to register the conversation hooks — D-05) + `plugins inspect` hook-registration check + gateway-restart note (no auto-restart); all `command_exists`-guarded and fail-open.
+- **Host validation:** end-to-end confirmed on the live ClawHub host (`98.82.34.123`, opus-4-8) — the revise loop fires, the agent classifies on the forced pass, unmarked turns still finalize (fail-open), and attribution flows on the Revenium side above the ~1/64 baseline.
+- **Post-ship hardening:** code review fixed 1 blocker + 2 warnings (CR-01 fail-open boundary + tests, WR-02 marker detection tightened from bare substring to actual invocation, WR-01 read-only diagnostic); 8 advisory findings deferred. Related quick task `260605-enh` made `setup-guardrails.sh` budget-rule creation idempotent + uniquely named (stops duplicate cost-control rules; `REVENIUM_BUDGET_LABEL`).
+
+**Known deferred items at close:** 3 (see STATE.md → Deferred Items). 11-HUMAN-UAT SC-1 numeric coverage record waived (gate confirmed working live; exact %s lost to cleared terminal); 3 completed quick tasks flagged "missing" only for an absent SUMMARY `status:` field (cosmetic); Phase 9 live guardrail-halt E2E (host 172.16.1.247) still carried forward from v1.2.
+
+---
+
 ## v1.2 Metering Completeness (Shipped: 2026-06-04)
 
 **Phases completed:** 2 phases, 6 plans, 10 tasks
