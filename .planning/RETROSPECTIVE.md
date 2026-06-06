@@ -106,6 +106,42 @@
 
 ---
 
+## Milestone: v1.3 — Reliable Attribution
+
+**Shipped:** 2026-06-06
+**Phases:** 1 (Phase 11) | **Plans:** 3 | **Tasks:** 8
+
+### What Was Built
+- `revenium-marker-gate`: a typed OpenClaw `before_agent_finalize` plugin (TypeScript + committed pre-built `dist/`) that returns a bounded, fail-open revise action when an exec-running turn produced no task marker — forcing classification before the agent can finalize. First plugin surface in the project (Phase 11).
+- `scripts/verify-markers.sh`: read-only per-session completions-vs-markers coverage diagnostic (SC-4).
+- `scripts/post-install.sh` §7c: idempotent plugin install + `allowConversationAccess` config patch + `plugins inspect` hook-registration check + restart note, all fail-open.
+
+### What Worked
+- **Structural enforcement proved the thesis on the live host** — the v1.1 lesson ("a feature's trigger must live where the runtime reads it") taken one step further: don't just place the directive, *enforce it in code*. Coverage rose above the ~1/64 baseline on ClawHub immediately.
+- **Committed pre-built `dist/`** meant a host with no `tsc`/`node_modules` loads the plugin as-is — no host-side build step.
+- **Adversarial code review caught the one real hole** — CR-01: the fail-open guarantee (the phase's entire reason to exist) was asserted in comments but had zero throw-path coverage; fixed at the host boundary and locked with a forced-throw test before close.
+
+### What Was Inefficient
+- **The SC-1 numeric coverage record was lost** — the host validation worked, but a cleared terminal erased the before/after percentages, so the success criterion closed as qualitatively-accepted rather than measured. A throwaway `tee` of the verify-markers output would have captured it.
+- **The worktree-cleanup stray-`SUMMARY.md` failure recurred** (and even the bounded `worktree.cleanup-wave` helper tripped on it) — resolved by manual per-wave merge. Known issue, still unpatched upstream.
+- **`milestone.complete` mis-scoped the v1.3 entry** — it pulled accomplishments and counts from the still-present Phase 9/10 dirs; the MILESTONES entry had to be rewritten by hand.
+
+### Patterns Established
+- **Enforce, don't instruct** — for any behavior the product depends on, a code-level gate beats an LLM directive, even an in-context one.
+- **Fail-open contracts need a throw-path test** — a fail-open guarantee isn't real until a test forces the underlying logic to throw and asserts pass-through.
+- **`tee` host-validation output** when the success criterion is a measured number that only reproduces live.
+
+### Key Lessons
+1. LLM-compliance-dependent gates fail in production even when the directive is in-context — the only reliable fix is structural enforcement.
+2. The headline guarantee of a phase deserves the most adversarial review attention; comments asserting it are not coverage.
+3. Capture live measurements at the moment of validation — re-running on a fresh host is expensive and sometimes impossible.
+
+### Cost Observations
+- Model mix: planner on opus, executors/verifier/code-reviewer/fixer on sonnet, orchestration on opus.
+- Sessions: single-phase milestone; most effort went to the new plugin surface + host validation, not breadth.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -115,6 +151,7 @@
 | v1.0 | 4 | 14 | Established GSD wave execution, code-review + debug gates, live-tenant verification |
 | v1.1 | 4 | 10 | Reused marker architecture wholesale; learned per-turn directives must live in AGENTS.md |
 | v1.2 | 2 | 6 | Designed fail-open + probe-first from the start — no post-ship production-trigger scramble |
+| v1.3 | 1 | 3 | Took "trigger where the runtime reads it" to structural enforcement — a code gate, not an LLM directive |
 
 ### Cumulative Quality
 
@@ -123,6 +160,7 @@
 | v1.0 | ~39 (bash + python) | 2 critical review findings fixed; 1 production correlation bug fixed post-ship |
 | v1.1 | 71 cumulative hermetic | Pipeline shipped non-functional (SKILL.md not loaded), fixed live via AGENTS.md injection |
 | v1.2 | + guardrail/tool argv harnesses | 2 code-review BLOCKERs (unanchored ledger dedup) fixed + regression-locked pre-ship |
+| v1.3 | 30 node:test + 16 verify-markers + suites green | 1 code-review BLOCKER (fail-open boundary, CR-01) fixed + throw-path-locked pre-ship; host E2E confirmed |
 
 ### Top Lessons (Verified Across Milestones)
 
@@ -130,4 +168,5 @@
 2. (v1.1) A feature's *trigger* must live where the runtime actually reads it — passing tests ≠ executing in production.
 3. (v1.2) Anchor identifier matching (dedup, attribution) by default; substring matching is a latent bug class.
 4. (v1.1→v1.2) Carry hard-won "verify live" lessons into *design* (fail-open, probe-first) — it eliminates the post-ship scramble.
+5. (v1.1→v1.3) The endpoint of "put the trigger where the runtime reads it" is structural enforcement — when a behavior is load-bearing, a code gate beats an in-context LLM directive, and its fail-open guarantee needs a throw-path test.
 5. (all) Milestone-close retrospective + destructive live-UAT scenarios are the easiest steps to skip and the ones most regretted.
