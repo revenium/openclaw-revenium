@@ -42,4 +42,15 @@
 
 ## Traceability
 
-_(Filled by the roadmapper — maps each REQ-ID to its phase.)_
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| NCINST-01 | Phase 12 | Pending |
+| NCINST-02 | Phase 12 | Pending |
+| NCEGRESS-01 | Phase 13 | Pending |
+| NCCLI-01 | Phase 13 | Pending |
+| NCCLI-02 | Phase 13 | Pending |
+| NCMETER-01 | Phase 14 | Pending |
+| NCENF-01 | Phase 15 | Pending |
+| NCENF-02 | Phase 15 | Pending |
+| NCDEPLOY-01 | Phase 16 | Pending |
+| NCDEPLOY-02 | Phase 16 | Pending |

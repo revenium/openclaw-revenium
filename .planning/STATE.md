@@ -4,9 +4,9 @@ milestone: v1.4
 milestone_name: NemoClaw/OpenShell Support
 status: planning
 last_updated: "2026-06-07T00:00:00.000Z"
-last_activity: 2026-06-07 — Milestone v1.4 started (defining requirements)
+last_activity: 2026-06-07 — Roadmap created for v1.4 (Phases 12–16)
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,17 +17,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-04 after v1.2 milestone)
+See: .planning/PROJECT.md (updated 2026-06-07 after v1.4 milestone start)
 
 **Core value:** Agents never silently blow through token budgets — every turn is guardrail-checked and the user keeps control past a threshold — and **every cost-incurring activity** (agent completions, guardrail enforcement events, and tool invocations) is metered and attributed by root session, task type, and agentic job, so spend is fully observable in Revenium with no blind spots.
-**Current focus:** v1.4 NemoClaw/OpenShell Support — defining requirements
+**Current focus:** v1.4 NemoClaw/OpenShell Support — roadmap ready, planning Phase 12
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 12 — Parallel Install Scaffolding & Detection (not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-06-07 — Milestone v1.4 started
+Status: Roadmap created — ready to plan Phase 12
+Last activity: 2026-06-07 — v1.4 roadmap created (Phases 12–16)
 
 ## Performance Metrics
 
@@ -59,6 +59,16 @@ Last activity: 2026-06-07 — Milestone v1.4 started
 
 *Updated after each plan completion*
 
+## v1.4 Phase Map
+
+| Phase | Name | Requirements | Depends on |
+|-------|------|--------------|------------|
+| 12 | Parallel Install Scaffolding & Detection | NCINST-01, NCINST-02 | Phase 11 (existing path must not regress) |
+| 13 | Sandbox Provisioning — Egress, CLI & Authenticated Metering | NCEGRESS-01, NCCLI-01, NCCLI-02 | Phase 12 |
+| 14 | Host-Side Metering Loop | NCMETER-01 | Phase 13 |
+| 15 | Per-Turn Enforcement Plugin | NCENF-01, NCENF-02 | Phase 14 |
+| 16 | Skill Deploy & Docs | NCDEPLOY-01, NCDEPLOY-02 | Phase 15 |
+
 ## v1.1 Phase Map
 
 | Phase | Name | Requirements | Depends on |
@@ -75,6 +85,10 @@ Last activity: 2026-06-07 — Milestone v1.4 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [v1.4]: Parallel install path only — NemoClaw path gates on Linux+Docker, explicitly refuses macOS; existing standalone path untouched
+- [v1.4]: Metering runs host-side over `nemoclaw share mount` — per-tick `exec` rejected (synchronous, hang-prone, accumulated process leaks)
+- [v1.4]: Per-turn guardrail directive delivered via OpenClaw `before_prompt_build` plugin — `skill install` + AGENTS.md do not deliver it in-sandbox (spike 005 confirmed)
+- [v1.4]: NCENF-01 (`before_prompt_build` plugin) is the highest-risk requirement — must be authored from official `openclaw plugins init` scaffold, not hand-rolled; spike 006 partial (hung turn on hand-stub)
 - [v1.1]: Agent-written `kind:"job"` markers (not classifier plugin) — consistent with v1.0 task-type architecture; avoids unconfirmed OpenClaw session-end hook dependency
 - [v1.1]: Job tracking is observability-only — per-job-type budget rules deferred; enforcement stays on `AGENT:STARTS_WITH` with server-side job rollup
 - [Phase 4]: Task-type correlation by `completion_id` + marker-after fallback (markers land after the completion they classify) — same correlation concern applies to job markers
@@ -84,11 +98,12 @@ Recent decisions affecting current work:
 
 ### Roadmap Evolution
 
+- Phases 12–16 added (2026-06-07): v1.4 NemoClaw/OpenShell Support roadmap created. 5 phases consuming all 10 v1.4 requirements. Build basis: 6 spikes proven on live host 34.224.27.67 (sandbox `revenium-spike`). Phase 15 flagged highest-risk (NCENF-01 `before_prompt_build` plugin — mechanism proven but hand-stub hung the turn).
 - Phase 11 added (2026-06-05): Structural Marker Enforcement via before_agent_finalize plugin — starts milestone v1.3 Reliable Attribution. Origin: live diagnosis on ClawHub host 98.82.34.123 showed the agent drops the end-of-turn marker gate even with AGENTS.md directives present. Research seed: `.planning/research/marker-enforcement-before-agent-finalize.md`.
 
 ### Pending Todos
 
-None yet.
+None.
 
 ### Quick Tasks Completed
 
@@ -100,9 +115,9 @@ None yet.
 
 ### Blockers/Concerns
 
-None blocking. Standing follow-up carried forward: Phase 9 live guardrail-halt E2E on host 172.16.1.247 (see Deferred Items) — needs a forced halt on the real host to confirm a GUARDRAIL transaction lands in Revenium.
+Phase 15 risk: NCENF-01 (`before_prompt_build` guardrail-directive plugin) is the highest-risk requirement. Spike 006 is PARTIAL — mechanism proven viable (nemoclaw plugin reaches every turn), but a hand-stubbed plugin hung the agent turn. Must author from `openclaw plugins init` official scaffold and validate on the live sandbox before merging. Plan this phase carefully.
 
-Resolved during v1.1/v1.2 (cleared): Phase 7 marker-race (omit-and-retry shipped), Phase 8 synthetic-interrupted-job halt integration (handle_halt shipped), Phase 4 subagent→root job_id rollup (verified at resolver/unit level).
+Standing follow-up carried forward: Phase 9 live guardrail-halt E2E on host 172.16.1.247 (see Deferred Items) — needs a forced halt on the real host to confirm a GUARDRAIL transaction lands in Revenium.
 
 ## Deferred Items
 
@@ -132,10 +147,10 @@ Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 ## Session Continuity
 
-Last session: 2026-06-05T00:00:00.000Z
-Stopped at: Phase 11 plan 03 complete — v1.3 milestone complete
+Last session: 2026-06-07T00:00:00.000Z
+Stopped at: v1.4 roadmap created — Phases 12–16 defined
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Plan Phase 12: `/gsd-plan-phase 12`
