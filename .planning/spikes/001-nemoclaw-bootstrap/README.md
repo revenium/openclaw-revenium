@@ -3,9 +3,10 @@ spike: 001
 name: nemoclaw-bootstrap
 type: standard
 validates: "Given a clean host, when NemoClaw install.sh runs, then NemoClaw + OpenShell come up and an OpenClaw agent completes one turn"
-verdict: INVALIDATED
+verdict: VALIDATED
 related: []
 tags: [infra, install, nemoclaw, openshell]
+host: "34.224.27.67 (Ubuntu 26.04 LTS, x86_64, no GPU)"
 ---
 
 # Spike 001: NemoClaw Bootstrap
@@ -84,30 +85,74 @@ A per-requirement pass/warn/fail table and a one-line VERDICT. On a macOS host: 
 
 ## Results
 
-**Verdict: INVALIDATED (on this host).** This machine cannot host a NemoClaw bootstrap.
+**Verdict: VALIDATED on a Linux host (`34.224.27.67`, Ubuntu 26.04, x86_64, no GPU).**
+INVALIDATED on macOS (the original probe target — kept below as a documented constraint).
 
-Probe output on this host:
+### macOS attempt (INVALIDATED — expected)
 ```
 Host: Darwin arm64
 Operating system   ✗ macOS — UNSUPPORTED by NemoClaw (Linux-only stack)
 Docker             ⚠ installed but daemon not reachable
-RAM                ✓ 64 GB
-Free disk ($HOME)  ✓ 161 GB
-NVIDIA GPU         ⚠ no nvidia-smi
-Node.js            ✓ v23.9.0
-Summary: 3 pass, 2 warn, 1 fail
-VERDICT: INCOMPATIBLE
+Summary: 3 pass, 2 warn, 1 fail → VERDICT: INCOMPATIBLE
 ```
+The installer graceful-skips on Darwin (no hard error) — a naive "run it on my Mac" would
+*appear* to partially succeed while never provisioning the sandbox. Documentation hazard for
+the real install path: **detect + refuse off-Linux explicitly.**
 
-**Why this matters / impact on remaining spikes:** The idea itself (a parallel install path for
-NemoClaw/OpenShell) is NOT invalidated — only the *spike target* is. Spikes 002–005 all require
-a live NemoClaw/OpenShell sandbox, which fundamentally needs a **Linux host with Docker**
-(ideally with an NVIDIA GPU for the GPU-passthrough path). They are **blocked** until such a
-host is provisioned.
+### Linux host (VALIDATED — full stack up, agent turn completed)
+Provisioned Ubuntu 26.04 host. Sequence that worked (all non-interactive):
+1. Added 8 GB swap (host had 7.7 GB RAM; NemoClaw warns <8 GB → OOM risk).
+2. Ran the bootstrap **fully non-interactively** via env vars (see "Non-interactive install" below).
+3. Installer: added swap-safe Docker (29.5.3) → added user to `docker` group → Node 22 (nvm) →
+   NemoClaw CLI v0.0.55 → configured Nemotron inference → built the OpenShell sandbox image
+   (80-step Docker build) → sandbox `revenium-spike` reached **Phase: Ready**. Total ~656s (~11 min).
+4. Ran one agent turn through the Gateway:
+   ```
+   nemoclaw revenium-spike exec --timeout 170 -- \
+     openclaw agent --message "Reply with exactly: SPIKE001_OK" --session-id spike001 --json
+   ```
+   Result: `finalAssistantVisibleText: "SPIKE001_OK"`, `winnerModel: nvidia/nemotron-3-super-120b-a12b`,
+   `result: success`, `fallbackUsed: false`. **A real end-to-end turn completed.**
 
-**Surprise:** The installer's macOS handling is graceful-skip, not hard-fail — so a naive "run
-install.sh on my Mac" would *appear* to partially succeed (Node bootstrap, repo clone) while
-silently never provisioning the sandbox. That false-positive is itself a documentation hazard
-worth noting for the real build's install path.
+### Non-interactive install recipe (validated)
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_PROVIDER=build \              # build = NVIDIA cloud (alias: cloud)
+  NEMOCLAW_SANDBOX_NAME=revenium-spike \
+  NEMOCLAW_POLICY_MODE=suggested \
+  NVIDIA_API_KEY=nvapi-... \            # skips the credential prompt
+  bash
+```
+Gotcha: a **fresh login session** is required between the Docker-group add and the rest of
+onboarding (`newgrp docker` / re-run). Running the installer detached with `setsid … </dev/null`
+(no controlling tty) avoids an apt SIGTTIN job-control hang seen under `tmux`+`tee`.
 
-**Reusable fact captured:** NemoClaw config dir = `~/.nemoclaw/` (analog of `~/.openclaw/`).
+### Reusable facts captured (critical for the parallel install path + spikes 002–005)
+
+**Host-side config/CLI:**
+- NemoClaw config dir: `~/.nemoclaw/`; CLI: `nemoclaw` (PATH: `~/.local/bin`).
+- The sandbox is a Docker container `openshell-<name>-<uuid>`; OpenShell 0.0.44 (docker backend).
+
+**CLI primitives that map directly onto the remaining spikes:**
+- `nemoclaw <name> exec [--timeout s] -- <cmd>` — run a command non-interactively in the sandbox (→ 003, agent turns).
+- `nemoclaw <name> skill install <path>` — official **skill deploy into the sandbox** (→ 005).
+- `nemoclaw <name> policy-add | policy-remove | policy-list [--from-file|--from-dir]` — network/filesystem egress policy presets (→ 002).
+- `nemoclaw <name> hosts-add <host> <ip>` — sandbox `/etc/hosts` alias.
+- `nemoclaw <name> share mount <sbx-path> <local>` — mount sandbox FS on the host.
+- `nemoclaw <name> gateway-token` / `dashboard-url` — gateway auth.
+
+**Inside the sandbox:**
+- OpenClaw config/state: `/sandbox/.openclaw/` and `/sandbox/.nemoclaw/`; OpenClaw runs as a plugin (`openclaw plugins enable nemoclaw`).
+- One agent turn: `openclaw agent --message "…" --session-id <id> [--json]` (routes via Gateway → inference.local → Nemotron).
+- Egress goes through a **managed proxy at `10.200.0.1:3128`** (env in `/etc/profile.d/nemoclaw-proxy.sh`).
+
+**Egress allowlist (default `suggested` policy) — directly seeds spike 002:**
+`npm, pypi, huggingface, brew, openclaw-pricing`. **The Revenium API host is NOT in this list**,
+so outbound metering calls will be blocked by default and require a custom `policy-add`.
+
+**Impact:** The idea (parallel install path) is strongly de-risked — NemoClaw exposes first-class
+`skill install`, `policy-add`, and `exec` primitives, so the parallel path can be built on
+supported CLI rather than hacks. Spikes 002–005 are unblocked on this host.

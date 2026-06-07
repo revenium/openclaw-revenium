@@ -52,12 +52,17 @@ case "$OS" in
 esac
 
 # 2. Docker — required runtime for OpenShell sandboxes.
+#    On Linux, absence is RECOVERABLE: NemoClaw's installer installs Docker,
+#    starts the service, and adds the user to the docker group. So a missing
+#    Docker on Linux is a warn (installer will handle it), not a hard fail.
 if command -v docker >/dev/null 2>&1; then
   if docker info >/dev/null 2>&1; then
     ok "Docker" "installed and daemon reachable ($(docker --version 2>/dev/null | awk '{print $3}' | tr -d ,))"
   else
     wn "Docker" "installed but daemon not reachable"
   fi
+elif [ "$OS" = "Linux" ]; then
+  wn "Docker" "not installed (installer-recoverable on Linux)"
 else
   no "Docker" "not installed"
 fi
