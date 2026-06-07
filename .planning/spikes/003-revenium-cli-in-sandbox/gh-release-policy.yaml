@@ -1,0 +1,17 @@
+preset:
+  name: revenium-cli-install
+  description: "Egress for installing the revenium CLI via Homebrew (github release CDN)"
+network_policies:
+  revenium_cli_install:
+    name: revenium_cli_install
+    endpoints:
+      - host: release-assets.githubusercontent.com
+        port: 443
+        access: full
+        tls: skip
+      - host: objects.githubusercontent.com
+        port: 443
+        access: full
+        tls: skip
+    binaries:
+      - { path: /** }
