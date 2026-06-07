@@ -81,7 +81,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 9. Guardrail Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
 | 10. Tool Registry & Tool-Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
 | 11. Structural Marker Enforcement | v1.3 | 3/3 | Complete | 2026-06-05 |
-| 12. Parallel Install Scaffolding & Detection | v1.4 | 0/? | Not started | - |
+| 12. Parallel Install Scaffolding & Detection | v1.4 | 1/2 | In Progress|  |
 | 13. Sandbox Provisioning — Egress, CLI & Authenticated Metering | v1.4 | 0/? | Not started | - |
 | 14. Host-Side Metering Loop | v1.4 | 0/? | Not started | - |
 | 15. Per-Turn Enforcement Plugin | v1.4 | 0/? | Not started | - |
@@ -104,11 +104,11 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
   3. Running the install on macOS prints an explicit "NemoClaw is unsupported on macOS" error and exits non-zero rather than silently completing or no-opping
   4. The NemoClaw install path skeleton is idempotent — running it twice on the same host produces the same result without duplication or error
 
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
 **Wave 1**
 
-- [ ] 12-01-PLAN.md — Nyquist test harness (test_install_dispatcher.sh) + verbatim probe-host-compat.sh copy
+- [x] 12-01-PLAN.md — Nyquist test harness (test_install_dispatcher.sh) + verbatim probe-host-compat.sh copy
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
