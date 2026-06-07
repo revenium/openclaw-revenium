@@ -10,6 +10,8 @@ Agents never silently blow through token budgets — every turn is guardrail-che
 
 ## Current State
 
+**In progress — v1.4 NemoClaw/OpenShell Support.** Phase 12 (Parallel Install Scaffolding & Detection) complete (2026-06-07): a thin `scripts/install.sh` dispatcher detects NemoClaw vs standalone OpenClaw vs macOS and routes correctly (D-03), the standalone `post-install.sh` path is byte-stable (NCINST-01), macOS gets an explicit refusal rather than a silent no-op (NCINST-02), and `scripts/post-install-nemoclaw.sh` is a gated skeleton (probe-host-compat preflight hard gate + CLI check + Phase 13+ stubs). Backed by a hermetic Nyquist suite (`tests/test_install_dispatcher.sh`, 10/10). One non-blocking confirmatory smoke remains: a real Linux+NemoClaw host run on 34.224.27.67.
+
 **Shipped v1.3 Reliable Attribution (2026-06-05)** — task/job marker attribution no longer depends on the LLM remembering an end-of-turn directive. A typed OpenClaw `before_agent_finalize` plugin (`revenium-marker-gate`) structurally forces the agent to run `write-marker.sh` before it can finalize a substantive turn — bounded (`retry.maxAttempts: 1`) and fail-open (never blocks the reply), with the fail-open boundary hardened + throw-path tested (CR-01). Shipped with `scripts/verify-markers.sh`, a read-only completions-vs-markers coverage diagnostic, and an idempotent `post-install.sh` install/enable/inspect step (sets `allowConversationAccess` and warns if `before_agent_finalize` is not in hookNames). Validated end-to-end on the live ClawHub host (98.82.34.123, opus-4-8): the revise loop fires, the agent classifies on the forced pass, unmarked turns still finalize, and attribution flows on the Revenium side — fixing the ~1-in-64 marked-completion baseline diagnosed in production.
 
 **Shipped v1.2 Metering Completeness (2026-06-04)** — guardrail enforcement events and tool usage are now first-class Revenium transactions (`GUARDRAIL` / tool-events), closing the metering-visibility blind spots found while debugging v1.1 in production. Combined with v1.0 (guardrails + completion metering) and v1.1 (agentic job tracking), the skill now meters **every cost-incurring activity** — agent completions, guardrail enforcement events, and tool invocations — attributed by root session, task type, and agentic job.
@@ -142,4 +144,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-07 — started v1.4 NemoClaw/OpenShell Support milestone (parallel install path), scoped from 6 spikes proven on live host 34.224.27.67.*
+*Last updated: 2026-06-07 — v1.4 Phase 12 (Parallel Install Scaffolding & Detection) complete: install dispatcher + macOS refusal + gated NemoClaw skeleton, NCINST-01/02 satisfied.*
