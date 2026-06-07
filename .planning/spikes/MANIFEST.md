@@ -28,13 +28,15 @@ _(Design decisions that emerge from spiking. Non-negotiable for the real build. 
 - The parallel path should build on NemoClaw's first-class CLI primitives — `nemoclaw <name> skill install <path>`, `policy-add`, `exec` — not bespoke docker hacks.
 - Inside the sandbox, OpenClaw config/state lives at `/sandbox/.openclaw/` (NOT `~/.openclaw/`); skills deploy via `nemoclaw skill install`. Egress is forced through a managed proxy `10.200.0.1:3128`.
 - Default `suggested` egress allowlist = npm, pypi, huggingface, brew, openclaw-pricing. **Revenium API egress is not allowed by default** — the install path must add a custom network policy for the Revenium API host.
+- The parallel install path MUST ship + apply a `revenium` network-policy preset (`api.revenium.ai`) via `nemoclaw <name> policy-add --from-file` (validated in spike 002 — `.planning/spikes/002-openshell-egress/revenium-policy.yaml`). Policy hot-reloads, no rebuild.
+- Sandbox TLS trust store is `/etc/openshell-tls/ca-bundle.pem` — likely `SSL_CERT_FILE` target for the revenium CLI inside the sandbox.
 
 ## Spikes
 
 | # | Name | Type | Validates | Verdict | Tags |
 |---|------|------|-----------|---------|------|
 | 001 | nemoclaw-bootstrap | standard | Given a clean host, when NemoClaw `install.sh` runs, then NemoClaw + OpenShell come up and an OpenClaw agent completes one turn | **VALIDATED** (Linux host 34.224.27.67; agent turn completed via Nemotron). INVALIDATED on macOS. | infra, install, nemoclaw, openshell |
-| 002 | openshell-egress | standard | Given an agent in an OpenShell sandbox, when it calls the Revenium API over HTTPS, then egress succeeds (default policy or documented allowance) | PENDING | network, egress, openshell, metering |
+| 002 | openshell-egress | standard | Given an agent in an OpenShell sandbox, when it calls the Revenium API over HTTPS, then egress succeeds (default policy or documented allowance) | **VALIDATED** (blocked by default; opened via host-scoped `policy-add`, no rebuild) | network, egress, openshell, metering |
 | 003 | revenium-cli-in-sandbox | standard | Given the revenium binary + state dir + REVENIUM_* env in the OpenShell sandbox, when `revenium config show` + a meter call run inside, then the CLI is authenticated and meters | PENDING | sandbox, cli, credentials, bind-mount |
 | 004 | background-metering-loop | standard | Given NemoClaw always-on lifecycle + OpenShell process limits, when the per-minute metering job runs, then guardrail-status.json stays current without tripping limits | PENDING | cron, lifecycle, process-limits |
 | 005 | skill-discovery-and-directives | standard | Given the revenium skill in NemoClaw's skills dir, when an agent turn runs, then the guardrail/marker directives reach agent context (else AGENTS.md-equivalent needed) | PENDING | skill-loading, directives, agents-md |
