@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: NemoClaw/OpenShell Support
 status: planning
-last_updated: "2026-06-07T00:00:00.000Z"
-last_activity: 2026-06-07 — Roadmap created for v1.4 (Phases 12–16)
+last_updated: "2026-06-07T17:16:09.924Z"
+last_activity: 2026-06-07 — v1.4 roadmap created (Phases 12–16)
 progress:
   total_phases: 5
   completed_phases: 0
@@ -147,9 +147,9 @@ Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 ## Session Continuity
 
-Last session: 2026-06-07T00:00:00.000Z
-Stopped at: v1.4 roadmap created — Phases 12–16 defined
-Resume file: None
+Last session: 2026-06-07T17:16:09.919Z
+Stopped at: Phase 12 context gathered
+Resume file: .planning/phases/12-parallel-install-scaffolding-detection/12-CONTEXT.md
 
 ## Operator Next Steps
 
