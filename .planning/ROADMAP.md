@@ -14,7 +14,7 @@
 
 **Milestone Goal:** Let the Revenium skill optionally run under NemoClaw inside an OpenShell sandbox — a parallel install path that leaves the existing standalone OpenClaw + Docker path untouched. Feasibility proven on live host 34.224.27.67 (sandbox `revenium-spike`). Build consumes spike artifacts (policy YAMLs, tick scripts, revenium-guard plugin skeleton) rather than re-deriving them.
 
-- [ ] **Phase 12: Parallel Install Scaffolding & Detection** — Detection gate (Linux+NemoClaw vs standalone vs macOS-refuse) and the parallel install path skeleton
+- [x] **Phase 12: Parallel Install Scaffolding & Detection** — Detection gate (Linux+NemoClaw vs standalone vs macOS-refuse) and the parallel install path skeleton (completed 2026-06-07)
 - [ ] **Phase 13: Sandbox Provisioning — Egress, CLI & Authenticated Metering** — Apply the `revenium` egress policy preset, deliver the revenium binary into the sandbox, close the authenticated-meter spike
 - [ ] **Phase 14: Host-Side Metering Loop** — Host cron + `nemoclaw share mount` pipeline that keeps `guardrail-status.json` current for the in-sandbox agent
 - [ ] **Phase 15: Per-Turn Enforcement Plugin** — `before_prompt_build` guardrail-directive plugin + `before_agent_finalize` marker-gate adapter for NemoClaw (highest-risk phase)
@@ -81,7 +81,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 9. Guardrail Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
 | 10. Tool Registry & Tool-Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
 | 11. Structural Marker Enforcement | v1.3 | 3/3 | Complete | 2026-06-05 |
-| 12. Parallel Install Scaffolding & Detection | v1.4 | 2/2 | Complete   | 2026-06-07 |
+| 12. Parallel Install Scaffolding & Detection | v1.4 | 2/2 | Complete    | 2026-06-07 |
 | 13. Sandbox Provisioning — Egress, CLI & Authenticated Metering | v1.4 | 0/? | Not started | - |
 | 14. Host-Side Metering Loop | v1.4 | 0/? | Not started | - |
 | 15. Per-Turn Enforcement Plugin | v1.4 | 0/? | Not started | - |

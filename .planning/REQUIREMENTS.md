@@ -7,8 +7,8 @@
 ## v1.4 Requirements
 
 ### Install & Detection (NCINST)
-- [ ] **NCINST-01**: Operator can install the Revenium skill onto a NemoClaw/OpenShell target via a parallel install path that leaves the standalone OpenClaw + Docker path untouched.
-- [ ] **NCINST-02**: The install path detects a NemoClaw/OpenShell target (Linux + Docker) and refuses explicitly on unsupported hosts (macOS) rather than silently no-opping.
+- [x] **NCINST-01**: Operator can install the Revenium skill onto a NemoClaw/OpenShell target via a parallel install path that leaves the standalone OpenClaw + Docker path untouched.
+- [x] **NCINST-02**: The install path detects a NemoClaw/OpenShell target (Linux + Docker) and refuses explicitly on unsupported hosts (macOS) rather than silently no-opping.
 
 ### Sandbox Egress (NCEGRESS)
 - [ ] **NCEGRESS-01**: The install path ships and applies a host-scoped `revenium` network-policy preset so the sandbox can reach `api.revenium.ai`; a missing/blocking policy is surfaced as such (not a generic network error).
@@ -44,8 +44,8 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| NCINST-01 | Phase 12 | Pending |
-| NCINST-02 | Phase 12 | Pending |
+| NCINST-01 | Phase 12 | Complete |
+| NCINST-02 | Phase 12 | Complete |
 | NCEGRESS-01 | Phase 13 | Pending |
 | NCCLI-01 | Phase 13 | Pending |
 | NCCLI-02 | Phase 13 | Pending |
