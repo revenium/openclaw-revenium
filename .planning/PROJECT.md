@@ -14,9 +14,23 @@ Agents never silently blow through token budgets — every turn is guardrail-che
 
 **Shipped v1.2 Metering Completeness (2026-06-04)** — guardrail enforcement events and tool usage are now first-class Revenium transactions (`GUARDRAIL` / tool-events), closing the metering-visibility blind spots found while debugging v1.1 in production. Combined with v1.0 (guardrails + completion metering) and v1.1 (agentic job tracking), the skill now meters **every cost-incurring activity** — agent completions, guardrail enforcement events, and tool invocations — attributed by root session, task type, and agentic job.
 
-**Status:** Awaiting next milestone. No active development phase.
+**Status:** v1.4 NemoClaw/OpenShell Support — in planning.
 
 **Open follow-up:** Phase 9 live guardrail-halt UAT/verification on host 172.16.1.247 deferred (validated through production use; see STATE.md → Deferred Items).
+
+## Current Milestone: v1.4 NemoClaw/OpenShell Support
+
+**Goal:** Let the Revenium skill optionally run under NemoClaw inside an OpenShell sandbox — a parallel install path that leaves the existing standalone OpenClaw + Docker path untouched.
+
+**Target features:**
+- Linux/NemoClaw detection + parallel install path (gate to Linux+Docker; refuse off-Linux explicitly — no silent no-op)
+- Sandbox egress policy — ship + apply a host-scoped `revenium` network-policy preset for `api.revenium.ai`
+- revenium CLI in-sandbox — prebuilt-binary delivery (not brew bottle), `SSL_CERT_FILE` → OpenShell CA bundle, `REVENIUM_*` injection
+- Host-side metering loop — host cron + `nemoclaw share mount` refreshing `guardrail-status.json` (not per-tick `exec`, not in-sandbox cron)
+- Per-turn enforcement plugin — OpenClaw `before_prompt_build` plugin delivering the mandatory guardrail directive (authored from the official scaffold)
+- Skill deploy via `nemoclaw skill install`
+
+**Basis:** 6 spikes in `.planning/spikes/` (4 VALIDATED, 2 PARTIAL with known build paths) + the `spike-findings-openclaw-revenium` skill. Feasibility proven end-to-end on live host 34.224.27.67. macOS unsupported.
 
 ### Next Milestone Goals (candidates)
 
@@ -128,4 +142,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-05 after v1.3 Reliable Attribution milestone — structural marker enforcement via the `before_agent_finalize` plugin shipped (Phase 11), host-validated on ClawHub. Awaiting next milestone.*
+*Last updated: 2026-06-07 — started v1.4 NemoClaw/OpenShell Support milestone (parallel install path), scoped from 6 spikes proven on live host 34.224.27.67.*

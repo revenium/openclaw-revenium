@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: Reliable Attribution
-status: Awaiting next milestone
-last_updated: "2026-06-06T22:15:55.748Z"
-last_activity: 2026-06-06 — Milestone v1.3 completed and archived
+milestone: v1.4
+milestone_name: NemoClaw/OpenShell Support
+status: planning
+last_updated: "2026-06-07T00:00:00.000Z"
+last_activity: 2026-06-07 — Milestone v1.4 started (defining requirements)
 progress:
-  total_phases: 11
-  completed_phases: 3
-  total_plans: 9
-  completed_plans: 9
-  percent: 27
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04 after v1.2 milestone)
 
 **Core value:** Agents never silently blow through token budgets — every turn is guardrail-checked and the user keeps control past a threshold — and **every cost-incurring activity** (agent completions, guardrail enforcement events, and tool invocations) is metered and attributed by root session, task type, and agentic job, so spend is fully observable in Revenium with no blind spots.
-**Current focus:** Milestone complete
+**Current focus:** v1.4 NemoClaw/OpenShell Support — defining requirements
 
 ## Current Position
 
-Phase: Milestone v1.3 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-06 — Milestone v1.3 completed and archived
+Status: Defining requirements
+Last activity: 2026-06-07 — Milestone v1.4 started
 
 ## Performance Metrics
 
