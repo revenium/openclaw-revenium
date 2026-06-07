@@ -105,9 +105,13 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
   4. The NemoClaw install path skeleton is idempotent — running it twice on the same host produces the same result without duplication or error
 
 **Plans:** 2 plans
-
 Plans:
+**Wave 1**
+
 - [ ] 12-01-PLAN.md — Nyquist test harness (test_install_dispatcher.sh) + verbatim probe-host-compat.sh copy
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 12-02-PLAN.md — install.sh dispatcher (D-03 routing + macOS refusal) + post-install-nemoclaw.sh skeleton
 
 **Spike artifacts consumed:** spike 001 bootstrap findings, `install-and-bootstrap.md` detection pattern

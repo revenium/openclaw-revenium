@@ -562,20 +562,20 @@ rm -rf "${TMP_HOME}"
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does `probe-host-compat.sh` need any adaptation for install context vs spike context?**
    - What we know: The probe is designed as a non-destructive, standalone script with no dependencies beyond bash + standard Unix utilities. It reads `/proc/meminfo`, calls `uname`, `docker info`, `df`, and `nvidia-smi`.
    - What's unclear: The probe's header says "Spike 001 — NemoClaw bootstrap feasibility probe". Should the banner/header be updated to reflect its new role as a first-class install-time preflight script?
-   - Recommendation: Update the comment header when copying to `scripts/`. Keep all logic and exit-code contract byte-for-byte identical.
+   - RESOLVED: Update the comment header when copying to `scripts/`. Keep all logic and exit-code contract byte-for-byte identical. (Reflected in Plan 12-01 Task 1.)
 
 2. **Should `install.sh` accept and forward `--skip-prereqs` to `post-install.sh`?**
    - What we know: `post-install.sh` accepts `--skip-prereqs` (line 28). The dispatcher passes `PASSTHROUGH_ARGS` to both targets.
    - What's unclear: Should `--skip-prereqs` also suppress the preflight probe in the NemoClaw path?
-   - Recommendation: Forward `--skip-prereqs` as-is to both paths. NemoClaw path can gate probe suppression on this flag if desired, but given the hard-gate contract (D-08) this is risky. Leave probe mandatory for NemoClaw path this phase.
+   - RESOLVED: Forward `--skip-prereqs` as-is to both paths via `PASSTHROUGH_ARGS`. The NemoClaw preflight probe stays mandatory this phase given the hard-gate contract (D-08); probe suppression is not wired to this flag. (Reflected in Plan 12-02 Task 1.)
 
 3. **Does the dispatcher need to handle the case where neither `post-install.sh` nor `post-install-nemoclaw.sh` is found (e.g., partially extracted tarball)?**
-   - Recommendation: Add a `[[ -f "${SCRIPT}" ]] || fail "..."` guard before each `bash "${SCRIPT}"` invocation. Minimal code, prevents confusing "bash: file not found" errors.
+   - RESOLVED: Add a `[[ -f "${SCRIPT}" ]] || fail "..."` guard before each `bash "${SCRIPT}"` invocation. Minimal code, prevents confusing "bash: file not found" errors. (Reflected in Plan 12-02 Task 1 script-existence guards.)
 
 ---
 
