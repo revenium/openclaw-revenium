@@ -104,7 +104,11 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
   3. Running the install on macOS prints an explicit "NemoClaw is unsupported on macOS" error and exits non-zero rather than silently completing or no-opping
   4. The NemoClaw install path skeleton is idempotent — running it twice on the same host produces the same result without duplication or error
 
-**Plans:** TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 12-01-PLAN.md — Nyquist test harness (test_install_dispatcher.sh) + verbatim probe-host-compat.sh copy
+- [ ] 12-02-PLAN.md — install.sh dispatcher (D-03 routing + macOS refusal) + post-install-nemoclaw.sh skeleton
 
 **Spike artifacts consumed:** spike 001 bootstrap findings, `install-and-bootstrap.md` detection pattern
 
