@@ -1,0 +1,10 @@
+{
+  "name": "revenium-guard",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "index.js",
+  "openclaw": {
+    "openclawVersion": "2026.5.22",
+    "extensions": ["./index.js"]
+  }
+}

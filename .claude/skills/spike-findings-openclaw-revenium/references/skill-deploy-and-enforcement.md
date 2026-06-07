@@ -20,9 +20,13 @@
    - There is **no AGENTS.md** in-sandbox, and a dropped `/sandbox/AGENTS.md` is **not auto-read**.
    - NemoClaw injects a per-turn `<nemoclaw-runtime>` preamble (src `nemoclaw/src/runtime-context.ts`)
      but it is **not file/config-extensible**.
-   - **→ Inject via an OpenClaw plugin hook** (e.g. `before_agent_finalize`). The `nemoclaw` plugin
-     already runs every turn; an analogous plugin can prepend the guardrail directive. (This is the
-     same shape as the fix used for the ClawHub end-of-turn marker gate.)
+   - **→ Inject via an OpenClaw plugin `before_prompt_build` hook** returning `{ prependContext: <directive> }`.
+     Proven viable in spike 006: the `nemoclaw` plugin uses exactly this and its block reaches every
+     turn. Author the plugin from `openclaw plugins init` (or mirror the nemoclaw plugin's compiled-ESM
+     structure) — a hand-stubbed plugin loaded but hung the turn. Requirements: package.json needs
+     `openclaw.extensions: ["./index.js"]`; manifest needs `configSchema`; install via
+     `openclaw plugins install` (untrusted/hand-placed plugins load but their hooks are inert);
+     `nemoclaw <name> recover` to reload; validate via the gateway turn path.
 3. **Also do what `skill install` skips:** seed `guardrail-status.json` (write it via the share mount,
    see metering ref) and stand up the metering loop. Neither is created by `skill install`.
 

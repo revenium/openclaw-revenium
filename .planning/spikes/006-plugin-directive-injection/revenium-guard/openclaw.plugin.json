@@ -1,0 +1,12 @@
+{
+  "id": "revenium-guard",
+  "name": "Revenium Guard",
+  "version": "0.0.1",
+  "description": "Injects the mandatory Revenium guardrail directive into every agent turn",
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

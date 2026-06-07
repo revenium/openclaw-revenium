@@ -36,7 +36,7 @@ Spike session wrapped: 2026-06-07. Validated live on Ubuntu host 34.224.27.67 (s
 | Install & bootstrap | references/install-and-bootstrap.md | Linux-only; non-interactive env-var install; run detached to avoid apt SIGTTIN; ~11 min |
 | Sandbox egress policies | references/sandbox-egress-policies.md | Deny-by-default proxy; ship + `policy-add` a host-scoped `revenium` preset for `api.revenium.ai` |
 | Revenium CLI & metering | references/revenium-cli-and-metering.md | No Linux brew bottle → tarball install; `SSL_CERT_FILE=/etc/openshell-tls/ca-bundle.pem`; loop host-side via `share mount`, NOT per-tick `exec` |
-| Skill deploy & enforcement | references/skill-deploy-and-enforcement.md | `skill install` gives discovery only; per-turn directive needs a plugin hook (the one unproven piece) |
+| Skill deploy & enforcement | references/skill-deploy-and-enforcement.md | `skill install` gives discovery only; per-turn directive needs a plugin `before_prompt_build` hook — mechanism proven (spike 006), author from `openclaw plugins init` |
 
 ## Spike verdicts
 
@@ -47,6 +47,7 @@ Spike session wrapped: 2026-06-07. Validated live on Ubuntu host 34.224.27.67 (s
 | 003 | revenium-cli-in-sandbox | PARTIAL (auth meter pending a real Revenium key) |
 | 004 | background-metering-loop | VALIDATED |
 | 005 | skill-discovery-and-directives | PARTIAL (directive injection needs a plugin) |
+| 006 | plugin-directive-injection | PARTIAL (plugin `before_prompt_build` mechanism proven viable; author from official scaffold) |
 
 ## Source Files
 
@@ -61,4 +62,5 @@ Original spike source files (probe, policy YAMLs, tick scripts, READMEs) preserv
 - 003-revenium-cli-in-sandbox
 - 004-background-metering-loop
 - 005-skill-discovery-and-directives
+- 006-plugin-directive-injection
 </metadata>
