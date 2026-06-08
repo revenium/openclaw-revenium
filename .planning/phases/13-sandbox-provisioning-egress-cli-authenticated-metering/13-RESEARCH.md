@@ -568,22 +568,25 @@ The install must know which NemoClaw sandbox to provision. Options (in order of 
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Sandbox name parameter surface**
    - What we know: The spike hardcodes `revenium-spike`. The install script must accept a sandbox name.
    - What's unclear: Whether `nemoclaw sandbox list` output is parseable and whether single-sandbox auto-detect is safe.
    - Recommendation: Accept `REVENIUM_SANDBOX_NAME` env var; fail with clear message if unset and auto-detect is unavailable.
+   - **RESOLVED:** Per CONTEXT.md Claude's Discretion + planned in 13-02 T1 — `REVENIUM_SANDBOX_NAME` env var, fail with a clear message when unset. Auto-detect deliberately not relied upon.
 
 2. **meter completion exit behavior on HTTP error**
    - What we know: `--dry-run` produces clean output and exits 0. A real call with a bad key returned `{"status":403}` server-side in spike 003 (but via `sources list`, not `meter completion`).
    - What's unclear: Whether `revenium meter completion` exits non-zero on a 4xx/5xx response from the server.
    - Recommendation: Check both exit code AND presence of HTTP 2xx indicator in JSON output (`--output json`) as the success signal. D-LIVE execution on 34.224.27.67 will resolve this.
+   - **RESOLVED:** Planned in 13-02 T3 as a dual-signal success check (exit code AND 2xx in JSON output). The residual exit-semantics unknown is closed empirically by the D-LIVE smoke in 13-03 on 34.224.27.67.
 
 3. **`nemoclaw policy-add` idempotency**
    - What we know: Hot-reloads on each apply (version bump). The ledger gate prevents re-applying.
    - What's unclear: Whether applying the same preset twice errors or succeeds silently.
    - Recommendation: The ledger gate makes this a non-issue for the normal path. For extra safety, `--yes` suppresses prompts and the command appears to succeed even if policy is already active (based on spike 002 "Policy version 4 loaded" output — each apply bumps the version).
+   - **RESOLVED:** Non-issue — the step-keyed ledger gate (D-07, planned in 13-02 T1) skips re-applying an already-applied preset, so the double-apply path is never exercised on the normal run.
 
 ---
 
