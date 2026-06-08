@@ -86,6 +86,13 @@ if [[ "${2:-}" == "policy-list" ]]; then
   exit 0
 fi
 
+# share — nemoclaw <sandbox> share mount <src> <dst>
+# Exits STUB_SSHFS_RC (default 0) to simulate mount success/failure
+# independently of the sshfs stub (GROUP A/B need mount to fail via nemoclaw).
+if [[ "${2:-}" == "share" ]]; then
+  exit "${STUB_SSHFS_RC:-0}"
+fi
+
 # exec — dispatch based on the exec payload content.
 # Detects payload type by string-comparing captured argv with grep -qF.
 if [[ "${2:-}" == "exec" ]]; then
