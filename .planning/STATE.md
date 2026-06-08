@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: NemoClaw/OpenShell Support
-status: ready_to_plan
-last_updated: 2026-06-07T19:29:42.410Z
-last_activity: 2026-06-07 -- Phase 12 execution started
+status: planning
+last_updated: "2026-06-08T16:28:24.911Z"
+last_activity: 2026-06-07
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 11
-  percent: 0
-stopped_at: Phase 12 complete (2/2) — ready to discuss Phase 13
+  completed_plans: 2
+  percent: 20
 ---
 
 # Project State
@@ -149,9 +148,9 @@ Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 ## Session Continuity
 
-Last session: 2026-06-07T17:16:09.919Z
-Stopped at: Phase 12 context gathered
-Resume file: .planning/phases/12-parallel-install-scaffolding-detection/12-CONTEXT.md
+Last session: 2026-06-08T16:28:24.906Z
+Stopped at: Phase 13 context gathered
+Resume file: .planning/phases/13-sandbox-provisioning-egress-cli-authenticated-metering/13-CONTEXT.md
 
 ## Operator Next Steps
 
