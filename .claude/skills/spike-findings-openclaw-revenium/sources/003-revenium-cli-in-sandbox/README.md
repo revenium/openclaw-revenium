@@ -3,7 +3,7 @@ spike: 003
 name: revenium-cli-in-sandbox
 type: standard
 validates: "Given the revenium binary + state dir + REVENIUM_* env in the OpenShell sandbox, when revenium config show + a meter call run inside, then the CLI is authenticated and meters"
-verdict: PARTIAL
+verdict: VALIDATED
 related: [001, 002, 004]
 tags: [sandbox, cli, credentials, bind-mount, tls]
 host: "34.224.27.67 (sandbox revenium-spike)"
@@ -24,8 +24,10 @@ point `SSL_CERT_FILE` at it).
   `/tmp`, `/sandbox`. Read-only: `/sandbox/.nemoclaw`.
 - `brew` (preinstalled), `jq`, `curl` present; `revenium` absent.
 - CA bundle at `/etc/openshell-tls/ca-bundle.pem`.
-- CLI config: `~/.config/revenium/config.yaml`; keys `key, api-url, team-id, tenant-id, owner-id`;
-  env `REVENIUM_API_KEY` etc.; default API `https://api.revenium.ai/profitstream`.
+- CLI config: `~/.config/revenium/config.yaml`. **File field for the API key is `api-key:`**
+  (NOT `key:` — the `revenium config set key <v>` subcommand takes arg name `key` but persists it
+  as `api-key:`; a hand-written `key:` line is silently ignored). Other fields: `api-url, team-id,
+  tenant-id, owner-id`. Env `REVENIUM_API_KEY` etc.; default API `https://api.revenium.ai/profitstream`.
 
 ## How to Run
 
@@ -63,11 +65,12 @@ nemoclaw revenium-spike exec -- sh -lc \
 
 ## Results
 
-**Verdict: PARTIAL.** Everything except the authenticated meter is proven inside the sandbox:
+**Verdict: VALIDATED.** The full authenticated path is now proven inside the sandbox:
 - ✅ Binary delivered + executes (`/sandbox/.local/bin/revenium`).
 - ✅ TLS works with `SSL_CERT_FILE=/etc/openshell-tls/ca-bundle.pem`.
 - ✅ Egress reaches `api.revenium.ai` (spike-002 policy); the Revenium **server responds** (403 on dummy key).
-- ⏸ **Authenticated meter call: not yet run** — blocked on a valid Revenium API key (+ team/tenant/owner).
+- ✅ **Authenticated meter call: 2xx success** — a real `revenium meter completion` returned a created
+  `metered-event` resource (see closure note below).
 
 **Requirements for the build:**
 - **Do not rely on `brew install` for the CLI in-sandbox** — no Linux bottle. Either fetch the
@@ -80,7 +83,19 @@ nemoclaw revenium-spike exec -- sh -lc \
   and only writes results into the sandbox via the mount — in which case the in-sandbox CLI + the
   spike-002 egress policy are only needed if the agent itself calls Revenium directly.
 
-## To finish (reopen)
+## Closure note (VALIDATED — 2026-06-08)
 
-Provide a Revenium API key (+ team/tenant/owner) and run a real `revenium meter ...` call in-sandbox;
-expect a success/accepted response → flip to VALIDATED.
+Closed live on host **34.224.27.67**, sandbox **revenium-spike**, via the Phase 13
+`scripts/post-install-nemoclaw.sh` provisioning flow (real D-LIVE key, `--task-type
+install-smoke-test`). The authenticated `revenium meter completion` returned **HTTP 2xx** — a
+created `metered-event` resource (`id 36597852-c046-4ef2-b79e-4c52ac1c1627`, with `signature`).
+All five ledger keys present; a re-run emitted **no second event** (exactly-once, D-06).
+
+Three real defects surfaced during the live smoke that the hermetic stub had not modeled, now
+fixed + regression-guarded in Phase 13:
+1. **NemoClaw `exec` rejects newline/CR in any argv element** — pass single-line payloads (base64
+   multi-line content + `base64 -d` in-sandbox).
+2. **The CLI reads the API key from the `api-key:` field** in `config.yaml`, **not** `key:`
+   (the `config set key` subcommand persists it as `api-key:`; a `key:` line is silently ignored).
+3. **A meter SUCCESS returns the created `metered-event` resource object** (`id`/`resourceType`/
+   `signature`), **not** a `{"status":200}` envelope — classify on the resource shape.

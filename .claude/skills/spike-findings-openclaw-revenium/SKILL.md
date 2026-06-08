@@ -44,7 +44,7 @@ Spike session wrapped: 2026-06-07. Validated live on Ubuntu host 34.224.27.67 (s
 |---|-------|---------|
 | 001 | nemoclaw-bootstrap | VALIDATED (Linux) / INVALIDATED (macOS) |
 | 002 | openshell-egress | VALIDATED |
-| 003 | revenium-cli-in-sandbox | PARTIAL (auth meter pending a real Revenium key) |
+| 003 | revenium-cli-in-sandbox | VALIDATED |
 | 004 | background-metering-loop | VALIDATED |
 | 005 | skill-discovery-and-directives | PARTIAL (directive injection needs a plugin) |
 | 006 | plugin-directive-injection | PARTIAL (plugin `before_prompt_build` mechanism proven viable; author from official scaffold) |

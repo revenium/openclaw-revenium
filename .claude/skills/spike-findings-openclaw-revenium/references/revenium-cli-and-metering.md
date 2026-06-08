@@ -15,6 +15,11 @@
   tar xzf rev.tgz && install -m755 ./revenium <bindir>/revenium
   ```
 - Auth: `REVENIUM_API_KEY` (+ `team-id/tenant-id/owner-id`) via env or `~/.config/revenium/config.yaml`.
+  **In the config file the API-key field is `api-key:`, NOT `key:`** — `config set key <v>` persists it
+  as `api-key:`; a hand-written `key:` line is silently ignored (`config show` → "API Key: (not set)").
+  HOME=`/sandbox`, so the file is `/sandbox/.config/revenium/config.yaml` (mode 600).
+- A meter **success** returns the created resource object (`{"id":...,"resourceType":"metered-event",
+  "signature":...}`), **not** a `{"status":200}` envelope — classify on the resource shape, not status:2xx.
 - **TLS:** set `SSL_CERT_FILE=/etc/openshell-tls/ca-bundle.pem` for any in-sandbox CLI call.
 - Verified: binary runs, `config show` works, and with `SSL_CERT_FILE` set the CLI reaches
   `api.revenium.ai` (a dummy key returns server-side `{"status":403}` — full integration proven;
