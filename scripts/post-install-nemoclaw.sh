@@ -210,14 +210,17 @@ tenant-id: ${REVENIUM_TENANT_ID}"
     [[ -n "${REVENIUM_OWNER_ID:-}"  ]] && config_content="${config_content}
 owner-id: ${REVENIUM_OWNER_ID}"
 
-    # Write via nemoclaw exec using a single-quoted heredoc tag (<<'YAML') so no
-    # in-sandbox shell expansion of operator-supplied values occurs (T-13-INJ, V5).
-    # The API key lands in the file, never on the exec command line (T-13-KEY, Pitfall 5).
-    # In-sandbox HOME = /sandbox; config path is /sandbox/.config/revenium/ (Pitfall 6).
-    nemoclaw "${SANDBOX_NAME}" exec -- sh -lc "mkdir -p /sandbox/.config/revenium && cat > /sandbox/.config/revenium/config.yaml <<'YAML'
-${config_content}
-YAML
-chmod 600 /sandbox/.config/revenium/config.yaml"
+    # Encode the (possibly multi-line) YAML into a single-line base64 blob on the
+    # host, then decode it in-sandbox. Real NemoClaw gRPC exec REJECTS any argv
+    # element containing a newline/CR (InvalidArgument), so a heredoc payload —
+    # which embeds newlines in the single `sh -lc` argument — cannot be used here
+    # (Phase 13 live-smoke finding). base64 -d writes raw bytes, so no in-sandbox
+    # shell expansion of operator-supplied values occurs (T-13-INJ, V5). The key
+    # lands only in the chmod-600 file, never as a revenium CLI flag (T-13-KEY,
+    # Pitfall 5). In-sandbox HOME = /sandbox; config path /sandbox/.config/revenium/ (Pitfall 6).
+    local config_b64
+    config_b64=$(printf '%s\n' "${config_content}" | base64 | tr -d '\n')
+    nemoclaw "${SANDBOX_NAME}" exec -- sh -lc "mkdir -p /sandbox/.config/revenium && printf '%s' '${config_b64}' | base64 -d > /sandbox/.config/revenium/config.yaml && chmod 600 /sandbox/.config/revenium/config.yaml"
 
     ledger_set "creds-written" "1"
     info "Credentials written to /sandbox/.config/revenium/config.yaml"

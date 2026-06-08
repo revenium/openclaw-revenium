@@ -49,6 +49,25 @@ if [[ -n "${STUB_NEMOCLAW_ARGV_FILE:-}" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 1b. Reject newline/CR in any argv element — mirrors real NemoClaw gRPC exec,
+#     which returns InvalidArgument: "command argument N contains newline or
+#     carriage return characters". A heredoc passed as a single `sh -lc` arg
+#     embeds newlines and is rejected by the real CLI; enforcing it here makes
+#     the no-multiline-argv constraint hermetically testable (Phase 13
+#     live-smoke finding — caught at the credential-write step).
+# ---------------------------------------------------------------------------
+_argn=0
+for arg in "$@"; do
+  _argn=$((_argn + 1))
+  case "${arg}" in
+    *$'\n'*|*$'\r'*)
+      echo "Error:   × status: InvalidArgument, message: \"command argument ${_argn} contains newline or carriage return characters\"" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
 # 2. Subcommand dispatch
 #    argv layout: nemoclaw <sandbox> <subcommand> [subcommand-args...]
 #    $1 = sandbox name, $2 = subcommand (policy-add, exec, policy-list, ...)
