@@ -83,7 +83,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 11. Structural Marker Enforcement | v1.3 | 3/3 | Complete | 2026-06-05 |
 | 12. Parallel Install Scaffolding & Detection | v1.4 | 2/2 | Complete    | 2026-06-07 |
 | 13. Sandbox Provisioning — Egress, CLI & Authenticated Metering | v1.4 | 3/3 | Complete    | 2026-06-08 |
-| 14. Host-Side Metering Loop | v1.4 | 0/? | Not started | - |
+| 14. Host-Side Metering Loop | v1.4 | 0/3 | Planned | - |
 | 15. Per-Turn Enforcement Plugin | v1.4 | 0/? | Not started | - |
 | 16. Skill Deploy & Docs | v1.4 | 0/? | Not started | - |
 
@@ -167,7 +167,20 @@ Plans:
   3. A stopped or unmounted share fails gracefully — the loop logs a clear error and exits cleanly rather than hanging or corrupting the status file
   4. The existing standalone OpenClaw cron and `report.sh`/`guardrail-check.sh` scripts are not modified
 
-**Plans:** TBD
+**Plans:** 3 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 14-01-PLAN.md — Wave-0 Nyquist scaffold: stub-mount-env.sh (mountpoint/crontab/sshfs stubs) + test_nemoclaw_cron.sh harness encoding SC1-SC4 + D-02..D-08 (RED)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 14-02-PLAN.md — nemoclaw-cron-tick.sh (mount self-heal + OPENCLAW_HOME delegation to unmodified cron.sh, exit-3-on-failure) + install-nemoclaw-cron.sh (sshfs hard-gate, 600-mode host env, idempotent per-sandbox cron, interval precedence)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 14-03-PLAN.md — uninstall-nemoclaw-cron.sh + wire real install_metering_loop into post-install-nemoclaw.sh (replaces Phase 13 stub) + SC4 byte-identical guard
 
 **Spike artifacts consumed:** `004-background-metering-loop/` tick scripts, SSHFS mount pattern from CONVENTIONS.md
 
