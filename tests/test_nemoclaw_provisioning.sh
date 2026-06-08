@@ -88,6 +88,16 @@ make_home() {
   mkdir -p "${d}/.nemoclaw" "${d}/.local/bin"
   # Symlink stub-nemoclaw.sh as `nemoclaw` onto the tmp PATH
   ln -sf "${SCRIPT_DIR}/stub-nemoclaw.sh" "${d}/.local/bin/nemoclaw"
+  # Create a stub probe-host-compat.sh that always passes.
+  # The real probe gates hard on the OS (Linux-only), which blocks testing on
+  # macOS dev machines. PROBE_SCRIPT is overridden in run_provision() to point
+  # here, so production runs continue to use the real probe-host-compat.sh.
+  cat > "${d}/stub-probe-host-compat.sh" << 'EOF'
+#!/usr/bin/env bash
+echo "  ✓ [stub] host compatibility preflight passed (test mode)"
+exit 0
+EOF
+  chmod +x "${d}/stub-probe-host-compat.sh"
   echo "${d}"
 }
 
@@ -104,6 +114,11 @@ run_provision() {
 
   # Build ledger path and standard env
   local ledger_file="${home_dir}/.nemoclaw/revenium-nemoclaw.ledger"
+  # Override PROBE_SCRIPT to use the stub probe created in make_home().
+  # This allows the hermetic tests to run on macOS dev machines where the real
+  # probe-host-compat.sh would fail the OS gate (Linux-only). Production runs
+  # are always invoked via install.sh on Linux — the real probe runs there.
+  local stub_probe="${home_dir}/stub-probe-host-compat.sh"
 
   STUB_NEMOCLAW_ARGV_FILE="${argv_file}" \
   LEDGER_FILE="${ledger_file}" \
@@ -111,6 +126,7 @@ run_provision() {
   PATH="${home_dir}/.local/bin:${PATH}" \
   REVENIUM_SANDBOX_NAME="${REVENIUM_SANDBOX_NAME:-test-sandbox}" \
   REVENIUM_API_KEY="${REVENIUM_API_KEY:-test-key}" \
+  PROBE_SCRIPT="${stub_probe}" \
   "$@" \
   bash "${PROVISION_SH}" 2>&1
 }
