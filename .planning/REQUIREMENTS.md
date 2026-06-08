@@ -11,11 +11,11 @@
 - [x] **NCINST-02**: The install path detects a NemoClaw/OpenShell target (Linux + Docker) and refuses explicitly on unsupported hosts (macOS) rather than silently no-opping.
 
 ### Sandbox Egress (NCEGRESS)
-- [ ] **NCEGRESS-01**: The install path ships and applies a host-scoped `revenium` network-policy preset so the sandbox can reach `api.revenium.ai`; a missing/blocking policy is surfaced as such (not a generic network error).
+- [x] **NCEGRESS-01**: The install path ships and applies a host-scoped `revenium` network-policy preset so the sandbox can reach `api.revenium.ai`; a missing/blocking policy is surfaced as such (not a generic network error).
 
 ### CLI in Sandbox (NCCLI)
-- [ ] **NCCLI-01**: The `revenium` CLI is delivered into the sandbox (prebuilt binary, not a brew bottle) and authenticates via `REVENIUM_*` with `SSL_CERT_FILE` pointed at the OpenShell CA bundle (`/etc/openshell-tls/ca-bundle.pem`).
-- [ ] **NCCLI-02**: An authenticated meter call succeeds against Revenium from the NemoClaw deployment (closes spike 003's pending authenticated-meter step).
+- [x] **NCCLI-01**: The `revenium` CLI is delivered into the sandbox (prebuilt binary, not a brew bottle) and authenticates via `REVENIUM_*` with `SSL_CERT_FILE` pointed at the OpenShell CA bundle (`/etc/openshell-tls/ca-bundle.pem`).
+- [x] **NCCLI-02**: An authenticated meter call succeeds against Revenium from the NemoClaw deployment (closes spike 003's pending authenticated-meter step).
 
 ### Metering Loop (NCMETER)
 - [ ] **NCMETER-01**: A host-side metering loop (host cron + `nemoclaw share mount`) keeps `guardrail-status.json` current for the in-sandbox agent — without per-tick `nemoclaw exec` and without an in-sandbox daemon.
@@ -46,9 +46,9 @@
 |-------------|-------|--------|
 | NCINST-01 | Phase 12 | Complete |
 | NCINST-02 | Phase 12 | Complete |
-| NCEGRESS-01 | Phase 13 | Pending |
-| NCCLI-01 | Phase 13 | Pending |
-| NCCLI-02 | Phase 13 | Pending |
+| NCEGRESS-01 | Phase 13 | Complete |
+| NCCLI-01 | Phase 13 | Complete |
+| NCCLI-02 | Phase 13 | Complete |
 | NCMETER-01 | Phase 14 | Pending |
 | NCENF-01 | Phase 15 | Pending |
 | NCENF-02 | Phase 15 | Pending |
