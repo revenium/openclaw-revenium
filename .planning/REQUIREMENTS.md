@@ -18,7 +18,7 @@
 - [x] **NCCLI-02**: An authenticated meter call succeeds against Revenium from the NemoClaw deployment (closes spike 003's pending authenticated-meter step).
 
 ### Metering Loop (NCMETER)
-- [ ] **NCMETER-01**: A host-side metering loop (host cron + `nemoclaw share mount`) keeps `guardrail-status.json` current for the in-sandbox agent — without per-tick `nemoclaw exec` and without an in-sandbox daemon.
+- [x] **NCMETER-01**: A host-side metering loop (host cron + `nemoclaw share mount`) keeps `guardrail-status.json` current for the in-sandbox agent — without per-tick `nemoclaw exec` and without an in-sandbox daemon.
 
 ### Enforcement (NCENF)
 - [ ] **NCENF-01**: The mandatory per-turn guardrail directive reaches the agent on every turn via an OpenClaw `before_prompt_build` plugin (authored from the official scaffold / mirroring the nemoclaw plugin), so halt and warn-and-ask enforcement work under NemoClaw.
@@ -49,7 +49,7 @@
 | NCEGRESS-01 | Phase 13 | Complete |
 | NCCLI-01 | Phase 13 | Complete |
 | NCCLI-02 | Phase 13 | Complete |
-| NCMETER-01 | Phase 14 | Pending |
+| NCMETER-01 | Phase 14 | Complete |
 | NCENF-01 | Phase 15 | Pending |
 | NCENF-02 | Phase 15 | Pending |
 | NCDEPLOY-01 | Phase 16 | Pending |

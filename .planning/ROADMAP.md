@@ -16,7 +16,7 @@
 
 - [x] **Phase 12: Parallel Install Scaffolding & Detection** — Detection gate (Linux+NemoClaw vs standalone vs macOS-refuse) and the parallel install path skeleton (completed 2026-06-07)
 - [x] **Phase 13: Sandbox Provisioning — Egress, CLI & Authenticated Metering** — Apply the `revenium` egress policy preset, deliver the revenium binary into the sandbox, close the authenticated-meter spike (completed 2026-06-08)
-- [ ] **Phase 14: Host-Side Metering Loop** — Host cron + `nemoclaw share mount` pipeline that keeps `guardrail-status.json` current for the in-sandbox agent
+- [x] **Phase 14: Host-Side Metering Loop** — Host cron + `nemoclaw share mount` pipeline that keeps `guardrail-status.json` current for the in-sandbox agent (completed 2026-06-08)
 - [ ] **Phase 15: Per-Turn Enforcement Plugin** — `before_prompt_build` guardrail-directive plugin + `before_agent_finalize` marker-gate adapter for NemoClaw (highest-risk phase)
 - [ ] **Phase 16: Skill Deploy & Docs** — `nemoclaw skill install` wiring and operator documentation for the NemoClaw install path
 
@@ -83,7 +83,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 11. Structural Marker Enforcement | v1.3 | 3/3 | Complete | 2026-06-05 |
 | 12. Parallel Install Scaffolding & Detection | v1.4 | 2/2 | Complete    | 2026-06-07 |
 | 13. Sandbox Provisioning — Egress, CLI & Authenticated Metering | v1.4 | 3/3 | Complete    | 2026-06-08 |
-| 14. Host-Side Metering Loop | v1.4 | 3/3 | Complete   | 2026-06-08 |
+| 14. Host-Side Metering Loop | v1.4 | 3/3 | Complete    | 2026-06-08 |
 | 15. Per-Turn Enforcement Plugin | v1.4 | 0/? | Not started | - |
 | 16. Skill Deploy & Docs | v1.4 | 0/? | Not started | - |
 
