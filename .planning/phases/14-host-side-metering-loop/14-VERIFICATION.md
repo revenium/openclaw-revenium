@@ -1,9 +1,10 @@
 ---
 phase: 14-host-side-metering-loop
 verified: 2026-06-08T23:22:15Z
-status: human_needed
+status: passed
 score: 11/11
 overrides_applied: 0
+human_verification_resolved: "Both items confirmed on live host 34.224.27.67 (nemoclaw v0.0.55, sandbox revenium-spike) on 2026-06-08 — see 14-HUMAN-UAT.md. (1) install→mount→auto-cron→guardrail-status.json refreshed through mount (_via: host-mount-cron, _maxAgeSeconds: 180); (2) GROUP F sshfs-missing message confirmed (exit 1, mentions sshfs, no crontab entry). Caveat: revenium CLI absent from host PATH so the metering-emission path was not exercised (host provisioning gap, not a code defect)."
 human_verification:
   - test: "Run install-nemoclaw-cron.sh on the live NemoClaw Linux host (34.224.27.67) with a real sandbox and observe that a cron entry is installed and nemoclaw-cron-tick.sh fires at the next minute boundary"
     expected: "Cron entry appears in `crontab -l` with the `# revenium-metering-nemoclaw:<sandbox>` marker; one minute later `~/.nemoclaw/revenium-nemoclaw-metering.log` shows a tick log line and `guardrail-status.json` contains a fresh `updatedAt` and `_maxAgeSeconds` field"
