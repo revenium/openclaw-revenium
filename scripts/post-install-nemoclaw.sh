@@ -254,7 +254,13 @@ run_meter_probe() {
         "SSL_CERT_FILE=/etc/openshell-tls/ca-bundle.pem /sandbox/.local/bin/revenium meter completion --model claude-sonnet-4-5 --provider anthropic --input-tokens 1 --output-tokens 1 --total-tokens 2 --stop-reason END --request-time '${now}' --completion-start-time '${now}' --response-time '${now}' --request-duration 1000 --task-type install-smoke-test --output json 2>&1" \
         2>&1) || true
 
-    if echo "${meter_output}" | grep -qiE '"status"\s*:\s*"?(200|201|202|accepted|ok)"?|Metered successfully'; then
+    # Success shapes: a real authenticated meter call returns the CREATED
+    # resource object ({"id":...,"resourceType":"metered-event","signature":...})
+    # — NOT a {"status":200} envelope (Phase 13 live-smoke finding: classifying
+    # only on status:2xx false-negatived a genuine 2xx success). Match the
+    # created-resource shape first, then keep the legacy status/text signals.
+    # Use [[:space:]] (not \s) for BSD/macOS grep compatibility in the hermetic suite.
+    if echo "${meter_output}" | grep -qiE '"resourceType"[[:space:]]*:[[:space:]]*"?metered-event"?|"status"[[:space:]]*:[[:space:]]*"?(200|201|202|accepted|ok)"?|metered successfully'; then
         ledger_set "meter-probe-passed" "1"
         info "Meter probe passed — authenticated meter call succeeded"
     else

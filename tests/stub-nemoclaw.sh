@@ -129,7 +129,10 @@ if [[ "${2:-}" == "exec" ]]; then
       echo '{"error":"unauthorized"}' >&2
       exit 1
     else
-      echo '{"status":"ok","metered":true}'
+      # Mirror the REAL authenticated-success shape: the created metered-event
+      # resource object (id + resourceType + signature), NOT a {"status":200}
+      # envelope (Phase 13 live-smoke: id 36597852-…, resourceType metered-event).
+      echo '{"id":"stub-00000000-0000-0000-0000-000000000000","label":"metered-event","resourceType":"metered-event","signature":"stubsig00000000","created":"2026-01-01T00:00:00.000Z","updated":"2026-01-01T00:00:00.000Z"}'
       exit 0
     fi
   fi
