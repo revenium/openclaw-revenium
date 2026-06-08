@@ -1,0 +1,30 @@
+# Phase 13 — Revenium OpenClaw Skill, NemoClaw/OpenShell install path.
+# Host-scoped egress preset granting the GitHub release CDN egress through
+# the OpenShell sandbox proxy, for the in-sandbox revenium CLI tarball fetch.
+#
+# Both endpoints are required: the GitHub CDN redirects between
+# release-assets.githubusercontent.com and objects.githubusercontent.com —
+# omitting either breaks the in-sandbox tarball fetch (D-01) silently.
+#
+# Apply with:  nemoclaw <sandbox> policy-add --from-file gh-release-policy.yaml --yes
+#
+# tls: skip  -> L4 CONNECT pass-through (same rationale as revenium-policy.yaml).
+
+preset:
+  name: revenium-cli-install
+  description: "Egress for installing the revenium CLI via GitHub release CDN"
+
+network_policies:
+  revenium_cli_install:
+    name: revenium_cli_install
+    endpoints:
+      - host: release-assets.githubusercontent.com
+        port: 443
+        access: full
+        tls: skip
+      - host: objects.githubusercontent.com
+        port: 443
+        access: full
+        tls: skip
+    binaries:
+      - { path: /** }

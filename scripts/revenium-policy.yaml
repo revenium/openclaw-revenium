@@ -1,0 +1,27 @@
+# Phase 13 — Revenium OpenClaw Skill, NemoClaw/OpenShell install path.
+# Host-scoped egress preset granting the Revenium metering/guardrail API
+# (api.revenium.ai) egress through the OpenShell sandbox proxy.
+#
+# Modeled on NemoClaw's built-in presets
+# (~/.nemoclaw/source/nemoclaw-blueprint/policies/presets/npm.yaml).
+# Apply with:  nemoclaw <sandbox> policy-add --from-file revenium-policy.yaml --yes
+#
+# tls: skip  -> L4 CONNECT pass-through. The default L7 REST mode terminates TLS
+# and inspects methods, which breaks Node 22 undici CONNECT tunnels (#2767) and
+# is unnecessary for a straight HTTPS API client. Pass-through is the robust
+# choice for both curl and the compiled `revenium` CLI.
+
+preset:
+  name: revenium
+  description: "Revenium metering + guardrail API egress (api.revenium.ai)"
+
+network_policies:
+  revenium:
+    name: revenium
+    endpoints:
+      - host: api.revenium.ai
+        port: 443
+        access: full
+        tls: skip
+    binaries:
+      - { path: /** }
