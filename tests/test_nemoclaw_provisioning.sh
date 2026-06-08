@@ -326,12 +326,20 @@ output_g=$(run_provision "${TMP_HOME_G}" "${ARGV_G}" 2>&1) || exit_code_g=$?
 
 # Assert all five ledger keys present
 for key in revenium-policy-applied gh-release-policy-applied cli-delivered creds-written meter-probe-passed; do
-  if [[ -f "${LEDGER_G}" ]] && grep -qF "${key}" "${LEDGER_G}" 2>/dev/null; then
+  # Anchor to '^key=' so a malformed/partial entry cannot satisfy the check (IN-01).
+  if [[ -f "${LEDGER_G}" ]] && grep -qE "^${key}=" "${LEDGER_G}" 2>/dev/null; then
     pass "GROUP-G: ledger key '${key}' present after full success run"
   else
     fail "GROUP-G: ledger key '${key}' NOT in ledger after full success run (provisioning not yet implemented)"
   fi
 done
+
+# IN-01: assert the cli-delivered VALUE (version:sha256), not just key presence.
+if [[ -f "${LEDGER_G}" ]] && grep -qE '^cli-delivered=v1\.2\.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67$' "${LEDGER_G}" 2>/dev/null; then
+  pass "GROUP-G: cli-delivered ledger value is the pinned version:sha256"
+else
+  fail "GROUP-G: cli-delivered ledger value is not the pinned version:sha256"
+fi
 
 # ===========================================================================
 # GROUP H: NCCLI-02 — creds config.yaml uses the `api-key:` field the CLI reads

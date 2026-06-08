@@ -101,7 +101,13 @@ if [[ "${2:-}" == "exec" ]]; then
   # Pattern: payload contains "http_code" AND "api.revenium.ai"
   if grep -qF "http_code" "${_payload_file}" && grep -qF "api.revenium.ai" "${_payload_file}"; then
     rm -f "${_payload_file}"
-    echo "${STUB_NEMOCLAW_CURL_HTTP_CODE:-403}"
+    _hc="${STUB_NEMOCLAW_CURL_HTTP_CODE:-403}"
+    echo "${_hc}"
+    # Proxy block: real curl writes "000" AND exits non-zero (CONNECT tunnel
+    # failed), so `nemoclaw exec` propagates a non-zero exit. Mirror that here so
+    # GROUP-A exercises the egress-detection path that keys on the exec exit code,
+    # not just stdout (CR-01/WR-01). Open egress (4xx) keeps a zero exit.
+    [[ "${_hc}" == "000" ]] && exit 1
     exit 0
   fi
 

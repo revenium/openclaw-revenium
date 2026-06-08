@@ -65,8 +65,14 @@ ledger_has() {
     grep -q "^${key}=" "${LEDGER_FILE}" 2>/dev/null
 }
 
+# Set to 1 by ledger_set the first time a provisioning step actually does work,
+# so the success banner can distinguish a fresh provision from an idempotent
+# re-run where every step was skipped via the ledger (WR-03).
+WORK_DONE=0
+
 ledger_set() {
     local key="$1" val="$2"
+    WORK_DONE=1
     local ledger_dir
     ledger_dir="$(dirname "${LEDGER_FILE}")"
     mkdir -p "${ledger_dir}"
@@ -74,6 +80,16 @@ ledger_set() {
     { grep -v "^${key}=" "${LEDGER_FILE}" 2>/dev/null || true; \
       echo "${key}=${val}"; } > "${LEDGER_FILE}.tmp" && \
       mv "${LEDGER_FILE}.tmp" "${LEDGER_FILE}"
+}
+
+# yaml_dquote — emit a value as a double-quoted YAML scalar with backslash and
+# double-quote escaped, so arbitrary credential values (containing ': ', ' #',
+# leading indicators, etc.) cannot corrupt the config.yaml structure (WR-02).
+yaml_dquote() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '"%s"' "$s"
 }
 
 # ---------------------------------------------------------------------------
@@ -113,14 +129,19 @@ provision_egress_policy() {
         || fail "policy-add failed for revenium preset"
 
     # Reach-verify: distinguish proxy block from open egress (D-04)
-    # A proxy block produces HTTP=000 (curl exit 56, CONNECT tunnel failed).
-    # An open egress with auth rejection produces HTTP=4xx with curl exit 0.
-    local http_code
+    # A proxy block produces HTTP=000 (curl exit 56, CONNECT tunnel failed) AND a
+    # non-zero curl exit, which propagates out through `sh -lc` and `nemoclaw exec`.
+    # Capture the exit code SEPARATELY from stdout — do NOT use `|| echo "000"`:
+    # on a block curl already prints "000", so appending another yields "000\n000"
+    # (!= "000") and the gap escapes detection, then revenium-policy-applied gets
+    # written permanently (CR-01). Treat any non-zero exec, literal 000, or empty
+    # output as a proxy block.
+    local http_code exec_rc=0
     http_code=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
         'curl -sS -o /dev/null -w "%{http_code}" https://api.revenium.ai/ 2>/dev/null' \
-        2>/dev/null || echo "000")
+        2>/dev/null) || exec_rc=$?
 
-    if [[ "${http_code}" == "000" ]]; then
+    if [[ "${exec_rc}" -ne 0 || "${http_code}" == "000" || -z "${http_code}" ]]; then
         fail "sandbox cannot reach api.revenium.ai — policy gap detected. Apply the revenium egress preset: nemoclaw ${SANDBOX_NAME} policy-list"
     fi
     info "Egress to api.revenium.ai confirmed (HTTP ${http_code})"
@@ -207,14 +228,19 @@ write_revenium_creds() {
     # only field the CLI reads the key back from (Phase 13 live-smoke finding:
     # a `key:` line is silently ignored — `config show` reports "API Key: (not
     # set)" while still reading team-id/etc from the same file).
+    #
+    # Each value is emitted as a double-quoted YAML scalar (backslash + quote
+    # escaped) so a value containing `: ` (mapping ambiguity) or ` #` (comment
+    # truncation) cannot corrupt the field — base64 transport guards shell
+    # injection but not YAML structure (WR-02).
     local config_content
-    config_content="api-key: ${REVENIUM_API_KEY}"
+    config_content="api-key: $(yaml_dquote "${REVENIUM_API_KEY}")"
     [[ -n "${REVENIUM_TEAM_ID:-}"   ]] && config_content="${config_content}
-team-id: ${REVENIUM_TEAM_ID}"
+team-id: $(yaml_dquote "${REVENIUM_TEAM_ID}")"
     [[ -n "${REVENIUM_TENANT_ID:-}" ]] && config_content="${config_content}
-tenant-id: ${REVENIUM_TENANT_ID}"
+tenant-id: $(yaml_dquote "${REVENIUM_TENANT_ID}")"
     [[ -n "${REVENIUM_OWNER_ID:-}"  ]] && config_content="${config_content}
-owner-id: ${REVENIUM_OWNER_ID}"
+owner-id: $(yaml_dquote "${REVENIUM_OWNER_ID}")"
 
     # Encode the (possibly multi-line) YAML into a single-line base64 blob on the
     # host, then decode it in-sandbox. Real NemoClaw gRPC exec REJECTS any argv
@@ -330,11 +356,20 @@ stub_install_enforcement_plugin
 # ---------------------------------------------------------------------------
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  NemoClaw provisioning complete."
-echo ""
-echo "  Delivered: revenium CLI ${REVENIUM_CLI_VERSION}"
-echo "  Config:    /sandbox/.config/revenium/config.yaml"
-echo "  Probe:     meter-probe-passed"
+if [[ "${WORK_DONE}" -eq 1 ]]; then
+    echo "  NemoClaw provisioning complete."
+    echo ""
+    echo "  Delivered: revenium CLI ${REVENIUM_CLI_VERSION}"
+    echo "  Config:    /sandbox/.config/revenium/config.yaml"
+    echo "  Probe:     meter-probe-passed"
+else
+    echo "  NemoClaw already provisioned — no changes (idempotent re-run)."
+    echo ""
+    echo "  Every step was skipped via the ledger; existing state is intact."
+    echo "  To re-provision (e.g. after an API-key rotation), clear the relevant"
+    echo "  keys from ${LEDGER_FILE} (e.g. creds-written, meter-probe-passed)"
+    echo "  before re-running — note clearing meter-probe-passed emits a new event."
+fi
 echo ""
 echo "  Phases 14-16 still pending:"
 echo "    Phase 14: host-side metering loop"
