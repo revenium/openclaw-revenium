@@ -82,7 +82,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 10. Tool Registry & Tool-Event Metering | v1.2 | 3/3 | Complete | 2026-06-04 |
 | 11. Structural Marker Enforcement | v1.3 | 3/3 | Complete | 2026-06-05 |
 | 12. Parallel Install Scaffolding & Detection | v1.4 | 2/2 | Complete    | 2026-06-07 |
-| 13. Sandbox Provisioning — Egress, CLI & Authenticated Metering | v1.4 | 2/3 | In Progress|  |
+| 13. Sandbox Provisioning — Egress, CLI & Authenticated Metering | v1.4 | 3/3 | Complete   | 2026-06-08 |
 | 14. Host-Side Metering Loop | v1.4 | 0/? | Not started | - |
 | 15. Per-Turn Enforcement Plugin | v1.4 | 0/? | Not started | - |
 | 16. Skill Deploy & Docs | v1.4 | 0/? | Not started | - |
@@ -133,7 +133,7 @@ Plans:
   3. The `revenium` binary is present inside the sandbox at `/sandbox/.local/bin/revenium` (prebuilt tarball delivery, not brew) with `SSL_CERT_FILE=/etc/openshell-tls/ca-bundle.pem` and `REVENIUM_*` env wired
   4. An authenticated `revenium meter completion` call from inside the sandbox returns HTTP 2xx against the real Revenium API (closes NCCLI-02 and spike 003's partial verdict)
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 **Wave 1**
@@ -146,7 +146,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 13-03-PLAN.md — Live smoke on 34.224.27.67 (authenticated meter 2xx, D-LIVE) + flip spike 003 PARTIAL→VALIDATED
+- [x] 13-03-PLAN.md — Live smoke on 34.224.27.67 (authenticated meter 2xx, D-LIVE) + flip spike 003 PARTIAL→VALIDATED
 
 **Spike artifacts consumed:** `002-openshell-egress/revenium-policy.yaml`, `003-revenium-cli-in-sandbox/` probe scripts and `gh-release-policy.yaml`
 
