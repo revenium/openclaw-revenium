@@ -98,10 +98,20 @@ yaml_dquote() {
 export PATH="${HOME}/.local/bin:${PATH}"
 
 # ---------------------------------------------------------------------------
-# Phase 14/15 stub functions — deferred, kept for the ordered call sequence
+# Phase 14/15 functions — metering loop live; enforcement plugin deferred
 # ---------------------------------------------------------------------------
-stub_install_metering_loop() {
-    warn "Phase 14+: host-side metering loop deferred — skipping."
+install_metering_loop() {
+    if ledger_has "metering-loop-installed"; then
+        info "NemoClaw metering loop already installed (ledger) — skipping."
+        return 0
+    fi
+
+    step "Installing host-side metering loop"
+    bash "${SCRIPT_DIR}/install-nemoclaw-cron.sh" --sandbox "${SANDBOX_NAME}" \
+        || fail "install-nemoclaw-cron.sh failed"
+
+    ledger_set "metering-loop-installed" "1"
+    info "Metering loop installed (cron active for sandbox '${SANDBOX_NAME}')"
 }
 
 stub_install_enforcement_plugin() {
@@ -348,7 +358,7 @@ run_meter_probe
 # ---------------------------------------------------------------------------
 # 5. Phase 14/15 deferred stubs — preserved for future phases
 # ---------------------------------------------------------------------------
-stub_install_metering_loop
+install_metering_loop
 stub_install_enforcement_plugin
 
 # ---------------------------------------------------------------------------
