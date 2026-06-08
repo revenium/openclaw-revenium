@@ -201,8 +201,14 @@ write_revenium_creds() {
     step "Writing revenium credentials into sandbox"
 
     # Build config content on the host side; optional fields only when set.
+    # The config-file field for the API key is `api-key:` — NOT `key:`. The
+    # `revenium config set key <v>` SUBCOMMAND takes the arg name `key`, but it
+    # persists to ~/.config/revenium/config.yaml as `api-key:`, and that is the
+    # only field the CLI reads the key back from (Phase 13 live-smoke finding:
+    # a `key:` line is silently ignored — `config show` reports "API Key: (not
+    # set)" while still reading team-id/etc from the same file).
     local config_content
-    config_content="key: ${REVENIUM_API_KEY}"
+    config_content="api-key: ${REVENIUM_API_KEY}"
     [[ -n "${REVENIUM_TEAM_ID:-}"   ]] && config_content="${config_content}
 team-id: ${REVENIUM_TEAM_ID}"
     [[ -n "${REVENIUM_TENANT_ID:-}" ]] && config_content="${config_content}
