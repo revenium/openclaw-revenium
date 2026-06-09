@@ -52,5 +52,5 @@
 | NCMETER-01 | Phase 14 | Complete |
 | NCENF-01 | Phase 15 | Pending |
 | NCENF-02 | Phase 15 | Pending |
-| NCDEPLOY-01 | Phase 16 | Pending |
+| NCDEPLOY-01 | Phase 16 (deploy step pulled into Phase 15 per D-08) | Pending |
 | NCDEPLOY-02 | Phase 16 | Pending |

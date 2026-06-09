@@ -84,7 +84,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 12. Parallel Install Scaffolding & Detection | v1.4 | 2/2 | Complete    | 2026-06-07 |
 | 13. Sandbox Provisioning — Egress, CLI & Authenticated Metering | v1.4 | 3/3 | Complete    | 2026-06-08 |
 | 14. Host-Side Metering Loop | v1.4 | 3/3 | Complete    | 2026-06-08 |
-| 15. Per-Turn Enforcement Plugin | v1.4 | 0/? | Not started | - |
+| 15. Per-Turn Enforcement Plugin | v1.4 | 0/3 | Planned | - |
 | 16. Skill Deploy & Docs | v1.4 | 0/? | Not started | - |
 
 ## Phase Details
@@ -204,7 +204,22 @@ Plans:
   4. A plugin hook error or timeout is fail-open — it never blocks the agent's reply (same contract as the Phase 11 plugin)
   5. The plugin is authored from the official `openclaw plugins init` scaffold (not a hand-rolled stub), with `configSchema` and `openclaw.extensions` in `package.json` as required by the trusted-plugin install path
 
-**Plans:** TBD
+**Plans:** 3 plans
+
+**Install-path note (D-08):** NCDEPLOY-01's *deploy step* (`nemoclaw skill install`) is pulled forward into Phase 15 so the marker chain is end-to-end testable and SC3 is honestly verifiable here. Install-path order is now: 13 provisioning → 14 metering loop → 15a skill install → 15b plugin install → 15c preflight+smoke → 16 docs. Phase 16 keeps only docs + polish.
+
+Plans:
+**Wave 1**
+
+- [ ] 15-01-PLAN.md — Combined revenium-enforcement plugin (4 hooks: before_prompt_build guard + verbatim gate.js marker hooks), build-time inlined BUDGET-GUARD.md, committed dist/, + _maxAgeSeconds freshness rule
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 15-02-PLAN.md — Install path: install_skill_nemoclaw (D-08) + install_enforcement_plugin replacing the stub (mount-deliver → trusted install → config patch → recover → fail-HARD turn-test/inspect + python3/marker smoke) + uninstall counterpart
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 15-03-PLAN.md — Live validation on 34.224.27.67 / revenium-spike (SC1-SC5 evidence in 15-VALIDATION.md; human checkpoint)
 
 **Spike artifacts consumed:** spike 006 findings (`skill-deploy-and-enforcement.md`, plugin skeleton), Phase 11 `revenium-marker-gate` source as the `before_agent_finalize` template
 
