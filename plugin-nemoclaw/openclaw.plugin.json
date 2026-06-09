@@ -1,0 +1,13 @@
+{
+  "id": "revenium-enforcement",
+  "name": "Revenium Enforcement",
+  "description": "Injects guardrail directive on every turn and gates task marker writing.",
+  "version": "1.0.0",
+  "activation": { "onStartup": true },
+  "contracts": { "tools": [] },
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}
