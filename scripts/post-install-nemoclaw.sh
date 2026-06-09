@@ -98,7 +98,7 @@ yaml_dquote() {
 export PATH="${HOME}/.local/bin:${PATH}"
 
 # ---------------------------------------------------------------------------
-# Phase 14/15 functions — metering loop live; enforcement plugin deferred
+# Phase 14/15 functions — metering loop + enforcement plugin
 # ---------------------------------------------------------------------------
 install_metering_loop() {
     if ledger_has "metering-loop-installed"; then
@@ -114,8 +114,144 @@ install_metering_loop() {
     info "Metering loop installed (cron active for sandbox '${SANDBOX_NAME}')"
 }
 
-stub_install_enforcement_plugin() {
-    warn "Phase 15+: per-turn enforcement plugin deferred — skipping."
+# install_skill_nemoclaw — deploy the revenium skill into the sandbox via
+# nemoclaw skill install (D-08). Pulled into Phase 15 so the marker chain is
+# end-to-end verifiable before the plugin smoke gate runs.
+# Ledger key: skill-installed-nemoclaw
+install_skill_nemoclaw() {
+    if ledger_has "skill-installed-nemoclaw"; then
+        info "Revenium skill already deployed to sandbox (ledger) — skipping."
+        return 0
+    fi
+
+    step "Deploying revenium skill into sandbox"
+    # SCRIPT_DIR is scripts/; repo root (which IS the skill dir containing SKILL.md)
+    # is one level up.
+    local skill_dir
+    skill_dir="${SCRIPT_DIR}/.."
+    nemoclaw "${SANDBOX_NAME}" skill install "${skill_dir}" \
+        || fail "nemoclaw skill install failed"
+
+    ledger_set "skill-installed-nemoclaw" "1"
+    info "Revenium skill deployed to sandbox '${SANDBOX_NAME}'"
+}
+
+# install_enforcement_plugin — deliver, trust-install, configure, recover, and
+# fail-HARD validate the combined revenium-enforcement plugin (D-05/D-09/D-10/D-11).
+# Includes python3 preflight + marker smoke gate (D-07).
+# Ledger key: enforcement-plugin-installed
+install_enforcement_plugin() {
+    if ledger_has "enforcement-plugin-installed"; then
+        info "Enforcement plugin already installed (ledger) — skipping."
+        return 0
+    fi
+
+    step "Installing revenium-enforcement plugin (NemoClaw)"
+
+    # -------------------------------------------------------------------------
+    # Step 1: Establish share mount (Phase 14 pattern — reuse D-11)
+    # MNT = SSHFS-mounted /sandbox/.openclaw visible on the host
+    # -------------------------------------------------------------------------
+    local MNT
+    MNT="${HOME}/sbx-openclaw-${SANDBOX_NAME}"
+    mkdir -p "${MNT}"
+    if ! mountpoint -q "${MNT}" 2>/dev/null; then
+        nemoclaw "${SANDBOX_NAME}" share mount /sandbox/.openclaw "${MNT}" \
+            || fail "mount failed — is ${SANDBOX_NAME} running?"
+    fi
+    info "Share mount confirmed at ${MNT}"
+
+    # -------------------------------------------------------------------------
+    # Step 2: Copy committed plugin dir to mount (= in-sandbox extensions/)
+    # rm -rf dest first for idempotent re-copy (avoids stale-file blends, T-15-09)
+    # -------------------------------------------------------------------------
+    local plugin_src plugin_dst
+    plugin_src="${SCRIPT_DIR}/../plugin-nemoclaw"
+    plugin_dst="${MNT}/extensions/revenium-enforcement"
+    [[ -d "${plugin_src}" ]] \
+        || fail "plugin-nemoclaw/ not found at ${plugin_src} — was Plan 01 committed?"
+    rm -rf "${plugin_dst}"
+    cp -r "${plugin_src}" "${plugin_dst}"
+    info "Plugin dir copied to ${plugin_dst}"
+
+    # -------------------------------------------------------------------------
+    # Step 3: Trust-install via openclaw plugins install (T-15-05 provenance gate)
+    # A hand-placed copy loads but its hooks are inert — the install records trust.
+    # In-sandbox path: /sandbox/.openclaw/extensions/revenium-enforcement
+    # -------------------------------------------------------------------------
+    nemoclaw "${SANDBOX_NAME}" exec -- openclaw plugins install \
+        /sandbox/.openclaw/extensions/revenium-enforcement \
+        || fail "openclaw plugins install failed — plugin will be untrusted/inert. Aborting."
+    info "Plugin trust-installed via openclaw plugins install"
+
+    # -------------------------------------------------------------------------
+    # Step 4: Config patch — enabled:true + allowConversationAccess:true
+    # Single-line sh -lc string (nemoclaw exec rejects newline argv, T-15-06).
+    # JSON5 merge — re-run-safe. allowConversationAccess required for
+    # before_agent_finalize + agent_end hooks to register (Phase 11 D-05 revised).
+    # -------------------------------------------------------------------------
+    nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
+        "echo '{plugins: {entries: {\"revenium-enforcement\": {enabled: true, hooks: {allowConversationAccess: true}}}}}' | openclaw config patch --stdin" \
+        || fail "plugin config patch failed — cannot enable enforcement plugin. Aborting."
+    info "Plugin config patched (enabled:true, allowConversationAccess:true)"
+
+    # -------------------------------------------------------------------------
+    # Step 5: Recover to load the plugin
+    # -------------------------------------------------------------------------
+    nemoclaw "${SANDBOX_NAME}" recover \
+        || fail "nemoclaw recover failed after plugin install. Aborting."
+    info "Sandbox recovered (plugin loaded)"
+
+    # -------------------------------------------------------------------------
+    # Step 6: Fail-HARD validation gate (D-09, D-10)
+    # Each gate is stricter than standalone post-install.sh (warn-and-continue)
+    # because NCENF-01 is highest-risk: a silently-broken plugin is worse than
+    # a failed install.
+    # -------------------------------------------------------------------------
+
+    # Gate A (D-10): confirm <revenium-guard> tag appears in finalPromptText.
+    # This verifies the prompt was BUILT with the directive — independent of model
+    # reply behavior. 2>/dev/null suppresses exec noise; || true prevents set -e
+    # propagation before our own check.
+    local _prompt_json
+    _prompt_json=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
+        "openclaw agent --json --message 'ping' 2>/dev/null" 2>/dev/null || true)
+    if ! echo "${_prompt_json}" | grep -q "<revenium-guard>"; then
+        fail "guard directive NOT injected — <revenium-guard> absent from finalPromptText. Enforcement plugin may be untrusted or before_prompt_build inactive. Aborting."
+    fi
+    info "Gate A passed: <revenium-guard> confirmed in finalPromptText"
+
+    # Gate B (D-09): confirm before_prompt_build AND before_agent_finalize are active.
+    # Missing before_prompt_build → plugin untrusted/inert.
+    # Missing before_agent_finalize → allowConversationAccess not applied.
+    local _inspect
+    _inspect=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
+        "openclaw plugins inspect revenium-enforcement 2>/dev/null" 2>/dev/null || true)
+    if ! echo "${_inspect}" | grep -q "before_prompt_build"; then
+        fail "before_prompt_build NOT active in plugins inspect — plugin untrusted or install incomplete. Aborting."
+    fi
+    if ! echo "${_inspect}" | grep -q "before_agent_finalize"; then
+        fail "before_agent_finalize NOT active in plugins inspect — allowConversationAccess may not have taken effect. Aborting."
+    fi
+    info "Gate B passed: before_prompt_build and before_agent_finalize confirmed active"
+
+    # Gate C (D-07): python3 preflight — write-marker.sh requires it.
+    nemoclaw "${SANDBOX_NAME}" exec -- sh -lc "python3 --version" &>/dev/null \
+        || fail "python3 not found in sandbox — write-marker.sh will silently fail. Aborting."
+    info "Gate C passed: python3 present in sandbox"
+
+    # Gate D (D-07): marker smoke — write a test marker and confirm it appears
+    # under the mount (verifies the mount + write path end-to-end).
+    nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
+        "bash ~/.openclaw/skills/revenium/scripts/write-marker.sh testing" 2>/dev/null \
+        || fail "marker smoke test failed — write-marker.sh not functional in sandbox. Aborting."
+    if ! ls "${MNT}/markers/"*.jsonl &>/dev/null; then
+        fail "marker smoke test: no .jsonl file appeared in ${MNT}/markers/ — mount or write path broken. Aborting."
+    fi
+    info "Gate D passed: marker smoke test — .jsonl visible over mount at ${MNT}/markers/"
+
+    ledger_set "enforcement-plugin-installed" "1"
+    info "Enforcement plugin installed and validated (all gates passed)"
 }
 
 # ---------------------------------------------------------------------------
@@ -356,10 +492,12 @@ write_revenium_creds
 run_meter_probe
 
 # ---------------------------------------------------------------------------
-# 5. Phase 14/15 deferred stubs — preserved for future phases
+# 5. Phase 14/15 — metering loop + enforcement plugin (real install paths)
+#    Order: skill deploy (D-08, marker chain precondition) THEN plugin.
 # ---------------------------------------------------------------------------
 install_metering_loop
-stub_install_enforcement_plugin
+install_skill_nemoclaw         # D-08: deploy skill first (marker chain precondition)
+install_enforcement_plugin     # D-05/D-09/D-10/D-11: plugin + validation gate
 
 # ---------------------------------------------------------------------------
 # Success banner
@@ -372,6 +510,7 @@ if [[ "${WORK_DONE}" -eq 1 ]]; then
     echo "  Delivered: revenium CLI ${REVENIUM_CLI_VERSION}"
     echo "  Config:    /sandbox/.config/revenium/config.yaml"
     echo "  Probe:     meter-probe-passed"
+    echo "  Plugin:    revenium-enforcement (validated)"
 else
     echo "  NemoClaw already provisioned — no changes (idempotent re-run)."
     echo ""
@@ -379,10 +518,8 @@ else
     echo "  To re-provision (e.g. after an API-key rotation), clear the relevant"
     echo "  keys from ${LEDGER_FILE} (e.g. creds-written, meter-probe-passed)"
     echo "  before re-running — note clearing meter-probe-passed emits a new event."
+    echo "  To re-install the enforcement plugin, clear: enforcement-plugin-installed"
 fi
 echo ""
-echo "  Phases 14-16 still pending:"
-echo "    Phase 14: host-side metering loop"
-echo "    Phase 15: per-turn enforcement plugin"
-echo "    Phase 16: skill deploy + documentation"
+echo "  Phase 16 (skill deploy + docs) still pending."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
