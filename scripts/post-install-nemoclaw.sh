@@ -209,17 +209,33 @@ install_enforcement_plugin() {
     # a failed install.
     # -------------------------------------------------------------------------
 
-    # Gate A (D-10): confirm <revenium-guard> tag appears in finalPromptText.
-    # This verifies the prompt was BUILT with the directive — independent of model
-    # reply behavior. 2>/dev/null suppresses exec noise; || true prevents set -e
-    # propagation before our own check.
-    local _prompt_json
+    # Gate A (B-01 / NCENF-01): confirm the guard directive was injected by asserting
+    # currentTurn.promptChars exceeds a threshold consistent with the +988-char directive
+    # delta observed live (no-plugin baseline: 649; with-plugin: 1637; see 15-VALIDATION.md
+    # §SC1 "Alternative injection proof — promptChars comparison").
+    #
+    # Background: the prompt-text field used in earlier versions was removed in OpenClaw
+    # 2026.5.22 and is absent from `openclaw agent --json` output on the live host (B-01).
+    # Asserting promptChars >= 1500
+    # is a robust alternative: well above the 649 no-plugin floor, comfortably below
+    # the 1637 observed-with-plugin value, and leaves margin for prompt drift.
+    #
+    # Parsing: uses grep -oE (POSIX-guaranteed; no jq required) to extract the numeric
+    # value from the JSON field "promptChars": <N>. Gate B (openclaw plugins inspect)
+    # remains the independent trust/active corroboration (T-15-RS-06).
+    local _min_prompt_chars=1500  # conservative threshold; live evidence: 649 → 1637 (+988)
+    local _prompt_json _prompt_chars
     _prompt_json=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
         "openclaw agent --json --message 'ping' 2>/dev/null" 2>/dev/null || true)
-    if ! echo "${_prompt_json}" | grep -q "<revenium-guard>"; then
-        fail "guard directive NOT injected — <revenium-guard> absent from finalPromptText. Enforcement plugin may be untrusted or before_prompt_build inactive. Aborting."
+    _prompt_chars=$(echo "${_prompt_json}" | grep -oE '"promptChars"[[:space:]]*:[[:space:]]*[0-9]+' \
+        | grep -oE '[0-9]+$' | head -1)
+    if [ -z "${_prompt_chars}" ]; then
+        fail "guard directive NOT injected — could not parse currentTurn.promptChars from openclaw agent --json. before_prompt_build may be inactive or untrusted. Aborting."
     fi
-    info "Gate A passed: <revenium-guard> confirmed in finalPromptText"
+    if [ "${_prompt_chars}" -lt "${_min_prompt_chars}" ]; then
+        fail "guard directive NOT injected — currentTurn.promptChars=${_prompt_chars} below ${_min_prompt_chars}; before_prompt_build inactive or untrusted. Aborting."
+    fi
+    info "Gate A passed: currentTurn.promptChars=${_prompt_chars} >= ${_min_prompt_chars} — directive injected"
 
     # Gate B (D-09): confirm before_prompt_build AND before_agent_finalize are active.
     # Missing before_prompt_build → plugin untrusted/inert.
