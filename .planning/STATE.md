@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: NemoClaw/OpenShell Support
-status: planning
-last_updated: "2026-06-09T00:43:59.973Z"
-last_activity: 2026-06-08
+status: executing
+last_updated: "2026-06-09T01:05:41.310Z"
+last_activity: 2026-06-09 -- Phase 15 execution started
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 8
+  total_plans: 11
   completed_plans: 8
   percent: 60
 ---
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-07 after v1.4 milestone start)
 
 **Core value:** Agents never silently blow through token budgets — every turn is guardrail-checked and the user keeps control past a threshold — and **every cost-incurring activity** (agent completions, guardrail enforcement events, and tool invocations) is metered and attributed by root session, task type, and agentic job, so spend is fully observable in Revenium with no blind spots.
-**Current focus:** Phase 15 — per turn enforcement plugin
+**Current focus:** Phase 15 — per-turn-enforcement-plugin
 
 ## Current Position
 
-Phase: 15
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-08
+Phase: 15 (per-turn-enforcement-plugin) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 15
+Last activity: 2026-06-09 -- Phase 15 execution started
 
 ## Performance Metrics
 
