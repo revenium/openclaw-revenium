@@ -2,7 +2,7 @@
 phase: 15-per-turn-enforcement-plugin
 plan: "05"
 subsystem: live-validation
-status: checkpoint-pending-human-review
+status: complete
 tags: [live-validation, nemoclaw, enforcement-plugin, B-01, B-05, NCENF-01, NCENF-02, re-validation, gap-closure]
 requirements: [NCENF-01, NCENF-02]
 
@@ -169,6 +169,12 @@ None — this is a validation-only plan.
 - [x] Sandbox restore commands recorded (plugin disabled, gateway recovered, guardrail-status.json clean)
 - [x] No fabricated results — all evidence is from live sessions
 - [x] Task 1 commit: b845b5e
-- [x] Checkpoint: Task 2 (checkpoint:human-verify) — awaiting human review
+- [x] Checkpoint: Task 2 (checkpoint:human-verify) — RESOLVED 2026-06-09
 
-## Self-Check: PASSED (pending human-verify checkpoint)
+## Human-Verify Decision (2026-06-09)
+
+User reviewed the live evidence and decided: **accept B-01 as resolved; open a new gap-closure round for B-05.**
+- B-01 (NCENF-01 / SC1): RESOLVED live (promptChars=1645 ≥ 1500). No further action.
+- B-05 (NCENF-02 / SC3): STILL OPEN with a deeper root cause than 15-04 addressed — Nemotron routes shell exec through `tool_search_code` → `openclaw.tools.call('openclaw:core:exec', …)`, so the plugin's `before_tool_call` hook never fires and the marker chain never starts. The 15-04 disk-persistence fix is correct but moot for this host. Carried forward to a new gap plan (next `/gsd-plan-phase 15 --gaps`). Phase 15 is NOT complete.
+
+## Self-Check: PASSED
