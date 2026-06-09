@@ -453,3 +453,197 @@ The blockers are NOT in the plugin code — the plugin mechanism works. The bloc
 
 **The BLOCKER is real and is recorded here per the CRITICAL HONESTY RULE.**
 **A silently broken plan pass has NOT been claimed.**
+
+---
+
+## RE-VALIDATION (2026-06-09, Plan 15-04 fixes)
+
+**Date:** 2026-06-09
+**Host:** 34.224.27.67 (sandbox: revenium-spike)
+**Validator:** Automated (executor agent, Plan 15-05)
+**Plugin version:** 1.0.0 (dist/gate.js from commit e070b6d — includes disk-persisted run-state)
+**Goal:** Verify that the Plan 15-04 code fixes close B-01 (Gate A promptChars) and B-05 (disk-persisted exec observations) on the live sandbox.
+
+### Deploy Steps
+
+```
+Command: rsync -av --exclude node_modules --exclude .gitignore plugin-nemoclaw/ ubuntu@34.224.27.67:/home/ubuntu/plugin-nemoclaw-15-04/
+Exit: 0
+Output: 16 files transferred including dist/gate.js (14 matches for persistRunState/run-state/resolveRunStateDir)
+
+Command: nemoclaw revenium-spike exec -- sh -lc "openclaw plugins install --force /sandbox/.openclaw/extensions/revenium-enforcement 2>&1"
+Exit: 0
+Output: Installing to /sandbox/.openclaw/extensions/revenium-enforcement...
+  Linked peerDependency "openclaw" -> /usr/local/lib/node_modules/openclaw
+  Installed plugin: revenium-enforcement
+  Restart the gateway to load plugins.
+
+Command: nemoclaw revenium-spike exec -- sh -lc "echo '{plugins: {entries: {\"revenium-enforcement\": {enabled: true, hooks: {allowConversationAccess: true}}}}}' | openclaw config patch --stdin 2>&1"
+Exit: 0
+Output: Applied 2 config update(s). Restart the gateway to apply.
+
+Command: nemoclaw revenium-spike recover
+Exit: 0
+Output: Probe complete: OpenClaw gateway is running in 'revenium-spike'.
+```
+
+---
+
+### B-01 Evidence: Gate A promptChars — RESOLVED
+
+**What the 15-04 fix does:** Gate A in `scripts/post-install-nemoclaw.sh` was rewritten to assert
+`currentTurn.promptChars >= 1500` (replacing the removed `finalPromptText` field assertion). Gate A
+now runs `openclaw agent --json` and parses `promptChars` from the JSON output.
+
+**Plugin inspect after deploy (Gate B):**
+```
+Command: nemoclaw revenium-spike exec -- sh -lc "openclaw plugins inspect revenium-enforcement 2>&1"
+Exit: 0
+Output:
+  Revenium Enforcement
+  id: revenium-enforcement
+  Status: loaded
+  Format: openclaw
+  Source: $OPENCLAW_HOME/.openclaw/extensions/revenium-enforcement/dist/index.js
+  Origin: global
+  Version: 1.0.0
+  Shape: non-capability
+
+  Policy:
+  allowConversationAccess: true
+
+  Install:
+  Installed at: 2026-06-09T03:50:42.291Z
+```
+
+**Gate A turn:**
+```
+Command: nemoclaw revenium-spike exec -- sh -lc "openclaw agent --agent main --session-id rv-gatea-fresh-1780977923 --json --message 'What is 2+2?' 2>&1"
+Exit: 0
+Output (parsed from /tmp/gate-a2-output.json):
+  status: ok
+  summary: completed
+  model_response: "4"
+  runId: 7c12bdd0-7e8c-40f5-998d-17d0bd3ea218
+  sessionId: rv-gatea-fresh-1780977923
+  durationMs: 238357 (~238s — Nemotron model inference, consistent with prior observed range)
+
+  systemPromptReport.currentTurn.promptChars: 1645
+  systemPromptReport.currentTurn.runtimeContextChars: 0
+```
+
+**Gate A check simulation (from post-install-nemoclaw.sh):**
+```bash
+_min_prompt_chars=1500
+_prompt_chars=1645
+# grep -oE '"promptChars"[[:space:]]*:[[:space:]]*[0-9]+' ... | grep -oE '[0-9]+$' | head -1
+# → "1645"
+# 1645 >= 1500 → PASS
+# → "Gate A passed: currentTurn.promptChars=1645 >= 1500 — directive injected"
+```
+
+**Status: B-01 RESOLVED** — the new Gate A passes on the live host. `promptChars=1645` is well above
+the 1500 threshold (live evidence: 649 no-plugin baseline, +996 chars injected by `before_prompt_build`).
+
+**Note on turn duration:** The Nemotron model takes 160-240s to complete turns with the plugin enabled
+(longer than Plan 03's observed ~72s, likely due to inference queue load). The gate_a script uses
+`2>/dev/null` to suppress stderr and the `sh -lc` single-line constraint. Operators running the
+install should expect turns to take 2-4 minutes on this host.
+
+---
+
+### B-05 Evidence: Disk-persisted exec-run state — STILL FAILING (honest record)
+
+**What the 15-04 fix does:** `plugin-nemoclaw/src/gate.js` (and dist/gate.js) now writes a
+per-runId JSON file to `$OPENCLAW_HOME/run-state/<runId>.json` when `before_tool_call` observes
+an exec/bash tool call. `before_agent_finalize` in a new process reads this file as a fallback.
+
+**B-05 test turn:**
+```
+Command: nemoclaw revenium-spike exec -- sh -lc "openclaw agent --agent main --session-id rv-b05-1780978277 --json --message 'Please run the shell command echo revenium_b05_test and tell me the output' 2>&1"
+Exit: 0
+Output:
+  status: ok
+  model_response: "revenium_b05_test"
+  promptChars: 1707 (plugin active)
+  durationMs: 162425 (~162s)
+```
+
+**Exec observation check:**
+```
+Command: grep "revenium-marker-gate" ~/sbx-openclaw-revenium-spike/logs/gateway-persistent.log
+Output: (no new entries after Plan 03's 02:27:32 entry)
+→ before_tool_call did NOT fire for the rv-b05 session
+```
+
+**Run-state check:**
+```
+Command: nemoclaw revenium-spike exec -- sh -lc "ls ~/.openclaw/run-state/ 2>/dev/null && echo FOUND || echo NO_RUN_STATE"
+Output: NO_RUN_STATE
+```
+
+**Markers check:**
+```
+Command: ls ~/sbx-openclaw-revenium-spike/markers/
+Output: No such file or directory → NO_MARKERS
+```
+
+**Root cause (unchanged from Plan 03 B-05):**
+
+The Nemotron model in this NemoClaw environment does NOT invoke the `exec` tool directly. Instead, it
+uses `tool_search_code` (a JavaScript sandbox tool) with `openclaw.tools.call('openclaw:core:exec', ...)`
+to indirectly run shell commands. The plugin's `before_tool_call` hook fires only on DIRECT tool calls
+registered in the plugin layer — it does NOT fire on sub-calls made from inside `tool_search_code`.
+
+Evidence from session JSONL `rv-b05-1780978277.jsonl` line 12:
+```json
+{"type": "message", "role": "toolResult", "toolName": "tool_search_code",
+ "content": [{"type": "text", "text": "{\"ok\": true, \"value\": {\"tool\": {\"id\": \"openclaw:core:exec\", ...}}}"}]}
+```
+
+The model ran exec via `tool_search_code` → `openclaw.tools.call('openclaw:core:exec', ...)`. The
+`before_tool_call` hook for `exec` never fires, so `execRuns.add(runId)` and `persistRunState(runId)`
+are never called. As a result, no run-state file is written, and `before_agent_finalize` finds neither
+in-process state nor disk state → passes through without issuing the revise action → no write-marker.sh
+→ no marker .jsonl.
+
+**Status: B-05 STILL FAILING** — the disk persistence code (Plan 15-04 fix) is correct and unit-tested
+(42/42 tests pass, commit e070b6d), but it cannot resolve B-05 end-to-end on this NemoClaw host because
+the prerequisite condition (direct `exec` tool call triggering `before_tool_call`) never occurs. The
+Nemotron model consistently routes all shell execution through `tool_search_code` indirect calls.
+
+**Root cause refinement vs. Plan 03:** Plan 03 identified B-05 as "in-process execRuns resets on recover".
+This re-validation reveals a deeper root cause: `before_tool_call` itself does not fire for Nemotron-style
+indirect exec calls, making the disk persistence fix moot for this host. The revise loop is fully
+functional in unit tests but cannot be triggered by Nemotron's tool-calling pattern.
+
+---
+
+### Sandbox Restore
+
+```
+Command: nemoclaw revenium-spike exec -- sh -lc "openclaw plugins disable revenium-enforcement 2>&1"
+Output: Disabled plugin "revenium-enforcement". Restart the gateway to apply.
+
+Command: nemoclaw revenium-spike recover
+Output: Probe complete: recovered OpenClaw gateway in 'revenium-spike'.
+
+Plugin state after restore:
+  │ Revenium │ revenium │ openclaw │ disabled │ global:revenium-enforcement/dist/index.js │ 1.0.0 │
+
+guardrail-status.json: {"halted": false, "warned": false, ...} (unchanged)
+markers/: directory does not exist (no markers written in this session)
+```
+
+---
+
+### Re-Validation Summary
+
+| Blocker | Plan 15-04 Fix | Live Result | Status |
+|---------|---------------|-------------|--------|
+| B-01 | Gate A uses promptChars >= 1500 | promptChars=1645, exit 0 | **RESOLVED** |
+| B-05 | Disk-persisted run-state in gate.js | before_tool_call never fires (Nemotron uses tool_search_code indirect exec) | **STILL FAILING** |
+
+**CRITICAL HONESTY RULE APPLIED:** B-05 is not resolved on the live sandbox. No marker .jsonl was
+produced. The Plan 15-04 code fix is correct and tested, but cannot be demonstrated end-to-end on
+this NemoClaw host due to the Nemotron model's tool-calling pattern.
