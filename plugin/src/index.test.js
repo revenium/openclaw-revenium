@@ -12,12 +12,16 @@
  *
  * Run: node --test src/index.test.js  (from plugin/ directory)
  */
-import { test, describe, beforeEach } from "node:test";
+import { test, describe, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, chmodSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   execRuns,
   markedTaskRuns,
   resetState,
+  setRunStateDir,
   handleBeforeToolCall,
   handleBeforeAgentFinalize,
   handleAgentEnd,
@@ -30,9 +34,22 @@ import {
 const RUN_A = "run-aaa-001";
 const RUN_B = "run-bbb-002";
 
+// Shared tmp dir for ALL tests — keeps disk writes isolated from the real
+// OPENCLAW_HOME. Created once for the whole suite; resetState() cleans
+// its contents before each test (because _runStateDirOverride is set).
+const SUITE_TMP_DIR = mkdtempSync(join(tmpdir(), "gate-suite-"));
+setRunStateDir(SUITE_TMP_DIR);
+
 // Reset module-level state before each test to prevent leakage.
+// setRunStateDir is already set to SUITE_TMP_DIR for the whole suite;
+// resetState() will clean the tmp dir contents (test isolation for disk).
 beforeEach(() => {
   resetState();
+});
+
+// Clean up the suite-level tmp dir after all tests.
+after(() => {
+  try { rmSync(SUITE_TMP_DIR, { recursive: true }); } catch { /* ignore */ }
 });
 
 // ---------------------------------------------------------------------------
@@ -288,5 +305,101 @@ describe("CR-01 - fail-open boundary (handler throw path)", () => {
 
   test("safeAgentEnd swallows a throwing gate (best-effort cleanup)", () => {
     assert.doesNotThrow(() => safeAgentEnd(RUN_A, boom));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Persistence across process restart (B-05 / NCENF-02)
+//
+// These tests verify that exec observations written to disk survive a simulated
+// process restart (resetState() clears in-process Sets but the disk file remains),
+// and that before_agent_finalize correctly reads the disk fallback to issue the
+// revise action.
+// ---------------------------------------------------------------------------
+
+describe("persistence across process restart (B-05)", () => {
+  // Uses SUITE_TMP_DIR (set at top of file) — each test gets a clean dir
+  // because the outer beforeEach calls resetState() which cleans the dir.
+
+  test("exec observation writes a run-state file for that runId with exec:true", () => {
+    handleBeforeToolCall(RUN_A, "exec", { command: "ls -la" });
+    const stateFile = join(SUITE_TMP_DIR, "run-aaa-001.json");
+    assert.ok(existsSync(stateFile), "run-state file must exist after exec observation");
+    const data = JSON.parse(readFileSync(stateFile, "utf8"));
+    assert.strictEqual(data.exec, true, "persisted state must have exec:true");
+    assert.ok(typeof data.updatedAt === "number", "must have a numeric updatedAt");
+  });
+
+  test("after resetState clears in-process Sets, handleBeforeAgentFinalize reads disk fallback and returns revise action", () => {
+    // Phase 1: exec runs in process A
+    handleBeforeToolCall(RUN_A, "exec", { command: "do some work" });
+    // Verify in-process works before restart
+    const preResult = handleBeforeAgentFinalize(RUN_A);
+    assert.ok(preResult && preResult.action === "revise", "precondition: in-process should return revise");
+
+    // Phase 2: simulate process restart — clear in-process Sets only (file survives on disk)
+    execRuns.clear();
+    markedTaskRuns.clear();
+
+    // Phase 3: in the new process, before_agent_finalize should read disk fallback
+    const postResult = handleBeforeAgentFinalize(RUN_A);
+    assert.ok(postResult !== undefined, "after restart: disk fallback must cause revise action (not undefined)");
+    assert.strictEqual(postResult.action, "revise", "fallback path must return revise action");
+  });
+
+  test("persisted marked:true run passes through after restart (already classified)", () => {
+    // Phase 1: exec + marker in process A
+    handleBeforeToolCall(RUN_A, "exec", { command: "write-marker.sh coding" });
+    // Verify in-process passes through (already marked)
+    assert.strictEqual(handleBeforeAgentFinalize(RUN_A), undefined, "precondition: marked run passes through");
+
+    // Phase 2: simulate restart — clear in-process Sets only (file survives on disk)
+    execRuns.clear();
+    markedTaskRuns.clear();
+
+    // Phase 3: disk file should have marked:true, so finalize passes through
+    const result = handleBeforeAgentFinalize(RUN_A);
+    assert.strictEqual(result, undefined, "marked-on-disk run must pass through after restart");
+  });
+
+  test("handleAgentEnd deletes the run-state file (no stale file for that runId)", () => {
+    handleBeforeToolCall(RUN_A, "exec", { command: "do work" });
+    const stateFile = join(SUITE_TMP_DIR, "run-aaa-001.json");
+    assert.ok(existsSync(stateFile), "precondition: file must exist before agent_end");
+
+    handleAgentEnd(RUN_A);
+
+    assert.ok(!existsSync(stateFile), "run-state file must be deleted after handleAgentEnd");
+  });
+
+  test("path-traversal runId does not write outside the state dir", () => {
+    const traversalRunId = "../../etc/x";
+    // Must not throw, and the file must NOT be written at /etc/x
+    assert.doesNotThrow(() => handleBeforeToolCall(traversalRunId, "exec", { command: "ls" }));
+    // The dangerous path should NOT exist
+    assert.ok(!existsSync("/etc/x"), "traversal must not escape state dir");
+  });
+
+  test("fail-open: unwritable state dir — handleBeforeToolCall does not throw and in-process Set updates", () => {
+    // Make the tmp state dir unwritable (skip on root or platforms where chmod has no effect)
+    let chmodWorked = false;
+    try { chmodSync(SUITE_TMP_DIR, 0o400); chmodWorked = true; } catch { /* skip */ }
+    if (!chmodWorked) return;
+    assert.doesNotThrow(() => handleBeforeToolCall(RUN_A, "exec", { command: "ls" }));
+    // In-process Set must still have been updated
+    assert.ok(execRuns.has(RUN_A), "in-process execRuns must update even when disk write fails");
+    // Restore writable for cleanup
+    try { chmodSync(SUITE_TMP_DIR, 0o700); } catch { /* ignore */ }
+  });
+
+  test("fail-open: safeBeforeAgentFinalize returns undefined (not throw) when state dir is unwritable", () => {
+    let chmodWorked = false;
+    try { chmodSync(SUITE_TMP_DIR, 0o400); chmodWorked = true; } catch { /* skip */ }
+    if (!chmodWorked) return;
+    // With empty in-process Sets and unreadable disk, should not throw (fail-open)
+    assert.doesNotThrow(() => {
+      safeBeforeAgentFinalize(RUN_A);
+    });
+    try { chmodSync(SUITE_TMP_DIR, 0o700); } catch { /* ignore */ }
   });
 });
