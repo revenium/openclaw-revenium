@@ -21,8 +21,8 @@
 - [x] **NCMETER-01**: A host-side metering loop (host cron + `nemoclaw share mount`) keeps `guardrail-status.json` current for the in-sandbox agent — without per-tick `nemoclaw exec` and without an in-sandbox daemon.
 
 ### Enforcement (NCENF)
-- [ ] **NCENF-01**: The mandatory per-turn guardrail directive reaches the agent on every turn via an OpenClaw `before_prompt_build` plugin (authored from the official scaffold / mirroring the nemoclaw plugin), so halt and warn-and-ask enforcement work under NemoClaw.
-- [ ] **NCENF-02**: Task/job marker writing works under NemoClaw — the existing `before_agent_finalize` marker-gate plugin is deployed/adapted into the sandbox — so attribution flows.
+- [x] **NCENF-01**: The mandatory per-turn guardrail directive reaches the agent on every turn via an OpenClaw `before_prompt_build` plugin (authored from the official scaffold / mirroring the nemoclaw plugin), so halt and warn-and-ask enforcement work under NemoClaw.
+- [x] **NCENF-02**: Task/job marker writing works under NemoClaw — the existing `before_agent_finalize` marker-gate plugin is deployed/adapted into the sandbox — so attribution flows.
 
 ### Skill Deploy & Docs (NCDEPLOY)
 - [ ] **NCDEPLOY-01**: The Revenium skill is deployed into the sandbox via `nemoclaw skill install` and discovered by the agent (`✓ ready`).
@@ -50,7 +50,7 @@
 | NCCLI-01 | Phase 13 | Complete |
 | NCCLI-02 | Phase 13 | Complete |
 | NCMETER-01 | Phase 14 | Complete |
-| NCENF-01 | Phase 15 | Pending |
-| NCENF-02 | Phase 15 | Pending |
+| NCENF-01 | Phase 15 | Complete |
+| NCENF-02 | Phase 15 | Complete |
 | NCDEPLOY-01 | Phase 16 (deploy step pulled into Phase 15 per D-08) | Pending |
 | NCDEPLOY-02 | Phase 16 | Pending |

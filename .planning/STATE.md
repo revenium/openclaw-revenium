@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: NemoClaw/OpenShell Support
 status: executing
-last_updated: "2026-06-09T03:03:18.874Z"
-last_activity: 2026-06-09 -- Phase 15 execution started
+last_updated: "2026-06-09T04:20:13.203Z"
+last_activity: 2026-06-09
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 13
-  completed_plans: 11
-  percent: 60
+  completed_plans: 13
+  percent: 80
 ---
 
 # Project State
@@ -25,9 +25,9 @@ See: .planning/PROJECT.md (updated 2026-06-07 after v1.4 milestone start)
 ## Current Position
 
 Phase: 15 (per-turn-enforcement-plugin) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 15
-Last activity: 2026-06-09 -- Phase 15 execution started
+Plan: 2 of 5
+Status: Ready to execute
+Last activity: 2026-06-09
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Last activity: 2026-06-09 -- Phase 15 execution started
 - Trend: baseline
 
 *Updated after each plan completion*
+| Phase 15 P05 | 30 | 1 tasks | 2 files |
 
 ## v1.4 Phase Map
 
@@ -98,6 +99,8 @@ Recent decisions affecting current work:
 - [Phase 4]: `AGENT:STARTS_WITH:openclaw-` attribution (D-07) — root-session rollup; job rollup (Phase 7) extends this resolver
 - [Phase 11]: `allowConversationAccess: true` required in config to register before_agent_finalize/agent_end hooks (D-05 revised) — SDK silently blocks without it; plugin reads no conversation content
 - [Phase 11]: post-install must not auto-restart the gateway — install step documents restart requirement and emits note only (Pitfall 6)
+- [Phase ?]: B-01 RESOLVED: Gate A passes live with promptChars=1645 (15-04 fix works on OpenClaw 2026.5.22)
+- [Phase ?]: B-05 still failing: Nemotron routes exec through tool_search_code indirect calls; before_tool_call never fires; disk persistence fix is moot on this host
 
 ### Roadmap Evolution
 
@@ -150,9 +153,9 @@ Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 ## Session Continuity
 
-Last session: 2026-06-09T00:43:59.968Z
-Stopped at: Phase 15 context gathered
-Resume file: .planning/phases/15-per-turn-enforcement-plugin/15-CONTEXT.md
+Last session: 2026-06-09T04:20:13.197Z
+Stopped at: Phase 15 Plan 05 checkpoint — re-validation complete, awaiting human review
+Resume file: .planning/phases/15-per-turn-enforcement-plugin/15-05-SUMMARY.md
 
 ## Operator Next Steps
 
