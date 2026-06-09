@@ -84,7 +84,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 12. Parallel Install Scaffolding & Detection | v1.4 | 2/2 | Complete    | 2026-06-07 |
 | 13. Sandbox Provisioning — Egress, CLI & Authenticated Metering | v1.4 | 3/3 | Complete    | 2026-06-08 |
 | 14. Host-Side Metering Loop | v1.4 | 3/3 | Complete    | 2026-06-08 |
-| 15. Per-Turn Enforcement Plugin | v1.4 | 2/3 | In Progress|  |
+| 15. Per-Turn Enforcement Plugin | v1.4 | 4/5 | In Progress|  |
 | 16. Skill Deploy & Docs | v1.4 | 0/? | Not started | - |
 
 ## Phase Details
@@ -204,7 +204,7 @@ Plans:
   4. A plugin hook error or timeout is fail-open — it never blocks the agent's reply (same contract as the Phase 11 plugin)
   5. The plugin is authored from the official `openclaw plugins init` scaffold (not a hand-rolled stub), with `configSchema` and `openclaw.extensions` in `package.json` as required by the trusted-plugin install path
 
-**Plans:** 3/5 plans executed (2 gap-closure plans added after verification found B-01, B-05)
+**Plans:** 4/5 plans executed
 
 **Install-path note (D-08):** NCDEPLOY-01's *deploy step* (`nemoclaw skill install`) is pulled forward into Phase 15 so the marker chain is end-to-end testable and SC3 is honestly verifiable here. Install-path order is now: 13 provisioning → 14 metering loop → 15a skill install → 15b plugin install → 15c preflight+smoke → 16 docs. Phase 16 keeps only docs + polish.
 
@@ -219,13 +219,13 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 15-03-PLAN.md — Live validation on 34.224.27.67 / revenium-spike (SC1-SC5 evidence in 15-VALIDATION.md; human checkpoint)
+- [x] 15-03-PLAN.md — Live validation on 34.224.27.67 / revenium-spike (SC1-SC5 evidence in 15-VALIDATION.md; human checkpoint)
 
 **Gap-closure note (verification 2026-06-08):** Initial pass scored 3/5 truths. Two blockers: **B-01** (Gate A greps the removed `finalPromptText` field → aborts every real install) and **B-05** (in-process `execRuns` Set resets on `nemoclaw recover` → no end-to-end marker). Plans 15-04 (code fixes) + 15-05 (live re-validation) close them.
 
 **Gap-closure Wave 1**
 
-- [ ] 15-04-PLAN.md — B-01 + B-05 code fixes: persist exec-run state to disk in plugin/src/gate.js (survives nemoclaw recover) + rewrite Gate A to assert currentTurn.promptChars instead of removed finalPromptText; new persistence tests in both index.test.js suites
+- [x] 15-04-PLAN.md — B-01 + B-05 code fixes: persist exec-run state to disk in plugin/src/gate.js (survives nemoclaw recover) + rewrite Gate A to assert currentTurn.promptChars instead of removed finalPromptText; new persistence tests in both index.test.js suites
 
 **Gap-closure Wave 2** *(blocked on 15-04)*
 
