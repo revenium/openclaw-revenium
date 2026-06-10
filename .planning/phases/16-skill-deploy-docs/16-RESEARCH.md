@@ -476,7 +476,7 @@ Insert as a blockquote inside or after the Installation section. Exact placement
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **`openclaw skills list` output format in-sandbox**
    - What we know: The README.md says the expected output is `✓ ready  💰 revenium`; the spike findings confirm the same. The Phase 15 validation confirms the skill was deployed and shows `openclaw skills list` as `ready` (without the exact `✓` character).
