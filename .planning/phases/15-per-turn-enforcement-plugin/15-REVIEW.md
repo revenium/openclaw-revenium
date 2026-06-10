@@ -1,229 +1,214 @@
 ---
 phase: 15-per-turn-enforcement-plugin
-reviewed: 2026-06-09T00:00:00Z
+reviewed: 2026-06-10T00:00:00Z
 depth: standard
-files_reviewed: 4
+files_reviewed: 5
 files_reviewed_list:
   - plugin/src/gate.js
-  - plugin/src/index.test.js
-  - plugin-nemoclaw/src/index.test.js
+  - plugin/src/index.ts
+  - plugin-nemoclaw/src/gate.js
+  - plugin-nemoclaw/src/index.ts
   - scripts/post-install-nemoclaw.sh
 findings:
   critical: 1
-  warning: 4
+  warning: 3
   info: 2
-  total: 7
+  total: 6
 status: issues_found
 ---
 
 # Phase 15: Code Review Report
 
-**Reviewed:** 2026-06-09T00:00:00Z
+**Reviewed:** 2026-06-10
 **Depth:** standard
-**Files Reviewed:** 4
+**Files Reviewed:** 5
 **Status:** issues_found
 
 ## Summary
 
-Reviewed the Phase 15 gap-closure changes: disk-persisted exec-run state in
-`plugin/src/gate.js` (B-05/NCENF-02) and the rewritten Gate A in
-`scripts/post-install-nemoclaw.sh` (B-01).
+Reviewed the Phase 15 gap-closure changes: the B-05 `scanTranscriptForExec` transcript
+observation in `handleBeforeAgentFinalize`, the WR-01 `persistRunState` marked-state
+preservation on the non-string exec path, and the CR-01 `|| true` guard on the Gate A
+`_prompt_chars` pipeline.
 
-The **runId path-traversal guard is sound** — I traced every adversarial input
-(`..`, `../..`, `../../etc/passwd`, `.`, `...`) through `sanitizeRunId` +
-`runStatePath` and confirmed the mandatory `.json` suffix prevents any resolution
-outside the state dir. The fail-open boundary wrappers (`safe*`) are correct, and
-`writeFileSync` uses mode `0o600` as required.
+The three targeted fixes are themselves correct:
 
-However, two genuine defects survived the test suite (both plugin suites pass at
-37/42 tests green, so neither bug is caught):
+- **CR-01 (`|| true` on Gate A pipeline):** Verified correct. Under `set -euo pipefail`,
+  the `grep | grep | head -1 || true` pipeline yields an empty string with exit 0 on no
+  match (caught by the subsequent `-z` guard) and the first numeric value when one or many
+  matches exist. No regression.
+- **WR-01 (preserve marked state):** Correct. The non-string path persists
+  `markedTaskRuns.has(runId)` and the string path persists `isMarked || markedTaskRuns.has(runId)`;
+  neither downgrades a prior `marked:true` record.
+- **B-05 source logic:** Sound in `*/src/gate.js`, with one coupling caveat (WR-01 below).
 
-1. **BLOCKER:** Gate A's `promptChars` parse pipeline aborts under
-   `set -euo pipefail` on the no-match path, so the intended
-   "guard directive NOT injected" diagnostic never fires — the operator gets a
-   bare `exit 1`. The gate still fails closed, but its primary error-reporting
-   purpose is defeated.
-2. **WARNING:** `persistRunState` can overwrite a disk `marked:true` record back
-   to `marked:false` within the same run, causing a spurious revise after
-   `nemoclaw recover`.
-
-Plus a Gate A correctness gap (unscoped `promptChars` grep), test-isolation
-fragility, and minor quality items.
+The blocking problem is **not** in the source — it is that the shipped `plugin/dist/`
+build was never regenerated for the 15-06 source changes, so the standalone OpenClaw
+install path (`scripts/post-install.sh`) ships a plugin with NONE of the B-05 work and a
+broken `safeBeforeAgentFinalize` call signature. `plugin-nemoclaw/dist/` (the NemoClaw
+path) IS current.
 
 ## Critical Issues
 
-### CR-01: Gate A `promptChars` pipeline aborts under `pipefail`, suppressing the intended failure diagnostic
+### CR-01: `plugin/dist/` build is stale — ships pre-15-06 code on the standalone OpenClaw install path
 
-**File:** `scripts/post-install-nemoclaw.sh:230-234`
-**Issue:** The script runs under `set -euo pipefail` (line 30). The parse on lines 230-231:
+**File:** `plugin/dist/gate.js` (and `plugin/dist/index.js`); root cause spans `plugin/src/index.ts` build process
+**Issue:**
+The reviewed source files `plugin/src/gate.js` and `plugin/src/index.ts` contain the
+15-06 B-05 changes, but the committed `plugin/dist/` build does NOT:
 
-```bash
-_prompt_chars=$(echo "${_prompt_json}" | grep -oE '"promptChars"[[:space:]]*:[[:space:]]*[0-9]+' \
-    | grep -oE '[0-9]+$' | head -1)
+- `plugin/dist/gate.js` has **no** `scanTranscriptForExec` function (`grep -c` returns 0)
+  and still declares the OLD signature `safeBeforeAgentFinalize(runId, opts = {}, impl)`
+  calling `impl(runId)` — the entire B-05 transcript scan is absent.
+- `plugin/dist/index.js:34-36` still uses `async (_event, ctx)` (ignoring `messages`) and
+  calls `safeBeforeAgentFinalize(ctx?.runId, { log: ... })`.
+
+This is not a reference-only artifact: `scripts/post-install.sh:621` installs
+`${SKILL_DIR}/plugin` (`openclaw plugins install "${SKILL_DIR}/plugin" --force`), so the
+standalone OpenClaw path ships `plugin/dist/`. The header comment in `plugin/src/index.ts:12-13`
+explicitly states: "Any change to this file requires a rebuild + re-commit of dist/index.js
+(the host has no tsc)." That rebuild was not done for `plugin/`.
+
+Worse, `plugin/dist/gate.js` can never be regenerated by the documented build:
+`plugin/package.json` build is `tsc`, and `plugin/tsconfig.json` has
+`"include": ["src/**/*.ts"]`. Because `gate.js` is a `.js` file, `tsc` never emits
+`dist/gate.js` despite `allowJs: true` — the include glob matches only `.ts`. So
+`dist/gate.js` must be hand-maintained, and the B-05 update to it was missed entirely.
+
+Net effect on the OpenClaw install path: the B-05 Nemotron `tool_search_code` exec
+detection silently does nothing, and the stale dist call passes the `opts` object into the
+old `opts` slot (it happens not to crash only because the stale gate signature still
+expects `opts` second). The phase's headline gap-closure feature is not shipped on this path.
+
+**Fix:**
+Regenerate and re-commit the `plugin/dist/` build so it matches `plugin/src/`. Because
+`tsc` will not emit `dist/gate.js` under the current include glob, mirror what
+`plugin-nemoclaw` does (it bakes/copies `gate.js` via `scripts/bake-directive.js`). Either:
+
+```jsonc
+// plugin/tsconfig.json — make tsc emit the .js source too
+"include": ["src/**/*.ts", "src/**/*.js"],
+"exclude": ["src/**/*.test.js", "src/**/*.test.ts", "node_modules"]
 ```
 
-When `_prompt_json` is empty or lacks a `promptChars` field — which is *exactly*
-the case Gate A exists to detect (guard directive not injected → `before_prompt_build`
-inactive/untrusted) — the first `grep` exits 1. With `pipefail`, the command
-substitution returns non-zero, and `set -e` aborts the script **at line 230**,
-before reaching the `if [ -z "${_prompt_chars}" ]` check on line 232.
+or add an explicit copy step to `plugin/package.json`:
 
-Reproduced:
-```
-$ # _prompt_json='{"foo":1}' (no promptChars), set -euo pipefail
-$ bash repro.sh ; echo "exit=$?"
-exit=1          # bare exit — the fail "guard directive NOT injected..." message NEVER prints
+```jsonc
+"scripts": {
+  "build": "tsc && cp src/gate.js dist/gate.js"
+}
 ```
 
-Impact: the carefully-worded actionable error on line 233
-(`fail "guard directive NOT injected — could not parse..."`) is dead code on the
-no-match path. The operator sees a bare `exit 1` with no diagnostic, defeating the
-purpose of the B-01 rewrite. (The gate does still fail *closed* — the install
-aborts — so this is a diagnostic-loss defect, not a fail-open security hole, but it
-breaks the gate's stated contract and will badly mislead anyone debugging a real
-injection failure.)
-
-**Fix:** Make the substitution tolerant of no-match so control reaches the explicit
-`-z` check. Append `|| true` to the pipeline, or disable pipefail locally:
-```bash
-_prompt_chars=$(echo "${_prompt_json}" \
-    | grep -oE '"promptChars"[[:space:]]*:[[:space:]]*[0-9]+' \
-    | grep -oE '[0-9]+$' | head -1 || true)
-if [ -z "${_prompt_chars}" ]; then
-    fail "guard directive NOT injected — could not parse currentTurn.promptChars ..."
-fi
-```
+then run the build and commit the regenerated `plugin/dist/gate.js` + `plugin/dist/index.js`.
+Verify with `grep -c scanTranscriptForExec plugin/dist/gate.js` (expect 3) and confirm
+`plugin/dist/index.js` calls `safeBeforeAgentFinalize(ctx?.runId, event?.messages, ...)`.
 
 ## Warnings
 
-### WR-01: `persistRunState` overwrites disk `marked:true` → `marked:false` on a later non-string-command exec in the same run
+### WR-01: `markerFound` is only evaluated when `openclaw:core:exec` is also present in the same `code` arg
 
-**File:** `plugin/src/gate.js:186-191`
-**Issue:** When a run first invokes `write-marker.sh` (line 201 persists
-`marked:true`), then a subsequent tool call in the *same run* arrives with a
-non-string `command`/`code`, control hits the guard at lines 186-191 and calls
-`persistRunState(runId, false)` unconditionally — ignoring that `markedTaskRuns`
-still contains the runId. This clobbers the disk record to `marked:false`.
+**File:** `plugin/src/gate.js:261-267` (and identical `plugin-nemoclaw/src/gate.js:261-267`)
+**Issue:**
+In `scanTranscriptForExec`, `MARKER_INVOKE.test(code)` (line 264) runs only inside the
+`if (code.includes("openclaw:core:exec"))` branch (line 261). If a `tool_search_code` call
+invokes `write-marker.sh` but its `code` string does not also literally contain
+`openclaw:core:exec`, `markerFound` stays `false` while a separate exec elsewhere sets
+`execFound = true` — producing a false `revise` even though the turn WAS classified.
+This couples marker detection to a specific co-occurrence assumption that is not guaranteed
+by the schema. The risk is a spurious extra revise pass (mitigated by `maxAttempts: 1`),
+not a hard failure, but it undermines the B-05 detection's accuracy.
 
-Reproduced:
-```
-after marker exec:        {"exec":true,"marked":true, ...}  inProcessMarked=true
-after non-string exec:    {"exec":true,"marked":false,...}  inProcessMarked=true   <-- regressed
-```
+**Fix:**
+Evaluate the marker check independently of the exec check so a marker invocation in any
+scanned `code` string is honored:
 
-Impact: after a `nemoclaw recover` (the exact scenario disk persistence exists to
-survive), `handleBeforeAgentFinalize` reads disk, sees `marked:false`, and issues a
-revise action for a turn that was already classified — re-prompting the agent
-unnecessarily and undermining the B-05 guarantee. The normal path (line 201)
-correctly OR-s in `markedTaskRuns.has(runId)`; the non-string path does not.
-
-**Fix:** Mirror the normal path — never downgrade `marked` for an already-marked run:
 ```js
-if (typeof cmd !== "string") {
-    execRuns.add(runId);
-    persistRunState(runId, markedTaskRuns.has(runId)); // preserve prior marked:true
-    return;
+if (code.includes("openclaw:core:exec")) {
+  execFound = true;
+}
+// Marker detection is independent of the exec literal — a write-marker.sh
+// invocation classifies the turn regardless of which string carried it.
+if (MARKER_INVOKE.test(code)) {
+  markerFound = true;
 }
 ```
 
-### WR-02: Gate A `promptChars` grep is not scoped to `currentTurn` — first match wins
+### WR-02: Source-precedence short-circuit contradicts the "UNIONED" docstring
 
-**File:** `scripts/post-install-nemoclaw.sh:230-231`
-**Issue:** The comment (lines 214-238) and success message repeatedly say
-`currentTurn.promptChars`, but the grep matches *any* `"promptChars": N` in the
-JSON and `head -1` takes the first textual occurrence. If `openclaw agent --json`
-ever emits a `promptChars` field outside `currentTurn` (e.g. a per-message or
-summary block) that precedes `currentTurn` in output order, the gate asserts
-against the wrong value.
+**File:** `plugin/src/gate.js:285-336` (and identical in `plugin-nemoclaw/src/gate.js`)
+**Issue:**
+The `handleBeforeAgentFinalize` docstring (lines 285-291) states the three sources are
+"UNIONED (any one reporting substantive+unmarked yields revise; any one reporting marked
+yields pass-through)". The implementation does NOT union — it is strictly ordered with
+early returns: Source 1 (in-process Sets) returns unconditionally when `execRuns.has(runId)`;
+Source 2 (disk) returns unconditionally when a state file exists; Source 3 (transcript) is
+reached only when BOTH are empty. Consequently a transcript that shows `markerFound: true`
+can never override a Source-1/Source-2 record that has `marked:false`, so the documented
+"any one reporting marked yields pass-through" property does not hold. This is a
+correctness/documentation mismatch that will mislead future maintainers and could mask a
+legitimate marker observed only in the transcript.
 
-Verified the first-match behavior:
-```
-$ echo '{"a":{"promptChars":50},"b":{"promptChars":1637}}' | grep -oE ... | head -1
-50      # picks the wrong field; would false-FAIL the <1500 check
-```
+**Fix:**
+Either implement the true union (collect `{exec, marked}` from all three sources, then
+decide), or correct the docstring to describe the actual precedence ("first source with
+evidence wins; transcript is a last-resort fallback consulted only when in-process and disk
+have no record"). Prefer the union if a marker can legitimately appear only in the transcript.
 
-Impact: a false install abort (or, in the inverse ordering, a false pass) decoupled
-from the actual injected-directive size. The 649→1637 evidence the threshold is
-built on is specifically the `currentTurn` value.
+### WR-03: `JSON.parse` of run-state file lacks shape validation before property access
 
-**Fix:** Scope the extraction to the `currentTurn` object, or document that the JSON
-is known to contain exactly one `promptChars`. A pragmatic scope: strip everything
-before `"currentTurn"` first:
-```bash
-_prompt_chars=$(echo "${_prompt_json}" \
-    | grep -oE '"currentTurn".*' \
-    | grep -oE '"promptChars"[[:space:]]*:[[:space:]]*[0-9]+' \
-    | grep -oE '[0-9]+$' | head -1 || true)
-```
-(Combine with the CR-01 `|| true` fix.)
+**File:** `plugin/src/gate.js:313-318` (and identical in `plugin-nemoclaw/src/gate.js`)
+**Issue:**
+The disk-fallback path reads and `JSON.parse`s `runStatePath(runId)` then trusts
+`state.exec` / `state.marked`. Parse errors are caught (fail-open), and the
+`state && state.exec === true` guard makes property access benign today. But there is no
+validation that the parsed value is a plain object, and no size cap before `readFileSync`,
+so an oversized or unexpectedly-shaped (but parseable) file is read fully into memory and
+trusted on every finalize. This is defense-in-depth hardening, not an exploit on its own.
 
-### WR-03: Unwritable-dir tests leave `SUITE_TMP_DIR` read-only if an assertion throws
+**Fix:**
+Add a cheap object guard (and optionally a size cap):
 
-**File:** `plugin/src/index.test.js:383-404`; `plugin-nemoclaw/src/index.test.js:405-426`
-**Issue:** Both fail-open tests `chmodSync(SUITE_TMP_DIR, 0o400)`, run assertions,
-then `chmodSync(..., 0o700)` to restore. The restore is the last statement, not in a
-`finally`. If any assertion between the two chmods throws, the restore is skipped and
-the suite dir stays `0o400` — later tests' disk writes then silently fail (masked by
-the gate's own fail-open), making subsequent persistence tests pass for the wrong
-reason or flake. Tests pass today only because the assertions happen not to throw.
-
-**Fix:** Wrap the body in try/finally so the chmod restore always runs:
 ```js
-try { chmodSync(SUITE_TMP_DIR, 0o400); chmodWorked = true; } catch { return; }
-try {
-  assert.doesNotThrow(() => handleBeforeToolCall(RUN_A, "exec", { command: "ls" }));
-  assert.ok(execRuns.has(RUN_A), ...);
-} finally {
-  try { chmodSync(SUITE_TMP_DIR, 0o700); } catch { /* ignore */ }
+const state = JSON.parse(raw);
+if (state && typeof state === "object" && !Array.isArray(state) && state.exec === true) {
+  if (state.marked === true) return undefined;
+  return _buildReviseAction(runId);
 }
 ```
 
-### WR-04: No test covers the WR-01 marked-downgrade path (false confidence)
-
-**File:** `plugin/src/index.test.js:324-405`; `plugin-nemoclaw/src/index.test.js:346-427`
-**Issue:** The persistence describe-blocks cover marked/unmarked-then-restart, but
-never the sequence "marker exec → non-string-command exec → restart". That gap let
-WR-01 through with all 37/42 tests green. A reviewer relying on the suite would
-conclude the disk record is monotonic w.r.t. `marked`, which it is not.
-
-**Fix:** Add a regression test:
-```js
-test("non-string-command exec after a marker does NOT downgrade disk marked:true", () => {
-  handleBeforeToolCall(RUN_A, "exec", { command: "write-marker.sh coding" });
-  handleBeforeToolCall(RUN_A, "exec", { command: 42, code: null });
-  execRuns.clear(); markedTaskRuns.clear();              // simulate recover
-  assert.strictEqual(handleBeforeAgentFinalize(RUN_A), undefined,
-    "marked run must still pass through after restart");
-});
-```
+Optionally `statSync(filePath).size` check before reading (skip files over a few KB).
 
 ## Info
 
-### IN-01: Stale run-state files accumulate when `agent_end` never fires
+### IN-01: One-time diagnostic log path never fires under Nemotron
 
-**File:** `plugin/src/gate.js:117-128, 283-297`
-**Issue:** Cleanup (`handleAgentEnd` → `rmSync`) is the only thing that removes a
-run-state file. If a process is killed between `before_tool_call` and `agent_end`
-(the very crash/recover scenario the feature targets), the file is orphaned. There is
-no TTL/`updatedAt`-based sweep, so `${OPENCLAW_HOME}/run-state` grows unbounded across
-crashes. `updatedAt` is written but never read. Not a correctness bug for a single
-turn, but worth a periodic sweep or a max-age check in the disk-fallback read.
-**Fix:** On the fallback read, ignore (and best-effort delete) records older than a
-bounded age using the already-persisted `updatedAt`; or add a sweep on startup.
+**File:** `plugin/src/gate.js:85-88,169-177`
+**Issue:**
+The `_loggedFirstExec` one-time diagnostic only fires from `handleBeforeToolCall`, which
+per the B-05 finding never runs for Nemotron (exec is routed via `tool_search_code`). The
+comment (lines 86-87) ties it to "the 11-03 Task 2 E2E ... resolves open question A1",
+which is now superseded by the B-05 transcript path, so on the Nemotron path it produces no
+host-log signal.
 
-### IN-02: Duplicated test suite drifts independently of source-of-truth
+**Fix:** Remove the stale diagnostic, or add an equivalent first-observation log inside
+`scanTranscriptForExec` when `execFound` first flips true.
 
-**File:** `plugin-nemoclaw/src/index.test.js` (entire carried-over portion)
-**Issue:** Lines 108-427 are a near-verbatim copy of `plugin/src/index.test.js`
-(noted as D-06 build-copy). The two will silently diverge — e.g. a fix for WR-04
-must be applied in both by hand. Consider generating the nemoclaw test from the
-plugin source at build time (same mechanism as `gate.js`), or importing the shared
-cases, so the copies cannot drift.
-**Fix:** Treat the carried-over describe-blocks as build-generated, or extract them
-into a shared spec module imported by both suites.
+### IN-02: `plugin/src/gate.js` and `plugin-nemoclaw/src/gate.js` are byte-identical duplicates
+
+**File:** `plugin-nemoclaw/src/gate.js` (full file; duplicate of `plugin/src/gate.js`)
+**Issue:**
+The two source files are byte-identical (`diff` reports no differences). The header comment
+in `plugin-nemoclaw/src/index.ts:14` states gate.js "is copied from plugin/src/gate.js at
+build time by scripts/bake-directive.js (D-06) ... no fork." Yet a committed
+`plugin-nemoclaw/src/gate.js` copy exists in the tree, creating two sources of truth — the
+same divergence class that produced the stale-dist CR-01 above. Future drift would be silent.
+
+**Fix:** If `bake-directive.js` regenerates the nemoclaw gate.js at build time, remove the
+committed source copy and `.gitignore` the generated artifact, or add a CI/build assertion
+that the two gate.js files are byte-identical so a fork is caught.
 
 ---
 
-_Reviewed: 2026-06-09T00:00:00Z_
+_Reviewed: 2026-06-10_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
