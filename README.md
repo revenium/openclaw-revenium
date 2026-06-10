@@ -89,6 +89,8 @@ openclaw skills list
 
 You should see `revenium` in the list (`✓ ready`). If not, confirm `revenium` is on your PATH — the skill requires it via binary gating. Note the skill directory must be a **real directory** under `~/.openclaw/skills/` — OpenClaw refuses to load a skill whose path is a symlink resolving outside the skills root.
 
+> **Running on NemoClaw/OpenShell?** See [NemoClaw Setup](docs/nemoclaw-setup.md) for the parallel install path.
+
 ### First-time setup (automatic)
 
 The metering cron and guardrail rules are configured the first time you interact with the agent after installing the skill. The agent walks you through configuring your budget and creates the guardrail rules — no manual script execution needed.
