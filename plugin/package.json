@@ -8,7 +8,7 @@
     ]
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc && node scripts/copy-gate.js"
   },
   "peerDependencies": {
     "openclaw": ">=2026.6.1"
