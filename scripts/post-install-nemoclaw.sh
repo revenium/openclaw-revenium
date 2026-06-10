@@ -228,7 +228,7 @@ install_enforcement_plugin() {
     _prompt_json=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
         "openclaw agent --json --message 'ping' 2>/dev/null" 2>/dev/null || true)
     _prompt_chars=$(echo "${_prompt_json}" | grep -oE '"promptChars"[[:space:]]*:[[:space:]]*[0-9]+' \
-        | grep -oE '[0-9]+$' | head -1)
+        | grep -oE '[0-9]+$' | head -1 || true)
     if [ -z "${_prompt_chars}" ]; then
         fail "guard directive NOT injected — could not parse currentTurn.promptChars from openclaw agent --json. before_prompt_build may be inactive or untrusted. Aborting."
     fi
