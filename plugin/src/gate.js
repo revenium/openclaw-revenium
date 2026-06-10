@@ -185,8 +185,9 @@ export function handleBeforeToolCall(runId, toolName, params, opts = {}) {
   // Guard before any string operation (T-11-cmd-read).
   if (typeof cmd !== "string") {
     execRuns.add(runId);
-    // Persist exec observation (marked=false since we couldn't check command)
-    persistRunState(runId, false);
+    // Persist exec observation — preserve prior marked state (WR-01: do NOT unconditionally
+    // downgrade a prior marked:true record; check markedTaskRuns before persisting).
+    persistRunState(runId, markedTaskRuns.has(runId));
     return;
   }
 
