@@ -204,7 +204,7 @@ Plans:
   4. A plugin hook error or timeout is fail-open — it never blocks the agent's reply (same contract as the Phase 11 plugin)
   5. The plugin is authored from the official `openclaw plugins init` scaffold (not a hand-rolled stub), with `configSchema` and `openclaw.extensions` in `package.json` as required by the trusted-plugin install path
 
-**Plans:** 5/5 plans complete
+**Plans:** 7 plans (5 complete + 2 gap-closure round 3: 15-06, 15-07)
 
 **Install-path note (D-08):** NCDEPLOY-01's *deploy step* (`nemoclaw skill install`) is pulled forward into Phase 15 so the marker chain is end-to-end testable and SC3 is honestly verifiable here. Install-path order is now: 13 provisioning → 14 metering loop → 15a skill install → 15b plugin install → 15c preflight+smoke → 16 docs. Phase 16 keeps only docs + polish.
 
@@ -230,6 +230,16 @@ Plans:
 **Gap-closure Wave 2** *(blocked on 15-04)*
 
 - [x] 15-05-PLAN.md — Live re-validation on 34.224.27.67 / revenium-spike: new Gate A passes a real install (B-01) + a substantive turn writes an end-to-end marker .jsonl across the recover boundary (B-05); human checkpoint
+
+**Gap-closure note (re-verification 2026-06-09):** Re-verification scored 3/5. B-01 CLOSED. Three gaps remain: **CR-01** (Gate A `_prompt_chars` pipeline lacks `|| true` → pipefail aborts before the diagnostic fires), **WR-01** (`persistRunState(runId, false)` on the non-string exec path downgrades a prior `marked:true` disk record), and **B-05** (Nemotron routes exec through `tool_search_code` + `openclaw:core:exec` so `before_tool_call` never fires → no marker). Plans 15-06 (code fixes) + 15-07 (live re-validation) close them.
+
+**Gap-closure Wave 3 (round 3)**
+
+- [ ] 15-06-PLAN.md — CR-01 + WR-01 + B-05 code fixes: `|| true` guard on Gate A; non-downgrade `persistRunState(runId, markedTaskRuns.has(runId))` + WR-04 regression; live schema-probe FIRST then transcript-scan observation in before_agent_finalize (unioned with before_tool_call) wired through both index.ts; D-06 build copy + dist regenerated; both unit suites green
+
+**Gap-closure Wave 4 (round 3)** *(blocked on 15-06)*
+
+- [ ] 15-07-PLAN.md — Live re-validation on 34.224.27.67 / revenium-spike: CR-01 diagnostic-on-no-injection + pass-on-injection, WR-01 non-downgrade-across-recover, B-05 transcript-scan end-to-end marker; human checkpoint with terminal SC3 decision (marker produced → PASS; not produced → user-approved SC3 scope-renegotiation to direct-exec agents, Nemotron tool_search_code indirection documented as a known limitation)
 
 **Spike artifacts consumed:** spike 006 findings (`skill-deploy-and-enforcement.md`, plugin skeleton), Phase 11 `revenium-marker-gate` source as the `before_agent_finalize` template
 
