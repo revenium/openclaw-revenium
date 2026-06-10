@@ -381,9 +381,28 @@ fi
 # Note on I-a: the script resolves skill_dir from ${SCRIPT_DIR}/.. (the real repo
 # root, where SKILL.md DOES exist). To force the guard to fire we override the
 # resolved dir via REVENIUM_SKILL_DIR pointing at a tmp dir with no SKILL.md.
+#
+# Note on pre-seeding: install_skill_nemoclaw() is gated by install_metering_loop()
+# which requires sshfs (not available in the hermetic test env). To exercise only
+# install_skill_nemoclaw() we pre-populate Phase 13 + Phase 14 ledger keys so the
+# earlier steps are skipped via their ledger gates.
 # ===========================================================================
 echo ""
 echo "--- GROUP I: NCDEPLOY-01 SKILL.md guard + ✓ ready assertion ---"
+
+# Helper: pre-seed a ledger so all Phase 13 + Phase 14 steps are already done.
+# This lets the test runner reach install_skill_nemoclaw() in the hermetic env.
+_seed_phase13_14_ledger() {
+  local ledger_file="$1"
+  cat >> "${ledger_file}" << 'SEED'
+revenium-policy-applied=1
+gh-release-policy-applied=1
+cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
+creds-written=1
+meter-probe-passed=1
+metering-loop-installed=1
+SEED
+}
 
 # --- GROUP I-a: SKILL.md absent → fail hard with actionable message ---
 echo ""
@@ -392,6 +411,8 @@ echo "  -- I-a: SKILL.md absent from skill dir --"
 TMP_HOME_Ia=$(make_home)
 ARGV_Ia=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ia.XXXXXX")
 TMP_HOMES+=("${ARGV_Ia}")
+LEDGER_Ia="${TMP_HOME_Ia}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_phase13_14_ledger "${LEDGER_Ia}"
 # Point skill_dir at a tmp dir that has NO SKILL.md
 NO_SKILL_MD_DIR=$(mktemp -d "${TMPDIR:-/tmp}/test-nemo-noskillmd.XXXXXX")
 TMP_HOMES+=("${NO_SKILL_MD_DIR}")
@@ -421,6 +442,8 @@ echo "  -- I-b: SKILL.md present, skill not ready --"
 TMP_HOME_Ib=$(make_home)
 ARGV_Ib=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ib.XXXXXX")
 TMP_HOMES+=("${ARGV_Ib}")
+LEDGER_Ib="${TMP_HOME_Ib}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_phase13_14_ledger "${LEDGER_Ib}"
 
 exit_code_ib=0
 output_ib=$(STUB_NEMOCLAW_SKILL_NOT_READY=1 \
@@ -448,6 +471,10 @@ TMP_HOME_Ic=$(make_home)
 ARGV_Ic=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ic.XXXXXX")
 TMP_HOMES+=("${ARGV_Ic}")
 LEDGER_Ic="${TMP_HOME_Ic}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_phase13_14_ledger "${LEDGER_Ic}"
+# Also pre-seed enforcement-plugin-installed so the script doesn't fail on
+# the mount/plugin gate (which requires a live sandbox in hermetic tests).
+echo "enforcement-plugin-installed=1" >> "${LEDGER_Ic}"
 
 exit_code_ic=0
 output_ic=$(run_provision "${TMP_HOME_Ic}" "${ARGV_Ic}" 2>&1) || exit_code_ic=$?

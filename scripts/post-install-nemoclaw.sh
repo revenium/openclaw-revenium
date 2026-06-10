@@ -126,11 +126,34 @@ install_skill_nemoclaw() {
 
     step "Deploying revenium skill into sandbox"
     # SCRIPT_DIR is scripts/; repo root (which IS the skill dir containing SKILL.md)
-    # is one level up.
+    # is one level up. REVENIUM_SKILL_DIR may be overridden by tests to point at
+    # an alternate dir (e.g. to test the SKILL.md-absent guard on macOS without
+    # affecting the real repo root).
     local skill_dir
-    skill_dir="${SCRIPT_DIR}/.."
+    skill_dir="${REVENIUM_SKILL_DIR:-${SCRIPT_DIR}/..}"
+
+    # Guard: SKILL.md must be present at the resolved path; if it is absent, the
+    # path resolved to ~/ or another wrong location (e.g., due to SSHFS mounts).
+    # This prevents the SSHFS unsafe-filename abort that hit every Phase 15 live
+    # run (T-16-01).
+    if [[ ! -f "${skill_dir}/SKILL.md" ]]; then
+        fail "SKILL.md not found at ${skill_dir} — cannot determine skill root. Run the install from the skill directory: bash ~/.openclaw/skills/revenium/scripts/post-install-nemoclaw.sh"
+    fi
+
     nemoclaw "${SANDBOX_NAME}" skill install "${skill_dir}" \
         || fail "nemoclaw skill install failed"
+
+    # Assert ✓ ready in-sandbox (D-02 discovery assertion, T-16-02).
+    # The || true guard is mandatory (CR-01): under set -euo pipefail a non-zero
+    # exit from the in-sandbox command would abort the script before the fail
+    # message prints. grep uses the Unicode-safe two-pipe pattern (not literal ✓).
+    local _skill_list
+    _skill_list=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
+        "openclaw skills list 2>/dev/null" 2>/dev/null || true)
+    if ! echo "${_skill_list}" | grep "revenium" | grep -q "ready"; then
+        fail "revenium skill NOT ready after install — 'openclaw skills list' did not show ready state for revenium. Inspect the sandbox: nemoclaw ${SANDBOX_NAME} status"
+    fi
+    info "revenium skill confirmed ready in sandbox"
 
     ledger_set "skill-installed-nemoclaw" "1"
     info "Revenium skill deployed to sandbox '${SANDBOX_NAME}'"
@@ -536,6 +559,5 @@ else
     echo "  before re-running — note clearing meter-probe-passed emits a new event."
     echo "  To re-install the enforcement plugin, clear: enforcement-plugin-installed"
 fi
-echo ""
-echo "  Phase 16 (skill deploy + docs) still pending."
+echo "  Skill:     revenium (✓ ready)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
