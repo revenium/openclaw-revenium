@@ -26,7 +26,7 @@
 
 ### Skill Deploy & Docs (NCDEPLOY)
 - [x] **NCDEPLOY-01**: The Revenium skill is deployed into the sandbox via `nemoclaw skill install` and discovered by the agent (`✓ ready`).
-- [ ] **NCDEPLOY-02**: Setup docs cover the NemoClaw install path, prerequisites, and the macOS-unsupported constraint.
+- [x] **NCDEPLOY-02**: Setup docs cover the NemoClaw install path, prerequisites, and the macOS-unsupported constraint.
 
 ## Future Requirements (deferred)
 
@@ -53,4 +53,4 @@
 | NCENF-01 | Phase 15 | Complete |
 | NCENF-02 | Phase 15 | Complete |
 | NCDEPLOY-01 | Phase 16 (deploy step pulled into Phase 15 per D-08) | Complete |
-| NCDEPLOY-02 | Phase 16 | Pending |
+| NCDEPLOY-02 | Phase 16 | Complete |
