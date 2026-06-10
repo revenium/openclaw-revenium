@@ -262,6 +262,16 @@ Plans:
   3. The setup documentation covers the NemoClaw path prerequisites (Linux, Docker, NemoClaw installed, `sshfs`), the parallel-path guarantee (standalone path untouched), and the macOS-unsupported constraint with an explicit error message
   4. The existing standalone OpenClaw setup docs are not changed or contradicted by the NemoClaw additions
 
-**Plans:** TBD
+**Plans:** 3 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 16-01-PLAN.md — SKILL.md path guard + fail-hard `✓ ready` discovery assertion in install_skill_nemoclaw() (D-02) + banner fix; Wave 0 bash tests (NCDEPLOY-01)
+- [ ] 16-02-PLAN.md — docs/nemoclaw-setup.md operator runbook (D-01/D-04, verbatim macOS error) + single README pointer link (NCDEPLOY-02)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 16-03-PLAN.md — Live clean-host doc-driven validation gate (D-03): real `✓ ready` evidence in 16-VALIDATION.md + blocking human checkpoint (SC1+SC2)
 
 **UI hint**: no
