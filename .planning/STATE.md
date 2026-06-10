@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: NemoClaw/OpenShell Support
-status: ready_to_plan
-last_updated: 2026-06-10T17:48:26.031Z
-last_activity: 2026-06-10 -- Phase 15 execution started
+status: planning
+last_updated: "2026-06-10T17:54:56.940Z"
+last_activity: 2026-06-10
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 15
-  completed_plans: 24
-  percent: 60
-stopped_at: Phase 15 complete (7/7) — ready to discuss Phase 16
+  completed_plans: 15
+  percent: 80
 ---
 
 # Project State
@@ -155,9 +154,9 @@ Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 ## Session Continuity
 
-Last session: 2026-06-09T04:20:13.197Z
-Stopped at: Phase 15 Plan 05 checkpoint — re-validation complete, awaiting human review
-Resume file: .planning/phases/15-per-turn-enforcement-plugin/15-05-SUMMARY.md
+Last session: 2026-06-10T17:54:56.935Z
+Stopped at: Phase 16 context gathered
+Resume file: .planning/phases/16-skill-deploy-docs/16-CONTEXT.md
 
 ## Operator Next Steps
 
