@@ -372,15 +372,102 @@ else
 fi
 
 # ===========================================================================
+# GROUP I: NCDEPLOY-01 — SKILL.md guard + ✓ ready assertion
+#
+#   I-a: SKILL.md absent from resolved skill dir → non-zero exit + "SKILL.md not found"
+#   I-b: SKILL.md present but STUB_NEMOCLAW_SKILL_NOT_READY set → non-zero + "NOT ready"
+#   I-c: SKILL.md present + default ready output → exits 0 + skill-installed-nemoclaw ledger key
+#
+# Note on I-a: the script resolves skill_dir from ${SCRIPT_DIR}/.. (the real repo
+# root, where SKILL.md DOES exist). To force the guard to fire we override the
+# resolved dir via REVENIUM_SKILL_DIR pointing at a tmp dir with no SKILL.md.
+# ===========================================================================
+echo ""
+echo "--- GROUP I: NCDEPLOY-01 SKILL.md guard + ✓ ready assertion ---"
+
+# --- GROUP I-a: SKILL.md absent → fail hard with actionable message ---
+echo ""
+echo "  -- I-a: SKILL.md absent from skill dir --"
+
+TMP_HOME_Ia=$(make_home)
+ARGV_Ia=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ia.XXXXXX")
+TMP_HOMES+=("${ARGV_Ia}")
+# Point skill_dir at a tmp dir that has NO SKILL.md
+NO_SKILL_MD_DIR=$(mktemp -d "${TMPDIR:-/tmp}/test-nemo-noskillmd.XXXXXX")
+TMP_HOMES+=("${NO_SKILL_MD_DIR}")
+
+exit_code_ia=0
+output_ia=$(REVENIUM_SKILL_DIR="${NO_SKILL_MD_DIR}" \
+            run_provision "${TMP_HOME_Ia}" "${ARGV_Ia}" 2>&1) || exit_code_ia=$?
+
+# Assert: exits non-zero
+if [[ "${exit_code_ia}" -ne 0 ]]; then
+  pass "GROUP-I-a: exits non-zero when SKILL.md absent"
+else
+  fail "GROUP-I-a: exited 0 — expected non-zero (SKILL.md guard not yet implemented)"
+fi
+
+# Assert: output mentions "SKILL.md not found"
+if echo "${output_ia}" | grep -qi "SKILL.md not found"; then
+  pass "GROUP-I-a: output contains 'SKILL.md not found' actionable message"
+else
+  fail "GROUP-I-a: 'SKILL.md not found' NOT in output (SKILL.md guard not yet implemented)"
+fi
+
+# --- GROUP I-b: SKILL.md present, NOT ready → fail hard with "NOT ready" message ---
+echo ""
+echo "  -- I-b: SKILL.md present, skill not ready --"
+
+TMP_HOME_Ib=$(make_home)
+ARGV_Ib=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ib.XXXXXX")
+TMP_HOMES+=("${ARGV_Ib}")
+
+exit_code_ib=0
+output_ib=$(STUB_NEMOCLAW_SKILL_NOT_READY=1 \
+            run_provision "${TMP_HOME_Ib}" "${ARGV_Ib}" 2>&1) || exit_code_ib=$?
+
+# Assert: exits non-zero
+if [[ "${exit_code_ib}" -ne 0 ]]; then
+  pass "GROUP-I-b: exits non-zero when skill is NOT ready"
+else
+  fail "GROUP-I-b: exited 0 — expected non-zero (✓ ready assertion not yet implemented)"
+fi
+
+# Assert: output mentions "NOT ready"
+if echo "${output_ib}" | grep -qi "NOT ready"; then
+  pass "GROUP-I-b: output contains 'NOT ready' message"
+else
+  fail "GROUP-I-b: 'NOT ready' NOT in output (✓ ready assertion not yet implemented)"
+fi
+
+# --- GROUP I-c: SKILL.md present + default ready output → passes + ledger key written ---
+echo ""
+echo "  -- I-c: SKILL.md present, ready output → happy path --"
+
+TMP_HOME_Ic=$(make_home)
+ARGV_Ic=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ic.XXXXXX")
+TMP_HOMES+=("${ARGV_Ic}")
+LEDGER_Ic="${TMP_HOME_Ic}/.nemoclaw/revenium-nemoclaw.ledger"
+
+exit_code_ic=0
+output_ic=$(run_provision "${TMP_HOME_Ic}" "${ARGV_Ic}" 2>&1) || exit_code_ic=$?
+
+# Assert: ledger key skill-installed-nemoclaw present
+if [[ -f "${LEDGER_Ic}" ]] && grep -qE "^skill-installed-nemoclaw=" "${LEDGER_Ic}" 2>/dev/null; then
+  pass "GROUP-I-c: skill-installed-nemoclaw ledger key written on happy path"
+else
+  fail "GROUP-I-c: skill-installed-nemoclaw NOT in ledger (✓ ready assertion not yet implemented)"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 echo ""
-echo "NOTE: This harness is in the expected RED state before Plan 02 implements"
-echo "      the provisioning functions in scripts/post-install-nemoclaw.sh."
-echo "      GROUP A-G exercise functions that do not yet exist — those FAILs are"
-echo "      correct for Wave 0 (Plan 01). The harness goes GREEN in Wave 2."
+echo "NOTE: GROUP A-H are in the expected state; GROUP I (I-a, I-b, I-c) are RED"
+echo "      pending Task 2 implementing the SKILL.md guard and ✓ ready assertion"
+echo "      in scripts/post-install-nemoclaw.sh."
 if [[ "${FAIL}" -gt 0 ]]; then
   exit 1
 fi

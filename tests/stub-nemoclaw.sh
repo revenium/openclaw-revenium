@@ -32,9 +32,23 @@
 #     to stderr and exits 1 (meter probe failed). When unset (default), echoes
 #     a 2xx success body.
 #
-# SECURITY (T-13-SC): this stub only string-COMPAREs positional args and
-# captures them with `printf '%s\n'`. It NEVER `eval`s or string-interpolates
-# captured argv into a shell command.
+# SECURITY (T-13-SC / T-16-SC): this stub only string-COMPAREs positional
+# args and captures them with `printf '%s\n'`. It NEVER `eval`s or
+# string-interpolates captured argv into a shell command.
+#
+# Additional environment switches (Phase 16):
+#
+#   STUB_NEMOCLAW_SKILL_INSTALL_RC (default "0")
+#     Controls the exit code of a `nemoclaw <sandbox> skill install <dir>`
+#     invocation. Set to "1" to simulate a failed skill install.
+#
+#   STUB_NEMOCLAW_SKILL_NOT_READY (set/non-empty)
+#     When set, the `openclaw skills list` exec payload echoes a non-matching
+#     line ("No skills installed.") and exits 0. When unset (default), echoes
+#     the ready line.
+#
+#   STUB_NEMOCLAW_SKILLS_LIST_OUTPUT (default "✓ ready  💰 revenium")
+#     Override the default output for the `openclaw skills list` exec path.
 
 # No -e: we manage exits explicitly per subcommand dispatch
 set -uo pipefail
@@ -93,6 +107,12 @@ if [[ "${2:-}" == "share" ]]; then
   exit "${STUB_SSHFS_RC:-0}"
 fi
 
+# skill install — nemoclaw <sandbox> skill install <dir>
+# Exits STUB_NEMOCLAW_SKILL_INSTALL_RC (default 0) to simulate success/failure.
+if [[ "${2:-}" == "skill" && "${3:-}" == "install" ]]; then
+  exit "${STUB_NEMOCLAW_SKILL_INSTALL_RC:-0}"
+fi
+
 # exec — dispatch based on the exec payload content.
 # Detects payload type by string-comparing captured argv with grep -qF.
 if [[ "${2:-}" == "exec" ]]; then
@@ -129,6 +149,20 @@ if [[ "${2:-}" == "exec" ]]; then
       # Emit the pinned tarball sha256 followed by CLI_DELIVERED_OK
       echo "cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67  rev.tgz"
       echo "CLI_DELIVERED_OK"
+      exit 0
+    fi
+  fi
+
+  # --- openclaw skills list (skill discovery assertion, D-02) ---
+  # Pattern: payload contains "openclaw skills list"
+  # SECURITY: string-compare only, never eval (T-16-SC).
+  if grep -qF "openclaw skills list" "${_payload_file}"; then
+    rm -f "${_payload_file}"
+    if [[ -n "${STUB_NEMOCLAW_SKILL_NOT_READY:-}" ]]; then
+      echo "No skills installed."
+      exit 0
+    else
+      echo "${STUB_NEMOCLAW_SKILLS_LIST_OUTPUT:-✓ ready  💰 revenium}"
       exit 0
     fi
   fi
