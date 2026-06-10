@@ -84,7 +84,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 12. Parallel Install Scaffolding & Detection | v1.4 | 2/2 | Complete    | 2026-06-07 |
 | 13. Sandbox Provisioning — Egress, CLI & Authenticated Metering | v1.4 | 3/3 | Complete    | 2026-06-08 |
 | 14. Host-Side Metering Loop | v1.4 | 3/3 | Complete    | 2026-06-08 |
-| 15. Per-Turn Enforcement Plugin | v1.4 | 6/7 | In Progress|  |
+| 15. Per-Turn Enforcement Plugin | v1.4 | 7/7 | Complete   | 2026-06-10 |
 | 16. Skill Deploy & Docs | v1.4 | 0/? | Not started | - |
 
 ## Phase Details
@@ -206,7 +206,7 @@ Plans:
 
 **SC3 renegotiation note (2026-06-10):** Round-3 live re-validation (Plan 15-07, 15-VALIDATION.md round-3 section) confirmed CR-01 and WR-01 resolved, but B-05 was still not demonstrated end-to-end: `before_agent_finalize` does not fire for `openclaw agent --json` CLI turns on this host (`agent/embedded` runner skips gateway lifecycle hooks). Per the human-approved fallback, SC3 has been renegotiated (above) to scope NCENF-02's marker revise loop to agents that invoke `exec` directly (full gateway messaging sessions), with the Nemotron `tool_search_code` indirection and `agent/embedded` CLI runner documented as known limitations. No further gap-closure cycle will be spawned.
 
-**Plans:** 6/7 plans executed
+**Plans:** 7/7 plans complete
 
 **Install-path note (D-08):** NCDEPLOY-01's *deploy step* (`nemoclaw skill install`) is pulled forward into Phase 15 so the marker chain is end-to-end testable and SC3 is honestly verifiable here. Install-path order is now: 13 provisioning → 14 metering loop → 15a skill install → 15b plugin install → 15c preflight+smoke → 16 docs. Phase 16 keeps only docs + polish.
 
@@ -241,7 +241,7 @@ Plans:
 
 **Gap-closure Wave 4 (round 3)** *(blocked on 15-06)*
 
-- [ ] 15-07-PLAN.md — Live re-validation on 34.224.27.67 / revenium-spike: CR-01 diagnostic-on-no-injection + pass-on-injection, WR-01 non-downgrade-across-recover, B-05 transcript-scan end-to-end marker; human checkpoint with terminal SC3 decision (marker produced → PASS; not produced → user-approved SC3 scope-renegotiation to direct-exec agents, Nemotron tool_search_code indirection documented as a known limitation)
+- [x] 15-07-PLAN.md — Live re-validation on 34.224.27.67 / revenium-spike: CR-01 diagnostic-on-no-injection + pass-on-injection, WR-01 non-downgrade-across-recover, B-05 transcript-scan end-to-end marker; human checkpoint with terminal SC3 decision (marker produced → PASS; not produced → user-approved SC3 scope-renegotiation to direct-exec agents, Nemotron tool_search_code indirection documented as a known limitation)
 
 **Spike artifacts consumed:** spike 006 findings (`skill-deploy-and-enforcement.md`, plugin skeleton), Phase 11 `revenium-marker-gate` source as the `before_agent_finalize` template
 
