@@ -466,3 +466,152 @@ describe("WR-01 / WR-04 — non-string exec path does NOT downgrade marked:true"
     assert.strictEqual(data.marked, true, "null code variant: marked:true must be preserved");
   });
 });
+
+// ---------------------------------------------------------------------------
+// B-05 transcript-scan observation (B-05 / NCENF-02)
+//
+// Confirms that handleBeforeAgentFinalize gains a transcript-scan observation
+// source that detects Nemotron's tool_search_code-based exec invocations, and
+// that safeBeforeAgentFinalize properly threads the transcript to impl.
+//
+// Schema (confirmed live on host 34.224.27.67, session 524a4a76):
+//   event.messages[N].message.role === "assistant"
+//   event.messages[N].message.content[M].type === "toolCall"
+//   event.messages[N].message.content[M].name === "tool_search_code"
+//   event.messages[N].message.content[M].arguments.code contains "openclaw:core:exec"
+// ---------------------------------------------------------------------------
+
+// Helper: build a minimal transcript message list with a tool_search_code exec call
+function makeTranscriptWithExec(cmd = "echo hello", includeMarker = false) {
+  const execCode = `return await openclaw.tools.call('openclaw:core:exec', { command: '${cmd}' });`;
+  const markerCode = `return await openclaw.tools.call('openclaw:core:exec', { command: 'bash ~/.openclaw/skills/revenium/scripts/write-marker.sh coding' });`;
+  const messages = [
+    {
+      // A prior user message
+      type: "message",
+      message: { role: "user", content: [{ type: "text", text: "do something" }] }
+    },
+    {
+      // Assistant calls tool_search_code with openclaw:core:exec inside
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call_test_exec",
+            name: "tool_search_code",
+            arguments: { code: execCode }
+          }
+        ]
+      }
+    },
+  ];
+  if (includeMarker) {
+    messages.push({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call_test_marker",
+            name: "tool_search_code",
+            arguments: { code: markerCode }
+          }
+        ]
+      }
+    });
+  }
+  return messages;
+}
+
+describe("transcript-scan observation (B-05)", () => {
+  // Uses SUITE_TMP_DIR — each test gets clean state from the outer beforeEach.
+  // All calls with transcript arg use the schema confirmed in 15-B05-SCHEMA-PROBE.md.
+
+  test("B-05: transcript with tool_search_code exec → handleBeforeAgentFinalize returns revise (empty in-process Sets, no disk)", () => {
+    const transcript = makeTranscriptWithExec("echo hello");
+    // No in-process state, no disk state — only transcript evidence
+    const result = handleBeforeAgentFinalize(RUN_A, transcript);
+    assert.ok(result !== undefined, "B-05: must return revise action when exec in transcript");
+    assert.strictEqual(result.action, "revise", "action must be 'revise'");
+  });
+
+  test("B-05: transcript with write-marker.sh exec → handleBeforeAgentFinalize returns undefined (already marked)", () => {
+    const transcript = makeTranscriptWithExec("echo hello", true); // includes marker exec
+    const result = handleBeforeAgentFinalize(RUN_A, transcript);
+    assert.strictEqual(result, undefined, "must pass through when marker write-marker.sh is in transcript");
+  });
+
+  test("B-05: transcript with NO exec evidence → handleBeforeAgentFinalize returns undefined", () => {
+    const noExecTranscript = [
+      { type: "message", message: { role: "user", content: [{ type: "text", text: "just chat" }] } },
+      { type: "message", message: { role: "assistant", content: [{ type: "text", text: "hello" }] } }
+    ];
+    const result = handleBeforeAgentFinalize(RUN_A, noExecTranscript);
+    assert.strictEqual(result, undefined, "no exec in transcript → pass-through");
+  });
+
+  test("union (existing path wins): execRuns.has(runId) still triggers revise even without transcript", () => {
+    // Ensure existing in-process path still works (transcript scan is UNION, not replacement)
+    handleBeforeToolCall(RUN_A, "exec", { command: "cat README.md" });
+    const result = handleBeforeAgentFinalize(RUN_A); // no transcript arg
+    assert.ok(result !== undefined && result.action === "revise", "in-process path must still win");
+  });
+
+  test("union (disk wins): disk-fallback marked run passes through even without transcript", () => {
+    handleBeforeToolCall(RUN_A, "exec", { command: "write-marker.sh coding" });
+    execRuns.clear();
+    markedTaskRuns.clear();
+    const result = handleBeforeAgentFinalize(RUN_A); // disk has marked:true, no transcript
+    assert.strictEqual(result, undefined, "disk fallback marked:true must pass through without transcript");
+  });
+
+  test("B-05: fail-open — null transcript does not throw, returns same result as no transcript", () => {
+    assert.doesNotThrow(() => {
+      handleBeforeAgentFinalize(RUN_A, null);
+    }, "null transcript must not throw");
+  });
+
+  test("B-05: fail-open — malformed transcript (not array) does not throw", () => {
+    assert.doesNotThrow(() => {
+      handleBeforeAgentFinalize(RUN_A, { malformed: true });
+    }, "malformed transcript must not throw");
+  });
+
+  test("B-05: revise instruction is byte-identical (no transcript content interpolated)", () => {
+    const transcript = makeTranscriptWithExec("some command");
+    const result = handleBeforeAgentFinalize(RUN_A, transcript);
+    assert.ok(result !== undefined, "should have revise action");
+    // The instruction must NOT contain the command text from the transcript
+    assert.ok(!result.retry.instruction.includes("some command"), "T-11: instruction must not interpolate transcript content");
+    assert.ok(result.retry.instruction.includes("write-marker.sh"), "instruction must reference write-marker.sh");
+    assert.ok(result.retry.instruction.includes("classify this turn"), "instruction must be the static revise text");
+  });
+
+  test("WRAPPER-THREADING (B-05): safeBeforeAgentFinalize forwards transcript to impl — exec-in-transcript returns revise", () => {
+    // This is the load-bearing path: index.ts → safeBeforeAgentFinalize(runId, transcript, opts) → impl(runId, transcript)
+    const transcript = makeTranscriptWithExec("echo wrapper_test");
+    // Call through the wrapper with transcript in the new non-opts position
+    const result = safeBeforeAgentFinalize(RUN_A, transcript);
+    assert.ok(result !== undefined, "wrapper must forward transcript — revise expected for exec-in-transcript");
+    assert.strictEqual(result.action, "revise", "must return revise through the wrapper");
+  });
+
+  test("WRAPPER-THREADING (B-05): transcript with write-marker.sh through safeBeforeAgentFinalize returns undefined", () => {
+    const transcript = makeTranscriptWithExec("echo test", true); // includes marker
+    const result = safeBeforeAgentFinalize(RUN_A, transcript);
+    assert.strictEqual(result, undefined, "marker-in-transcript through wrapper → pass-through");
+  });
+
+  test("WRAPPER-THREADING: wrapper is still fail-open when impl throws (transcript arg present)", () => {
+    const boomWithTranscript = () => { throw new Error("forced failure"); };
+    const transcript = makeTranscriptWithExec("echo test");
+    assert.doesNotThrow(() => {
+      safeBeforeAgentFinalize(RUN_A, transcript, {}, boomWithTranscript);
+    }, "wrapper must still catch impl throws when transcript is present");
+    const result = safeBeforeAgentFinalize(RUN_A, transcript, { log: () => {} }, boomWithTranscript);
+    assert.strictEqual(result, undefined, "fail-open: must return undefined when impl throws");
+  });
+});
