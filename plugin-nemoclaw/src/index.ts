@@ -59,9 +59,12 @@ export default definePluginEntry({
     // before_agent_finalize: IS a conversation hook — requires allowConversationAccess: true
     // in the openclaw config (see post-install-nemoclaw.sh for the config patch).
     // A thrown error MUST resolve to undefined (pass-through), never a rejection.
-    api.on("before_agent_finalize", async (_event, ctx) => {
+    // event.messages is the conversation transcript array (PluginHookBeforeAgentFinalizeEvent).
+    // It is passed to safeBeforeAgentFinalize so the transcript-scan path (B-05)
+    // can detect Nemotron's tool_search_code exec pattern.
+    api.on("before_agent_finalize", async (event: { messages?: unknown[] } | undefined, ctx: { runId?: string } | undefined) => {
       try {
-        return safeBeforeAgentFinalize(ctx?.runId, { log: (msg: string) => api.logger.info(msg) });
+        return safeBeforeAgentFinalize(ctx?.runId, event?.messages, { log: (msg: string) => api.logger.info(msg) });
       } catch {
         return undefined; // fail-open: never block the reply
       }

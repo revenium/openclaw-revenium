@@ -202,25 +202,102 @@ export function handleBeforeToolCall(runId, toolName, params, opts = {}) {
   persistRunState(runId, isMarked || markedTaskRuns.has(runId));
 }
 
+// ---------------------------------------------------------------------------
+// Transcript-scan observation (B-05 / NCENF-02)
+//
+// Nemotron routes all shell exec through tool_search_code +
+// openclaw.tools.call('openclaw:core:exec', ...). The before_agent_finalize
+// hook receives the full conversation transcript in event.messages (first
+// arg, typed PluginHookBeforeAgentFinalizeEvent). This helper scans those
+// messages for tool_search_code toolCall entries whose code argument contains
+// an openclaw:core:exec invocation.
+//
+// Schema confirmed live (15-B05-SCHEMA-PROBE.md, session 524a4a76,
+// host 34.224.27.67, 2026-06-10):
+//   event.messages[N].message.role === "assistant"
+//   event.messages[N].message.content[M].type === "toolCall"
+//   event.messages[N].message.content[M].name === "tool_search_code"
+//   event.messages[N].message.content[M].arguments.code contains "openclaw:core:exec"
+//
+// Fail-open: any error (missing fields, wrong type, etc.) returns a safe
+// "no evidence" result — the scan NEVER throws.
+// ---------------------------------------------------------------------------
+
+/**
+ * @typedef {{ execFound: boolean, markerFound: boolean }} TranscriptScanResult
+ */
+
+/**
+ * Scan the conversation transcript for exec evidence in tool_search_code calls.
+ *
+ * Returns whether any tool_search_code invocation contains openclaw:core:exec
+ * (execFound) and whether write-marker.sh was also invoked (markerFound).
+ * Uses the MARKER_INVOKE regex for marker detection — same discipline as the
+ * before_tool_call path (WR-02).
+ *
+ * Fail-open: returns { execFound: false, markerFound: false } on any error.
+ *
+ * @param {unknown} transcript - The event.messages array (or undefined/null).
+ * @returns {TranscriptScanResult}
+ */
+function scanTranscriptForExec(transcript) {
+  const NO_EVIDENCE = { execFound: false, markerFound: false };
+  try {
+    if (!Array.isArray(transcript)) return NO_EVIDENCE;
+    let execFound = false;
+    let markerFound = false;
+    for (const entry of transcript) {
+      try {
+        const msg = entry && entry.message;
+        if (!msg || msg.role !== "assistant") continue;
+        const content = msg.content;
+        if (!Array.isArray(content)) continue;
+        for (const part of content) {
+          if (!part || part.type !== "toolCall" || part.name !== "tool_search_code") continue;
+          const code = part.arguments && typeof part.arguments.code === "string"
+            ? part.arguments.code
+            : null;
+          if (!code) continue;
+          if (code.includes("openclaw:core:exec")) {
+            execFound = true;
+            // Check if this specific exec is write-marker.sh
+            if (MARKER_INVOKE.test(code)) {
+              markerFound = true;
+            }
+          }
+        }
+      } catch {
+        /* tolerate malformed individual messages — continue scanning */
+      }
+    }
+    return { execFound, markerFound };
+  } catch {
+    return NO_EVIDENCE; // fail-open: any structural error → no evidence
+  }
+}
+
 /**
  * Handle a before_agent_finalize event.
  *
  * Returns a revise action when an exec tool ran but write-marker.sh did not;
  * returns undefined (pass-through) in all other cases (fail-open).
  *
- * Disk fallback (B-05): when in-process execRuns does not contain runId (e.g.
- * after a `nemoclaw recover` spawning a fresh gateway process), reads the
- * persisted run-state file to determine if the run was substantive. Any fs
- * error in the fallback path resolves to pass-through (fail-open).
+ * Sources are UNIONED (any one reporting substantive+unmarked yields revise;
+ * any one reporting marked yields pass-through):
+ *
+ * 1. In-process Sets (execRuns / markedTaskRuns) — normal before_tool_call path.
+ * 2. Disk fallback — survives `nemoclaw recover` (fresh gateway process).
+ * 3. Transcript scan (B-05) — detects Nemotron's tool_search_code exec pattern.
  *
  * @param {string|undefined} runId - The ctx.runId from the hook context.
+ * @param {unknown} [transcript] - The event.messages array (optional; undefined-safe).
  * @returns {{ action: "revise", reason: string, retry: { instruction: string, idempotencyKey: string, maxAttempts: number } } | undefined}
  */
-export function handleBeforeAgentFinalize(runId) {
+export function handleBeforeAgentFinalize(runId, transcript) {
   // fail-open: no runId
   if (!runId) return undefined;
 
-  // In-process path (normal case: same gateway process).
+  // Source 1: In-process path (normal case: same gateway process).
   if (execRuns.has(runId)) {
     // Already classified → pass through
     if (markedTaskRuns.has(runId)) return undefined;
@@ -228,9 +305,8 @@ export function handleBeforeAgentFinalize(runId) {
     return _buildReviseAction(runId);
   }
 
-  // Disk fallback (B-05): in-process execRuns is empty for this runId, which
-  // happens when `nemoclaw recover` spawned a fresh gateway process. Read the
-  // persisted state file to determine if this run was substantive.
+  // Source 2: Disk fallback (survives `nemoclaw recover`). When in-process
+  // execRuns is empty for this runId, read the persisted state file.
   try {
     const filePath = runStatePath(runId);
     if (filePath && existsSync(filePath)) {
@@ -246,7 +322,16 @@ export function handleBeforeAgentFinalize(runId) {
     /* fail-open: any read/parse error → pass through (undefined) */
   }
 
-  // Non-substantive turn (no exec tool ran in this run) → pass through.
+  // Source 3: Transcript scan (B-05 — Nemotron tool_search_code exec pattern).
+  // Only reached when the in-process Sets and disk both have no evidence.
+  // scan result is fail-open — never throws.
+  const scan = scanTranscriptForExec(transcript);
+  if (scan.execFound) {
+    if (scan.markerFound) return undefined; // write-marker.sh invoked in transcript
+    return _buildReviseAction(runId); // exec ran but no marker
+  }
+
+  // Non-substantive turn (no evidence from any source) → pass through.
   return undefined;
 }
 
@@ -317,14 +402,20 @@ export function handleAgentEnd(runId) {
 /**
  * Fail-open wrapper for before_agent_finalize.
  *
+ * The transcript (event.messages) is passed as the second positional argument
+ * so it flows through to handleBeforeAgentFinalize's transcript-scan path (B-05).
+ * opts is now the THIRD positional argument to keep the transcript parameter
+ * at a distinct, non-colliding position.
+ *
  * @param {string|undefined} runId
+ * @param {unknown} [transcript] - The event.messages array (undefined-safe).
  * @param {{ log?: (msg: string) => void }} [opts] - Optional host logger.
- * @param {(runId: string|undefined) => any} [impl] - Injectable handler (tests).
+ * @param {(runId: string|undefined, transcript: unknown) => any} [impl] - Injectable handler (tests).
  * @returns {any} The revise action, or undefined (never throws).
  */
-export function safeBeforeAgentFinalize(runId, opts = {}, impl = handleBeforeAgentFinalize) {
+export function safeBeforeAgentFinalize(runId, transcript, opts = {}, impl = handleBeforeAgentFinalize) {
   try {
-    return impl(runId);
+    return impl(runId, transcript);
   } catch (err) {
     try {
       const logFn = opts && opts.log ? opts.log : console.error;
