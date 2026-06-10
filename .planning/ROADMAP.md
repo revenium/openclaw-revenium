@@ -85,7 +85,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 13. Sandbox Provisioning — Egress, CLI & Authenticated Metering | v1.4 | 3/3 | Complete    | 2026-06-08 |
 | 14. Host-Side Metering Loop | v1.4 | 3/3 | Complete    | 2026-06-08 |
 | 15. Per-Turn Enforcement Plugin | v1.4 | 7/7 | Complete    | 2026-06-10 |
-| 16. Skill Deploy & Docs | v1.4 | 0/? | Not started | - |
+| 16. Skill Deploy & Docs | v1.4 | 1/3 | In Progress|  |
 
 ## Phase Details
 
@@ -262,12 +262,12 @@ Plans:
   3. The setup documentation covers the NemoClaw path prerequisites (Linux, Docker, NemoClaw installed, `sshfs`), the parallel-path guarantee (standalone path untouched), and the macOS-unsupported constraint with an explicit error message
   4. The existing standalone OpenClaw setup docs are not changed or contradicted by the NemoClaw additions
 
-**Plans:** 3 plans
+**Plans:** 1/3 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 16-01-PLAN.md — SKILL.md path guard + fail-hard `✓ ready` discovery assertion in install_skill_nemoclaw() (D-02) + banner fix; Wave 0 bash tests (NCDEPLOY-01)
+- [x] 16-01-PLAN.md — SKILL.md path guard + fail-hard `✓ ready` discovery assertion in install_skill_nemoclaw() (D-02) + banner fix; Wave 0 bash tests (NCDEPLOY-01)
 - [ ] 16-02-PLAN.md — docs/nemoclaw-setup.md operator runbook (D-01/D-04, verbatim macOS error) + single README pointer link (NCDEPLOY-02)
 
 **Wave 2** *(blocked on Wave 1)*

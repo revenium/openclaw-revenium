@@ -25,7 +25,7 @@
 - [x] **NCENF-02**: Task/job marker writing works under NemoClaw — the existing `before_agent_finalize` marker-gate plugin is deployed/adapted into the sandbox — so attribution flows.
 
 ### Skill Deploy & Docs (NCDEPLOY)
-- [ ] **NCDEPLOY-01**: The Revenium skill is deployed into the sandbox via `nemoclaw skill install` and discovered by the agent (`✓ ready`).
+- [x] **NCDEPLOY-01**: The Revenium skill is deployed into the sandbox via `nemoclaw skill install` and discovered by the agent (`✓ ready`).
 - [ ] **NCDEPLOY-02**: Setup docs cover the NemoClaw install path, prerequisites, and the macOS-unsupported constraint.
 
 ## Future Requirements (deferred)
@@ -52,5 +52,5 @@
 | NCMETER-01 | Phase 14 | Complete |
 | NCENF-01 | Phase 15 | Complete |
 | NCENF-02 | Phase 15 | Complete |
-| NCDEPLOY-01 | Phase 16 (deploy step pulled into Phase 15 per D-08) | Pending |
+| NCDEPLOY-01 | Phase 16 (deploy step pulled into Phase 15 per D-08) | Complete |
 | NCDEPLOY-02 | Phase 16 | Pending |
