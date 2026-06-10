@@ -403,3 +403,66 @@ describe("persistence across process restart (B-05)", () => {
     try { chmodSync(SUITE_TMP_DIR, 0o700); } catch { /* ignore */ }
   });
 });
+
+// ---------------------------------------------------------------------------
+// WR-01 / WR-04 — non-string-command exec path must NOT downgrade marked:true
+//
+// Gap: plugin/src/gate.js line 189 called persistRunState(runId, false)
+// unconditionally on the non-string-command path, overwriting a prior
+// marked:true disk record. After nemoclaw recover + resetState() the disk
+// record was marked:false → spurious revise for an already-classified run.
+//
+// Fix: change to persistRunState(runId, markedTaskRuns.has(runId)) so a prior
+// marker classification is preserved when a non-string command exec follows.
+// ---------------------------------------------------------------------------
+
+describe("WR-01 / WR-04 — non-string exec path does NOT downgrade marked:true", () => {
+  // Uses SUITE_TMP_DIR — each test gets a clean state from the outer beforeEach.
+
+  test("WR-04 regression: marker exec → non-string exec → resetState → finalize returns undefined (no spurious revise)", () => {
+    // Step 1: marker exec (write-marker.sh) — writes marked:true to disk
+    handleBeforeToolCall(RUN_A, "exec", { command: "bash ~/.openclaw/skills/revenium/scripts/write-marker.sh coding" });
+    assert.ok(markedTaskRuns.has(RUN_A), "precondition: RUN_A in markedTaskRuns after marker exec");
+
+    // Step 2: non-string-command exec on the same runId (command is a number, not a string)
+    handleBeforeToolCall(RUN_A, "exec", { command: 42 });
+
+    // Step 3: simulate nemoclaw recover — clear in-process Sets only (disk file survives)
+    resetState();
+    assert.ok(!markedTaskRuns.has(RUN_A), "in-process Sets cleared after resetState");
+    assert.ok(!execRuns.has(RUN_A), "in-process Sets cleared after resetState");
+
+    // Step 4: finalize should return undefined (already marked on disk) — NOT a revise
+    const result = handleBeforeAgentFinalize(RUN_A);
+    assert.strictEqual(result, undefined, "WR-04: finalize must return undefined (pass-through) — marked:true must survive non-string exec");
+  });
+
+  test("WR-01: disk record after marker→non-string sequence has marked:true (not downgraded)", () => {
+    handleBeforeToolCall(RUN_A, "exec", { command: "write-marker.sh coding" });
+    handleBeforeToolCall(RUN_A, "exec", { command: 42 }); // non-string — must NOT overwrite marked:true
+
+    const stateFile = join(SUITE_TMP_DIR, "run-aaa-001.json");
+    assert.ok(existsSync(stateFile), "run-state file must exist");
+    const data = JSON.parse(readFileSync(stateFile, "utf8"));
+    assert.strictEqual(data.marked, true, "WR-01: disk marked must remain true after non-string exec (no downgrade)");
+  });
+
+  test("non-string exec on a never-marked runId still persists marked:false (no false upgrade)", () => {
+    handleBeforeToolCall(RUN_A, "exec", { command: 42 }); // no prior marker — must persist false
+
+    const stateFile = join(SUITE_TMP_DIR, "run-aaa-001.json");
+    assert.ok(existsSync(stateFile), "run-state file must exist");
+    const data = JSON.parse(readFileSync(stateFile, "utf8"));
+    assert.strictEqual(data.marked, false, "non-string exec on unmarked run must persist marked:false");
+  });
+
+  test("non-string exec with null params.code also preserves prior marked:true on disk", () => {
+    // Another non-string variant: params.code is null
+    handleBeforeToolCall(RUN_A, "exec", { command: "write-marker.sh analysis" }); // mark first
+    handleBeforeToolCall(RUN_A, "exec", { command: undefined, code: null }); // non-string follow-up
+
+    const stateFile = join(SUITE_TMP_DIR, "run-aaa-001.json");
+    const data = JSON.parse(readFileSync(stateFile, "utf8"));
+    assert.strictEqual(data.marked, true, "null code variant: marked:true must be preserved");
+  });
+});
