@@ -208,8 +208,12 @@ owner-id: "your-owner-id"
 # 1. Clear the host-side metering cron
 bash ~/.openclaw/skills/revenium/scripts/uninstall-nemoclaw-cron.sh
 
-# 2. Uninstall the enforcement plugin (in-sandbox)
-nemoclaw <your-sandbox-name> exec -- sh -lc "openclaw plugins uninstall revenium-enforcement"
+# 2. Uninstall the enforcement plugin and clear its ledger key
+#    (use the dedicated script — running openclaw plugins uninstall directly
+#    does NOT clear the enforcement-plugin-installed ledger key, which would
+#    cause a subsequent reinstall to silently skip the plugin).
+bash ~/.openclaw/skills/revenium/scripts/uninstall-enforcement-nemoclaw.sh \
+    --sandbox <your-sandbox-name>
 
 # 3. Remove the skill from the sandbox
 nemoclaw <your-sandbox-name> skill remove revenium
