@@ -420,6 +420,68 @@ deliver_revenium_cli() {
     info "revenium CLI ${REVENIUM_CLI_VERSION} installed at /sandbox/.local/bin/revenium"
 }
 
+# deliver_revenium_cli_host — install the prebuilt CLI on the HOST PATH.
+# The NemoClaw metering loop runs the unmodified report.sh / guardrail-check.sh
+# ON THE HOST (over the SSHFS mount) and they call `revenium`. The in-sandbox
+# delivery above does NOT put revenium on the host, so without this step the cron
+# logs "revenium CLI not found on PATH — skipping metering" every tick and no
+# metering data ever reaches Revenium. Mirrors deliver_revenium_cli but host-side:
+# fetch the same pinned tarball, sha256-verify, install to ~/.local/bin/revenium.
+# Skips (no clobber) if the operator already has revenium on PATH.
+# Ledger key: cli-delivered-host (value: version:tarball-sha256).
+deliver_revenium_cli_host() {
+    local expected_cli_ledger="${REVENIUM_CLI_VERSION}:${REVENIUM_CLI_TARBALL_SHA256}"
+
+    if ledger_has "cli-delivered-host"; then
+        local stored
+        stored=$(grep "^cli-delivered-host=" "${LEDGER_FILE}" | cut -d= -f2-)
+        if [[ "${stored}" == "${expected_cli_ledger}" ]]; then
+            info "revenium CLI ${REVENIUM_CLI_VERSION} already installed on host (ledger) — skipping."
+            return 0
+        fi
+        warn "cli-delivered-host ledger entry exists but version/sha256 differs — re-installing."
+    fi
+
+    # Honor an operator-provided revenium already on PATH (standalone install or a
+    # system package) — do not clobber it; the metering cron will use it as-is.
+    if command -v revenium >/dev/null 2>&1; then
+        info "revenium already on host PATH ($(command -v revenium)) — skipping host CLI install."
+        ledger_set "cli-delivered-host" "${expected_cli_ledger}"
+        return 0
+    fi
+
+    step "Installing revenium CLI ${REVENIUM_CLI_VERSION} on host (for metering cron)"
+
+    local host_bin_dir="${HOME}/.local/bin"
+    local tmpd cli_rc=0
+    tmpd=$(mktemp -d "${TMPDIR:-/tmp}/revenium-host-cli.XXXXXX")
+    (
+        set -e
+        cd "${tmpd}"
+        # Pitfall 2: verify the tarball (rev.tgz), NOT the extracted binary.
+        curl -fsSL -o rev.tgz "${REVENIUM_CLI_URL}"
+        actual_sha=$(sha256sum rev.tgz | awk '{print $1}')
+        if [ "${actual_sha}" != "${REVENIUM_CLI_TARBALL_SHA256}" ]; then
+            echo "CHECKSUM_MISMATCH:${actual_sha}" >&2
+            exit 2
+        fi
+        tar xzf rev.tgz
+        mkdir -p "${host_bin_dir}"
+        install -m755 ./revenium "${host_bin_dir}/revenium"
+    ) || cli_rc=$?
+    rm -rf "${tmpd}"
+
+    if [[ "${cli_rc}" -eq 2 ]]; then
+        fail "host revenium CLI sha256 mismatch — tarball may be tampered. Aborting install."
+    elif [[ "${cli_rc}" -ne 0 ]]; then
+        fail "host revenium CLI install failed (exit ${cli_rc}) — the metering cron needs 'revenium' on the host PATH."
+    fi
+
+    # The metering crontab line sets PATH=~/.local/bin:... so the cron picks this up.
+    ledger_set "cli-delivered-host" "${expected_cli_ledger}"
+    info "revenium CLI ${REVENIUM_CLI_VERSION} installed at ${host_bin_dir}/revenium"
+}
+
 # write_revenium_creds — write REVENIUM_* env vars to /sandbox/.config/revenium/config.yaml
 # chmod 600. API key MUST NOT appear on a nemoclaw exec command line (D-05, T-13-KEY).
 # Ledger key: creds-written
@@ -561,7 +623,10 @@ run_meter_probe
 # ---------------------------------------------------------------------------
 # 5. Phase 14/15 — metering loop + enforcement plugin (real install paths)
 #    Order: skill deploy (D-08, marker chain precondition) THEN plugin.
+#    Host CLI MUST precede the metering loop: the cron runs report.sh on the host
+#    and needs `revenium` on the host PATH, else every tick skips metering.
 # ---------------------------------------------------------------------------
+deliver_revenium_cli_host
 install_metering_loop
 install_skill_nemoclaw         # D-08: deploy skill first (marker chain precondition)
 install_enforcement_plugin     # D-05/D-09/D-10/D-11: plugin + validation gate
@@ -574,7 +639,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 if [[ "${WORK_DONE}" -eq 1 ]]; then
     echo "  NemoClaw provisioning complete."
     echo ""
-    echo "  Delivered: revenium CLI ${REVENIUM_CLI_VERSION}"
+    echo "  Delivered: revenium CLI ${REVENIUM_CLI_VERSION} (sandbox + host ~/.local/bin)"
     echo "  Config:    /sandbox/.config/revenium/config.yaml"
     echo "  Probe:     meter-probe-passed"
     echo "  Plugin:    revenium-enforcement (validated)"

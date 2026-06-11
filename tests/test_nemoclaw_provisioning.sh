@@ -772,6 +772,156 @@ else
 fi
 
 # ===========================================================================
+# GROUP L: host-side revenium CLI delivery (metering cron prerequisite, NCMETER)
+#
+#   The NemoClaw metering loop runs report.sh ON THE HOST and calls `revenium`.
+#   deliver_revenium_cli_host() installs the CLI on the host PATH (~/.local/bin)
+#   so the cron does not log "revenium CLI not found on PATH — skipping metering".
+#
+#   L-a: revenium already on host PATH → skip (no clobber) + ledger written.
+#   L-b: revenium absent → fetch+verify+install to ~/.local/bin + ledger written
+#        (stub curl writes a fixture tarball; stub sha256sum echoes the pinned sha).
+#   L-c: sha256 mismatch → abort non-zero, ledger NOT written.
+#
+# Seeds all prior ledger keys so only deliver_revenium_cli_host() runs (the
+# metering-loop/skill/enforcement gates are pre-satisfied to avoid live-sandbox deps).
+# ===========================================================================
+echo ""
+echo "--- GROUP L: host-side revenium CLI delivery (metering cron prerequisite) ---"
+
+PINNED_SHA="cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67"
+
+# Seed every ledger key except cli-delivered-host so only the host CLI step runs.
+_seed_all_but_host() {
+  local ledger_file="$1"
+  cat >> "${ledger_file}" << 'SEED_L'
+revenium-policy-applied=1
+gh-release-policy-applied=1
+cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
+creds-written=1
+meter-probe-passed=1
+metering-loop-installed=1
+skill-installed-nemoclaw=1
+enforcement-plugin-installed=1
+SEED_L
+}
+
+# Build a fixture tarball containing a top-level `revenium` file (mirrors the real
+# revenium-cli_*_linux_amd64.tar.gz layout that `tar xzf` + `install ./revenium` expect).
+FIXTURE_TGZ=$(mktemp "${TMPDIR:-/tmp}/test-nemo-revcli.XXXXXX.tgz")
+TMP_HOMES+=("${FIXTURE_TGZ}")
+_fix_dir=$(mktemp -d "${TMPDIR:-/tmp}/test-nemo-revcli-src.XXXXXX")
+TMP_HOMES+=("${_fix_dir}")
+printf '#!/bin/sh\necho stub-revenium\n' > "${_fix_dir}/revenium"
+chmod +x "${_fix_dir}/revenium"
+tar czf "${FIXTURE_TGZ}" -C "${_fix_dir}" revenium
+
+# Drop stub curl + sha256sum into a home's .local/bin (first on PATH) so the host
+# fetch+verify runs network-free. curl copies STUB_CURL_FIXTURE to its -o target;
+# sha256sum echoes STUB_SHA256_VALUE.
+_install_host_cli_stubs() {
+  local bindir="$1"
+  cat > "${bindir}/curl" << 'CURL_STUB'
+#!/usr/bin/env bash
+out=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2;; *) shift;; esac; done
+[ -n "${out}" ] && cp "${STUB_CURL_FIXTURE}" "${out}"
+exit 0
+CURL_STUB
+  cat > "${bindir}/sha256sum" << 'SHA_STUB'
+#!/usr/bin/env bash
+echo "${STUB_SHA256_VALUE}  ${1:-rev.tgz}"
+SHA_STUB
+  chmod +x "${bindir}/curl" "${bindir}/sha256sum"
+}
+
+# --- GROUP L-a: revenium already on host PATH → skip, ledger written ---
+echo ""
+echo "  -- L-a: revenium already on host PATH → skip (no clobber) --"
+
+TMP_HOME_La=$(make_home)
+ARGV_La=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-la.XXXXXX")
+TMP_HOMES+=("${ARGV_La}")
+LEDGER_La="${TMP_HOME_La}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_all_but_host "${LEDGER_La}"
+# Pre-place a fake revenium on the host PATH (the make_home .local/bin dir).
+printf '#!/bin/sh\nexit 0\n' > "${TMP_HOME_La}/.local/bin/revenium"
+chmod +x "${TMP_HOME_La}/.local/bin/revenium"
+
+exit_code_la=0
+output_la=$(run_provision "${TMP_HOME_La}" "${ARGV_La}" 2>&1) || exit_code_la=$?
+
+if [[ "${exit_code_la}" -eq 0 ]] && echo "${output_la}" | grep -qi "already on host PATH"; then
+  pass "GROUP-L-a: host CLI step skips when revenium already on PATH (no clobber)"
+else
+  fail "GROUP-L-a: did not skip on pre-existing host revenium (exit ${exit_code_la})"
+fi
+if grep -qE "^cli-delivered-host=" "${LEDGER_La}" 2>/dev/null; then
+  pass "GROUP-L-a: cli-delivered-host ledger key written on skip path"
+else
+  fail "GROUP-L-a: cli-delivered-host ledger key NOT written on skip path"
+fi
+
+# --- GROUP L-b: revenium absent → fetch+verify+install to ~/.local/bin ---
+echo ""
+echo "  -- L-b: revenium absent → host install to ~/.local/bin (stubbed curl/sha) --"
+
+TMP_HOME_Lb=$(make_home)
+ARGV_Lb=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-lb.XXXXXX")
+TMP_HOMES+=("${ARGV_Lb}")
+LEDGER_Lb="${TMP_HOME_Lb}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_all_but_host "${LEDGER_Lb}"
+_install_host_cli_stubs "${TMP_HOME_Lb}/.local/bin"   # no revenium present → triggers fetch
+
+exit_code_lb=0
+# Restrict PATH (as a literal prefix so run_provision's own ${PATH} picks it up) to
+# the stub dir + system bins, so `command -v revenium` reflects the absent-on-host
+# scenario — the dev machine's real PATH may already have a revenium, which would
+# wrongly take the skip path. (PATH via run_provision's "$@" is NOT recognized as an
+# assignment — bash only honors literal assignment prefixes.)
+output_lb=$(STUB_CURL_FIXTURE="${FIXTURE_TGZ}" STUB_SHA256_VALUE="${PINNED_SHA}" \
+            PATH="${TMP_HOME_Lb}/.local/bin:/usr/bin:/bin" \
+            run_provision "${TMP_HOME_Lb}" "${ARGV_Lb}" 2>&1) || exit_code_lb=$?
+
+if [[ "${exit_code_lb}" -eq 0 ]] && [[ -x "${TMP_HOME_Lb}/.local/bin/revenium" ]]; then
+  pass "GROUP-L-b: revenium installed to host ~/.local/bin when absent"
+else
+  fail "GROUP-L-b: revenium NOT installed to host ~/.local/bin (exit ${exit_code_lb})"
+fi
+if grep -qE "^cli-delivered-host=v1\.2\.0:${PINNED_SHA}$" "${LEDGER_Lb}" 2>/dev/null; then
+  pass "GROUP-L-b: cli-delivered-host ledger value is the pinned version:sha256"
+else
+  fail "GROUP-L-b: cli-delivered-host ledger value missing/incorrect"
+fi
+
+# --- GROUP L-c: sha256 mismatch → abort non-zero, ledger NOT written ---
+echo ""
+echo "  -- L-c: host tarball sha256 mismatch → abort --"
+
+TMP_HOME_Lc=$(make_home)
+ARGV_Lc=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-lc.XXXXXX")
+TMP_HOMES+=("${ARGV_Lc}")
+LEDGER_Lc="${TMP_HOME_Lc}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_all_but_host "${LEDGER_Lc}"
+_install_host_cli_stubs "${TMP_HOME_Lc}/.local/bin"
+
+exit_code_lc=0
+output_lc=$(STUB_CURL_FIXTURE="${FIXTURE_TGZ}" STUB_SHA256_VALUE="deadbeefbadhash" \
+            PATH="${TMP_HOME_Lc}/.local/bin:/usr/bin:/bin" \
+            run_provision "${TMP_HOME_Lc}" "${ARGV_Lc}" 2>&1) || exit_code_lc=$?
+
+if [[ "${exit_code_lc}" -ne 0 ]] && echo "${output_lc}" | grep -qi "sha256 mismatch"; then
+  pass "GROUP-L-c: host CLI install aborts on sha256 mismatch"
+else
+  fail "GROUP-L-c: did not abort on sha256 mismatch (exit ${exit_code_lc})"
+fi
+if ! grep -qE "^cli-delivered-host=" "${LEDGER_Lc}" 2>/dev/null; then
+  pass "GROUP-L-c: cli-delivered-host ledger NOT written on sha mismatch"
+else
+  fail "GROUP-L-c: cli-delivered-host ledger wrongly written despite sha mismatch"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
