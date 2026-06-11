@@ -8,13 +8,9 @@ Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) a
 - **Docker** — required by NemoClaw; the installer verifies this.
 - **NemoClaw** installed and a sandbox provisioned. To install NemoClaw:
   ```bash
-  curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
-    NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt \
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NEMOCLAW_PROVIDER=build \
-    NEMOCLAW_SANDBOX_NAME=<your-sandbox-name> NEMOCLAW_POLICY_MODE=suggested \
-    NVIDIA_API_KEY=nvapi-... bash
+  curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
   ```
-  The first install takes ~11 minutes (80-step OpenShell image build). After installation, the `nemoclaw` CLI is available at `~/.local/bin/nemoclaw` — add it to your PATH:
+  Follow the prompts to accept the terms and provision a sandbox. The first install takes ~11 minutes (80-step OpenShell image build). After installation, the `nemoclaw` CLI is available at `~/.local/bin/nemoclaw` — add it to your PATH:
   ```bash
   export PATH="$HOME/.local/bin:$PATH"
   ```

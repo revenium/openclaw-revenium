@@ -2,6 +2,8 @@
 
 Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) agents using the [Revenium](https://www.revenium.ai) platform. Tracks AI spend, enforces configurable Revenium guardrail rules, and reports usage automatically — so agents never silently blow through your token budget.
 
+> **🛡️ Running OpenClaw under NemoClaw / OpenShell?** This README covers the standalone OpenClaw + Docker path. For the parallel **NemoClaw/OpenShell sandbox** install path, follow **[docs/nemoclaw-setup.md](docs/nemoclaw-setup.md)** instead.
+
 ## Prerequisites
 
 - [OpenClaw](https://docs.openclaw.ai) installed and running
@@ -88,8 +90,6 @@ openclaw skills list
 ```
 
 You should see `revenium` in the list (`✓ ready`). If not, confirm `revenium` is on your PATH — the skill requires it via binary gating. Note the skill directory must be a **real directory** under `~/.openclaw/skills/` — OpenClaw refuses to load a skill whose path is a symlink resolving outside the skills root.
-
-> **Running on NemoClaw/OpenShell?** See [NemoClaw Setup](docs/nemoclaw-setup.md) for the parallel install path.
 
 ### First-time setup (automatic)
 
