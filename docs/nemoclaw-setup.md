@@ -52,6 +52,13 @@ export REVENIUM_TEAM_ID=<your-team-id>
 export REVENIUM_TENANT_ID=<your-tenant-id>
 export REVENIUM_OWNER_ID=<your-owner-id>
 
+# Optional — create a budget guardrail rule at install time. If you omit these,
+# no budget is created and metering still works; set them to auto-create the rule
+# (it appears in Revenium under your Team and writes ruleIds into the sandbox config).
+export REVENIUM_BUDGET_LIMIT=100              # numeric hard limit, e.g. 100.00
+export REVENIUM_BUDGET_PERIOD=MONTHLY        # DAILY | WEEKLY | MONTHLY | QUARTERLY
+# export REVENIUM_BUDGET_SHADOW=1            # optional: warn-only (no blocking)
+
 bash ~/.openclaw/skills/revenium/scripts/install.sh --nemoclaw
 ```
 

@@ -183,7 +183,13 @@ install_enforcement_plugin() {
     local MNT
     MNT="${HOME}/sbx-openclaw-${SANDBOX_NAME}"
     mkdir -p "${MNT}"
-    if ! mountpoint -q "${MNT}" 2>/dev/null; then
+    if ! mountpoint -q "${MNT}" 2>/dev/null || [[ ! -d "${MNT}/skills" ]]; then
+        # Clear a stale/dead SSHFS mount (in /proc/mounts but inaccessible after the
+        # backing SSH connection drops) before remounting — otherwise `share mount`
+        # fails with "permission denied creating the directory".
+        if grep -qsF " ${MNT} " /proc/mounts 2>/dev/null || mount 2>/dev/null | grep -qF " ${MNT} "; then
+            fusermount -u "${MNT}" 2>/dev/null || umount -l "${MNT}" 2>/dev/null || true
+        fi
         nemoclaw "${SANDBOX_NAME}" share mount /sandbox/.openclaw "${MNT}" \
             || fail "mount failed — is ${SANDBOX_NAME} running?"
     fi
@@ -352,6 +358,10 @@ provision_budget_guardrails() {
     MNT="${HOME}/sbx-openclaw-${SANDBOX_NAME}"
     mkdir -p "${MNT}"
     if ! mountpoint -q "${MNT}" 2>/dev/null || [[ ! -d "${MNT}/skills" ]]; then
+        # Clear a stale/dead SSHFS mount before remounting (see install_enforcement_plugin).
+        if grep -qsF " ${MNT} " /proc/mounts 2>/dev/null || mount 2>/dev/null | grep -qF " ${MNT} "; then
+            fusermount -u "${MNT}" 2>/dev/null || umount -l "${MNT}" 2>/dev/null || true
+        fi
         nemoclaw "${SANDBOX_NAME}" share mount /sandbox/.openclaw "${MNT}" \
             || fail "mount failed — cannot write budget config into sandbox '${SANDBOX_NAME}'."
     fi
