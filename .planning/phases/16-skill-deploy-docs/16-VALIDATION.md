@@ -473,3 +473,189 @@ Final skill state (post-restore):
   openclaw skills list → ✓ ready  💰 revenium  (confirmed)
   openclaw plugins inspect revenium-enforcement → Status: loaded, Installed at: 2026-06-11T00:10:21.593Z
 ```
+
+---
+
+### Re-run 3 (post --force fix, fully doc-driven, end-to-end exit 0)
+
+**Date:** 2026-06-11
+**Host:** 34.224.27.67 (sandbox: revenium-spike)
+**Code version:** HEAD faab3be (fix(16-03): add --force to openclaw plugins install for idempotent re-install)
+**CRITICAL HONESTY RULE:** All output is real verbatim captured output. Failures recorded as STILL FAILING.
+
+#### Test Setup (legitimate fresh-operator simulation, not install steps)
+
+```
+1. Removed stale clone from prior re-run:
+   Command: rm -rf ~/.openclaw/skills/revenium
+   Exit: 0
+
+2. Cleared skill-installed-nemoclaw and enforcement-plugin-installed from ledger:
+   Command: grep -v '^skill-installed-nemoclaw=' ~/.nemoclaw/revenium-nemoclaw.ledger |
+              grep -v '^enforcement-plugin-installed=' > ~/.nemoclaw/revenium-nemoclaw.ledger.tmp &&
+              mv ~/.nemoclaw/revenium-nemoclaw.ledger.tmp ~/.nemoclaw/revenium-nemoclaw.ledger
+   Exit: 0
+
+   Ledger after clearing (6 keys remaining):
+     revenium-policy-applied=1
+     gh-release-policy-applied=1
+     cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
+     creds-written=1
+     meter-probe-passed=1
+     metering-loop-installed=1
+
+3. Removed pre-existing enforcement plugin from sandbox:
+   Command: nemoclaw revenium-spike exec -- sh -lc 'rm -rf /sandbox/.openclaw/extensions/revenium-enforcement && echo removed'
+   Exit: 0
+
+4. Uninstalled plugin from OpenClaw registry:
+   Command: nemoclaw revenium-spike exec -- sh -lc 'openclaw plugins uninstall revenium-enforcement --force'
+   Exit: 0 (Uninstalled plugin "revenium-enforcement". Removed: config entry, install record.)
+```
+
+#### Step 1 (doc): git clone + git config
+
+```
+Command: git clone https://github.com/revenium/openclaw-revenium.git ~/.openclaw/skills/revenium
+Exit: 0
+Output: Cloning into '/home/ubuntu/.openclaw/skills/revenium'...
+
+Command: cd ~/.openclaw/skills/revenium && git config core.fileMode false
+Exit: 0
+
+Verification — --force fix confirmed in cloned scripts/post-install-nemoclaw.sh:
+  git log --oneline -1: faab3be fix(16-03): add --force to openclaw plugins install for idempotent re-install
+  grep result: nemoclaw "${SANDBOX_NAME}" exec -- openclaw plugins install --force \
+```
+
+#### Step 2 (doc): export credentials + bash install.sh --nemoclaw
+
+```
+Command: export REVENIUM_SANDBOX_NAME=revenium-spike
+         export REVENIUM_API_KEY=***
+         export REVENIUM_TEAM_ID=DZxzEl
+         bash ~/.openclaw/skills/revenium/scripts/install.sh --nemoclaw
+Exit: 1
+
+Output (verbatim):
+  ▸ Routing to NemoClaw install path
+
+  ▸ Running host compatibility preflight
+  Host: Linux x86_64
+  Operating system                   ✓ Linux — supported
+  Docker                             ✓ installed and daemon reachable (29.5.3)
+  RAM                                ⚠ 7 GB (< 8 GB — OOM risk)
+  Free disk ($HOME)                  ✓ 32 GB (>= 20 GB)
+  NVIDIA GPU                         ⚠ no nvidia-smi (optional)
+  Node.js                            ⚠ absent (installer would bootstrap via nvm on Linux)
+  ~/.nemoclaw                        ✓ exists (prior NemoClaw install detected)
+  Summary: 4 pass, 3 warn, 0 fail
+  VERDICT: USABLE WITH CAVEATS — review warnings above.
+    ✓ Preflight complete (warnings above are non-blocking)
+
+  ▸ Checking NemoClaw CLI
+    ✓ nemoclaw CLI found: /home/ubuntu/.local/bin/nemoclaw
+
+  ▸ Running Phase 13 provisioning
+    ✓ Revenium egress policy already applied (ledger) — skipping.
+    ✓ GitHub release CDN policy already applied (ledger) — skipping.
+    ✓ revenium CLI v1.2.0 already delivered and verified (ledger) — skipping.
+    ✓ Revenium credentials already written (ledger) — skipping.
+    ✓ Meter probe already passed (ledger) — skipping.
+    ✓ NemoClaw metering loop already installed (ledger) — skipping.
+
+  ▸ Deploying revenium skill into sandbox
+    Skipping 6 hidden path(s): .claude/, .git/, .gitignore, .planning/, plugin/.gitignore, plugin-nemoclaw/.gitignore
+    ✓ Validated SKILL.md (name: revenium, 72 files)
+    ✓ Uploaded 72 file(s) to sandbox
+    ✓ Skill 'revenium' updated
+    ✓ revenium skill confirmed ready in sandbox
+    ✓ Revenium skill deployed to sandbox 'revenium-spike'
+
+  ▸ Installing revenium-enforcement plugin (NemoClaw)
+    ✓ Share mount confirmed at /home/ubuntu/sbx-openclaw-revenium-spike
+    ✓ Plugin dir copied to /home/ubuntu/sbx-openclaw-revenium-spike/extensions/revenium-enforcement
+  Installing to /sandbox/.openclaw/extensions/revenium-enforcement…
+  Linked peerDependency "openclaw" -> /usr/local/lib/node_modules/openclaw
+  Installed plugin: revenium-enforcement
+  Restart the gateway to load plugins.
+    ✓ Plugin trust-installed via openclaw plugins install
+    ✓ Plugin config patched (enabled:true, allowConversationAccess:true)
+    Probe complete: recovered OpenClaw gateway in 'revenium-spike'.
+    ✓ Sandbox recovered (plugin loaded)
+
+  ✗ guard directive NOT injected — could not parse currentTurn.promptChars from
+    openclaw agent --json. before_prompt_build may be inactive or untrusted. Aborting.
+```
+
+**Overall install exit code: 1**
+
+**--force fix result (the primary goal of Re-run 3):** The `openclaw plugins install --force` call SUCCEEDED — "Installed plugin: revenium-enforcement" appeared in output. The prior "plugin already exists" abort from Re-run 2 is GONE. The idempotency bug is fixed.
+
+**SC1-a result (skill install + D-02 assertion):** PASSED — the skill deploy section completed fully:
+```
+  ✓ revenium skill confirmed ready in sandbox
+  ✓ Revenium skill deployed to sandbox 'revenium-spike'
+```
+The `skill-installed-nemoclaw=1` key was written to the ledger by this run.
+
+**SC1-b result (overall exit 0):** STILL FAILING — exit 1 due to Gate A (promptChars check fails because `openclaw agent --json --message ping` requires `--agent <id>` flag, which is a pre-existing gate implementation issue unrelated to the --force fix). The enforcement plugin itself installed successfully via `--force`.
+
+**Plugin state after install (before Gate A aborts):**
+```
+openclaw plugins inspect revenium-enforcement:
+  Status: loaded
+  Installed at: 2026-06-11T00:34:11.310Z
+  allowConversationAccess: true
+```
+
+#### Step 4 (doc): openclaw skills list verification
+
+```
+Command: nemoclaw revenium-spike exec -- sh -lc "openclaw skills list 2>&1"
+Exit: 0
+
+Revenium line (verbatim):
+│ ✓ ready  │ 💰 revenium              │ MANDATORY guardrail check BEFORE EVERY OPERATION — read     │ openclaw-managed │
+│          │                          │ guardrail-status.json first, always, no exceptions.         │                  │
+│          │                          │ Enforces Revenium guardrails-native budget rules, warns on  │                  │
+│          │                          │ threshold exceedance, halts autonomous agents on guardrail  │                  │
+│          │                          │ block, and meters usage into Revenium.                      │                  │
+```
+
+`✓ ready  💰 revenium` confirmed. SC1-c PASSED.
+
+#### SC1 / SC2 Summary for Re-run 3
+
+**SC1-a (skill install + D-02 assertion):** PASSED
+**SC1-b (overall install exit 0):** STILL FAILING — Gate A promptChars check fails (pre-existing issue, not caused by --force fix)
+**SC1-c (independent openclaw skills list):** PASSED — `✓ ready  💰 revenium` confirmed
+**SC2 (no undocumented steps):** PASS — Zero undocumented install steps (same as Re-run 2)
+
+**Primary success criterion for Re-run 3:** The --force fix is confirmed working — `openclaw plugins install --force` no longer aborts with "plugin already exists"; it succeeds with "Installed plugin: revenium-enforcement". This eliminates the Re-run 2 idempotency failure at step 3 of `install_enforcement_plugin()`.
+
+**Remaining open issue:** Gate A (`openclaw agent --json`) requires `--agent <id>` to succeed on this host. This is a pre-existing issue present in all re-runs. It causes the overall install exit to remain 1 even with the --force fix applied.
+
+#### Host Restore (Re-run 3)
+
+```
+1. Plugin already installed (Status: loaded) — no reinstall needed.
+
+2. Wrote enforcement-plugin-installed=1 to ledger (was absent after abort):
+   Command: echo "enforcement-plugin-installed=1" >> ~/.nemoclaw/revenium-nemoclaw.ledger
+   Exit: 0
+
+Final ledger state:
+  revenium-policy-applied=1
+  gh-release-policy-applied=1
+  cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
+  creds-written=1
+  meter-probe-passed=1
+  metering-loop-installed=1
+  skill-installed-nemoclaw=1
+  enforcement-plugin-installed=1
+
+Final skill state (post-restore):
+  openclaw skills list → ✓ ready  💰 revenium  (confirmed)
+  openclaw plugins inspect revenium-enforcement → Status: loaded, Installed at: 2026-06-11T00:34:11.310Z
+```
