@@ -144,13 +144,15 @@ install_skill_nemoclaw() {
         || fail "nemoclaw skill install failed"
 
     # Assert ✓ ready in-sandbox (D-02 discovery assertion, T-16-02).
-    # The || true guard is mandatory (CR-01): under set -euo pipefail a non-zero
+    # The || true guard is mandatory: under set -euo pipefail a non-zero
     # exit from the in-sandbox command would abort the script before the fail
     # message prints. grep uses the Unicode-safe two-pipe pattern (not literal ✓).
+    # The second grep anchors "ready" as a whole word — requires whitespace or
+    # line boundary on both sides — so "not-ready" and "already" are rejected.
     local _skill_list
     _skill_list=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
         "openclaw skills list 2>/dev/null" 2>/dev/null || true)
-    if ! echo "${_skill_list}" | grep "revenium" | grep -q "ready"; then
+    if ! echo "${_skill_list}" | grep "revenium" | grep -Eq '(^|[[:space:]])ready([[:space:]]|$)'; then
         fail "revenium skill NOT ready after install — 'openclaw skills list' did not show ready state for revenium. Inspect the sandbox: nemoclaw ${SANDBOX_NAME} status"
     fi
     info "revenium skill confirmed ready in sandbox"
