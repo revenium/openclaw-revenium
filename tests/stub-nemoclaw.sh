@@ -128,6 +128,21 @@ if [[ "${2:-}" == "skill" && "${3:-}" == "install" ]]; then
   exit "${STUB_NEMOCLAW_SKILL_INSTALL_RC:-0}"
 fi
 
+# status — nemoclaw <sandbox> status
+# Prints a status block with an `Id:` (the sandbox instance UUID), which
+# post-install-nemoclaw.sh greps to scope the provisioning ledger per-sandbox.
+#   STUB_NEMOCLAW_SANDBOX_UUID  (default a fixed zero UUID) — the id to emit.
+#   STUB_NEMOCLAW_STATUS_NO_ID  (set/non-empty) — omit the Id line so the script
+#                               falls back to scoping the ledger by sandbox name.
+if [[ "${2:-}" == "status" ]]; then
+  echo "  Sandbox: ${1:-unknown}"
+  if [[ -z "${STUB_NEMOCLAW_STATUS_NO_ID:-}" ]]; then
+    echo "  Id: ${STUB_NEMOCLAW_SANDBOX_UUID:-00000000-0000-0000-0000-000000000000}"
+  fi
+  echo "  Name: ${1:-unknown}"
+  exit 0
+fi
+
 # exec — dispatch based on the exec payload content.
 # Detects payload type by string-comparing captured argv with grep -qF.
 if [[ "${2:-}" == "exec" ]]; then

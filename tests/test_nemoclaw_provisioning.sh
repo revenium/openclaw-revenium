@@ -922,6 +922,125 @@ else
 fi
 
 # ===========================================================================
+# GROUP M: per-sandbox-instance ledger scoping (multi-sandbox correctness)
+#
+#   The provisioning ledger is scoped to the sandbox's UUID (from
+#   `nemoclaw <name> status`), so a second/recreated sandbox is NOT skipped by a
+#   stale host-global ledger. Verified WITHOUT an explicit LEDGER_FILE override so
+#   the script computes the per-sandbox path itself.
+#
+#   M-a: UUID-A + a fully-seeded per-UUID-A ledger → idempotent skip; the
+#        host-global revenium-nemoclaw.ledger is NOT created (isolation).
+#   M-b: a DIFFERENT UUID-B + its own seeded ledger → skip via the UUID-B ledger
+#        (proves the ledger filename tracks the sandbox UUID).
+#   M-c: no Id in status → fall back to scoping by sandbox NAME.
+# ===========================================================================
+echo ""
+echo "--- GROUP M: per-sandbox-instance ledger scoping ---"
+
+# run_provision variant that does NOT set LEDGER_FILE, so the script resolves the
+# per-sandbox ledger path itself (the behavior under test).
+run_provision_no_ledger() {
+  local home_dir="$1"
+  local argv_file="$2"
+  shift 2
+  local stub_probe="${home_dir}/stub-probe-host-compat.sh"
+  STUB_NEMOCLAW_ARGV_FILE="${argv_file}" \
+  HOME="${home_dir}" \
+  PATH="${home_dir}/.local/bin:${PATH}" \
+  REVENIUM_SANDBOX_NAME="${REVENIUM_SANDBOX_NAME:-test-sandbox}" \
+  REVENIUM_API_KEY="${REVENIUM_API_KEY:-test-key}" \
+  PROBE_SCRIPT="${stub_probe}" \
+  "$@" \
+  bash "${PROVISION_SH}" 2>&1
+}
+
+_seed_full() {
+  cat >> "$1" << 'SEED_FULL'
+revenium-policy-applied=1
+gh-release-policy-applied=1
+cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
+creds-written=1
+meter-probe-passed=1
+cli-delivered-host=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
+metering-loop-installed=1
+skill-installed-nemoclaw=1
+enforcement-plugin-installed=1
+SEED_FULL
+}
+
+# --- GROUP M-a: per-UUID ledger honored; global ledger not used ---
+echo ""
+echo "  -- M-a: ledger scoped to sandbox UUID-A (seeded → idempotent skip) --"
+
+UUID_A="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+TMP_HOME_Ma=$(make_home)
+ARGV_Ma=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ma.XXXXXX")
+TMP_HOMES+=("${ARGV_Ma}")
+_seed_full "${TMP_HOME_Ma}/.nemoclaw/revenium-nemoclaw-${UUID_A}.ledger"
+
+exit_code_ma=0
+output_ma=$(STUB_NEMOCLAW_SANDBOX_UUID="${UUID_A}" \
+            run_provision_no_ledger "${TMP_HOME_Ma}" "${ARGV_Ma}" 2>&1) || exit_code_ma=$?
+
+if [[ "${exit_code_ma}" -eq 0 ]] \
+   && echo "${output_ma}" | grep -qi "already provisioned" \
+   && echo "${output_ma}" | grep -qiF "scoped to sandbox instance ${UUID_A}"; then
+  pass "GROUP-M-a: ledger scoped to sandbox UUID; seeded per-UUID ledger → idempotent skip"
+else
+  fail "GROUP-M-a: per-UUID ledger not honored (exit ${exit_code_ma})"
+fi
+if [[ ! -f "${TMP_HOME_Ma}/.nemoclaw/revenium-nemoclaw.ledger" ]]; then
+  pass "GROUP-M-a: host-global revenium-nemoclaw.ledger NOT created (per-sandbox isolation)"
+else
+  fail "GROUP-M-a: host-global ledger was created — per-sandbox scoping not applied"
+fi
+
+# --- GROUP M-b: a different UUID maps to a different ledger file ---
+echo ""
+echo "  -- M-b: different sandbox UUID-B → its own ledger (filename tracks UUID) --"
+
+UUID_B="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+TMP_HOME_Mb=$(make_home)
+ARGV_Mb=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-mb.XXXXXX")
+TMP_HOMES+=("${ARGV_Mb}")
+_seed_full "${TMP_HOME_Mb}/.nemoclaw/revenium-nemoclaw-${UUID_B}.ledger"
+
+exit_code_mb=0
+output_mb=$(STUB_NEMOCLAW_SANDBOX_UUID="${UUID_B}" \
+            run_provision_no_ledger "${TMP_HOME_Mb}" "${ARGV_Mb}" 2>&1) || exit_code_mb=$?
+
+if [[ "${exit_code_mb}" -eq 0 ]] \
+   && echo "${output_mb}" | grep -qiF "scoped to sandbox instance ${UUID_B}" \
+   && [[ -f "${TMP_HOME_Mb}/.nemoclaw/revenium-nemoclaw-${UUID_B}.ledger" ]]; then
+  pass "GROUP-M-b: ledger filename tracks the sandbox UUID (B != A)"
+else
+  fail "GROUP-M-b: ledger did not track UUID-B (exit ${exit_code_mb})"
+fi
+
+# --- GROUP M-c: no Id in status → fall back to scoping by sandbox name ---
+echo ""
+echo "  -- M-c: status has no Id → ledger scoped by sandbox name (fallback) --"
+
+TMP_HOME_Mc=$(make_home)
+ARGV_Mc=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-mc.XXXXXX")
+TMP_HOMES+=("${ARGV_Mc}")
+# Default sandbox name in run_provision_no_ledger is "test-sandbox".
+_seed_full "${TMP_HOME_Mc}/.nemoclaw/revenium-nemoclaw-test-sandbox.ledger"
+
+exit_code_mc=0
+output_mc=$(STUB_NEMOCLAW_STATUS_NO_ID=1 \
+            run_provision_no_ledger "${TMP_HOME_Mc}" "${ARGV_Mc}" 2>&1) || exit_code_mc=$?
+
+if [[ "${exit_code_mc}" -eq 0 ]] \
+   && echo "${output_mc}" | grep -qi "scoping the ledger by name" \
+   && [[ -f "${TMP_HOME_Mc}/.nemoclaw/revenium-nemoclaw-test-sandbox.ledger" ]]; then
+  pass "GROUP-M-c: falls back to name-scoped ledger when no sandbox id is available"
+else
+  fail "GROUP-M-c: name fallback not applied (exit ${exit_code_mc})"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

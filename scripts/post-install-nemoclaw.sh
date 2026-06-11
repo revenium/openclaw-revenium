@@ -40,8 +40,11 @@ PROBE_SCRIPT="${PROBE_SCRIPT:-${SCRIPT_DIR}/probe-host-compat.sh}"
 
 # Phase 13 provisioning constants (D-02, D-07)
 # LEDGER_FILE may be overridden by tests or operators (do not hardcode the path
-# in ledger_has/ledger_set — always read the variable).
-LEDGER_FILE="${LEDGER_FILE:-${HOME}/.nemoclaw/revenium-nemoclaw.ledger}"
+# in ledger_has/ledger_set — always read the variable). If left unset it is
+# computed PER-SANDBOX-INSTANCE after sandbox resolution (see section 3b) so a
+# second sandbox — or a destroyed+recreated one — gets its own ledger instead of
+# being skipped wholesale by a stale host-global ledger.
+LEDGER_FILE="${LEDGER_FILE:-}"
 REVENIUM_CLI_VERSION="v1.2.0"
 REVENIUM_CLI_TARBALL_SHA256="cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67"
 REVENIUM_CLI_URL="https://github.com/revenium/revenium-cli/releases/download/${REVENIUM_CLI_VERSION}/revenium-cli_${REVENIUM_CLI_VERSION#v}_linux_amd64.tar.gz"
@@ -607,6 +610,32 @@ SANDBOX_NAME="${REVENIUM_SANDBOX_NAME:-}"
 if [[ -z "${SANDBOX_NAME}" ]]; then
     fail "REVENIUM_SANDBOX_NAME is not set. Export the target sandbox name before running the install, e.g.: export REVENIUM_SANDBOX_NAME=revenium-spike"
 fi
+
+# ---------------------------------------------------------------------------
+# 3b. Per-sandbox ledger scoping (multi-sandbox correctness).
+# The provisioning ledger records which steps are done. It lives on the HOST and
+# survives sandbox destruction, so a single host-global ledger wrongly skips ALL
+# provisioning for a second (or recreated) sandbox — leaving it with no skill,
+# plugin, creds, or metering. Scope the ledger to the sandbox's stable INSTANCE
+# id (the UUID from `nemoclaw <name> status`): a destroyed+recreated sandbox —
+# even reusing the same name — gets a new UUID and therefore a fresh ledger, so
+# it re-provisions from scratch. Fall back to the sandbox NAME if the id cannot
+# be resolved (degraded but still per-sandbox). An explicit LEDGER_FILE
+# (tests/operators) always wins and skips this resolution.
+# ---------------------------------------------------------------------------
+if [[ -z "${LEDGER_FILE}" ]]; then
+    SANDBOX_UUID="$(nemoclaw "${SANDBOX_NAME}" status 2>/dev/null \
+        | grep -aoiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' \
+        | head -1 || true)"
+    if [[ -n "${SANDBOX_UUID}" ]]; then
+        LEDGER_FILE="${HOME}/.nemoclaw/revenium-nemoclaw-${SANDBOX_UUID}.ledger"
+        info "Provisioning ledger scoped to sandbox instance ${SANDBOX_UUID}"
+    else
+        warn "Could not resolve sandbox instance id for '${SANDBOX_NAME}' — scoping the ledger by name. A destroy+recreate of the same name may require clearing the ledger."
+        LEDGER_FILE="${HOME}/.nemoclaw/revenium-nemoclaw-${SANDBOX_NAME}.ledger"
+    fi
+fi
+mkdir -p "$(dirname "${LEDGER_FILE}")"
 
 # ---------------------------------------------------------------------------
 # 4. Phase 13 provisioning — ordered sequence (D-03, D-07)
