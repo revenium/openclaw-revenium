@@ -70,11 +70,13 @@ This runs `scripts/post-install-nemoclaw.sh` which, in order:
 4. Fetches the prebuilt `revenium` CLI tarball in-sandbox, sha256-verifies it, and installs it to `/sandbox/.local/bin/revenium`
 5. Writes your credentials to `/sandbox/.config/revenium/config.yaml` (chmod 600; key written as the `api-key:` field — never on a command line)
 6. Runs a ledger-gated authenticated meter probe (`--task-type install-smoke-test`) to confirm egress + credentials are working
-7. Installs the host-side metering loop (host cron reads OpenClaw session JSONL logs over a `nemoclaw share mount` SSHFS mount — no per-tick `nemoclaw exec`, no in-sandbox cron daemon)
-8. Deploys the revenium skill into the sandbox via `nemoclaw <name> skill install`
-9. Installs and validates the `revenium-enforcement` plugin (the per-turn guardrail directive enforcer)
+7. Installs the `revenium` CLI **on the host** (`~/.local/bin/revenium`) — the metering cron runs `report.sh` on the host and needs it (skipped if you already have `revenium` on your PATH)
+8. Installs the host-side metering loop (host cron reads OpenClaw session JSONL logs over a `nemoclaw share mount` SSHFS mount — no per-tick `nemoclaw exec`, no in-sandbox cron daemon)
+9. Deploys the revenium skill into the sandbox via `nemoclaw <name> skill install`
+10. Installs and validates the `revenium-enforcement` plugin (the per-turn guardrail directive enforcer)
+11. **Creates a Revenium budget guardrail rule** and writes its `ruleIds` into the sandbox `config.json` — **only if `REVENIUM_BUDGET_LIMIT` + `REVENIUM_BUDGET_PERIOD` are set** (see the export block in Step 2). Without them this step is skipped and no budget is created (metering still works); the rule appears in Revenium under your **Team**.
 
-All steps are **ledger-gated** — re-running the script is safe and skips already-completed steps. The ledger lives at `~/.nemoclaw/revenium-nemoclaw.ledger`.
+All steps are **ledger-gated, per sandbox** — re-running the script is safe and skips already-completed steps. The ledger lives at `~/.nemoclaw/revenium-nemoclaw-<sandbox-uuid>.ledger` (a destroyed+recreated sandbox gets a fresh ledger and re-provisions).
 
 > **~11 min on first run** — most of this is the NemoClaw bootstrap (step 1). Subsequent re-runs are near-instant (every step is skipped via the ledger).
 
