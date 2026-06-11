@@ -324,6 +324,60 @@ install_enforcement_plugin() {
     info "Enforcement plugin installed and validated (all gates passed)"
 }
 
+# provision_budget_guardrails — create the Revenium budget guardrail rule at install
+# time and write its ruleIds into the IN-SANDBOX config.json, so guardrail-check.sh
+# (host cron over the mount) has rules to enforce and the agent sees a configured
+# budget. The standalone path creates rules via the agent-guided interactive flow,
+# which does not run inside a NemoClaw sandbox; this is the non-interactive
+# equivalent. Gated on REVENIUM_BUDGET_LIMIT + REVENIUM_BUDGET_PERIOD — without them,
+# budget setup is left to the operator (run setup-guardrails.sh afterward). Runs the
+# unmodified setup-guardrails.sh on the host with OPENCLAW_HOME=<mount> so config.json
+# lands in the sandbox. Ledger key: budget-rules-created.
+provision_budget_guardrails() {
+    if ledger_has "budget-rules-created"; then
+        info "Budget guardrail rules already created (ledger) — skipping."
+        return 0
+    fi
+
+    if [[ -z "${REVENIUM_BUDGET_LIMIT:-}" || -z "${REVENIUM_BUDGET_PERIOD:-}" ]]; then
+        info "Budget guardrails not auto-created — set REVENIUM_BUDGET_LIMIT and REVENIUM_BUDGET_PERIOD (e.g. 100 MONTHLY) to create a budget at install time, or run setup-guardrails.sh (--hard-limit/--period) afterward. Metering is unaffected."
+        return 0
+    fi
+
+    step "Creating Revenium budget guardrail rule (limit=${REVENIUM_BUDGET_LIMIT}, period=${REVENIUM_BUDGET_PERIOD})"
+
+    # Establish the SSHFS mount so setup-guardrails.sh writes config.json into the
+    # IN-SANDBOX skill dir (OPENCLAW_HOME=mount → STATE_DIR=mount/skills/revenium).
+    local MNT
+    MNT="${HOME}/sbx-openclaw-${SANDBOX_NAME}"
+    mkdir -p "${MNT}"
+    if ! mountpoint -q "${MNT}" 2>/dev/null || [[ ! -d "${MNT}/skills" ]]; then
+        nemoclaw "${SANDBOX_NAME}" share mount /sandbox/.openclaw "${MNT}" \
+            || fail "mount failed — cannot write budget config into sandbox '${SANDBOX_NAME}'."
+    fi
+
+    local shadow_flag=""
+    [[ -n "${REVENIUM_BUDGET_SHADOW:-}" ]] && shadow_flag="--shadow-mode"
+
+    # setup-guardrails.sh creates the rule via the host `revenium` CLI (authenticated
+    # by the exported REVENIUM_* env) and writes ruleIds to config.json under
+    # OPENCLAW_HOME/skills/revenium. It self-bootstraps config.json and is idempotent
+    # (refuses if ruleIds already present), so the ledger gate above is the primary guard.
+    OPENCLAW_HOME="${MNT}" \
+    REVENIUM_BUDGET_LABEL="${REVENIUM_BUDGET_LABEL:-${SANDBOX_NAME}}" \
+    bash "${SCRIPT_DIR}/setup-guardrails.sh" \
+        --hard-limit "${REVENIUM_BUDGET_LIMIT}" --period "${REVENIUM_BUDGET_PERIOD}" ${shadow_flag} \
+        || fail "setup-guardrails.sh failed — budget rule not created. Verify REVENIUM_API_KEY and that the host 'revenium' CLI is authenticated."
+
+    # Confirm ruleIds actually landed in the in-sandbox config.json.
+    if ! grep -q '"ruleIds"' "${MNT}/skills/revenium/config.json" 2>/dev/null; then
+        fail "budget rule creation reported success but ruleIds not found in sandbox config.json (${MNT}/skills/revenium/config.json)."
+    fi
+
+    ledger_set "budget-rules-created" "1"
+    info "Budget guardrail rule created; ruleIds written to the sandbox config.json"
+}
+
 # ---------------------------------------------------------------------------
 # Phase 13 provisioning functions
 # ---------------------------------------------------------------------------
@@ -659,6 +713,7 @@ deliver_revenium_cli_host
 install_metering_loop
 install_skill_nemoclaw         # D-08: deploy skill first (marker chain precondition)
 install_enforcement_plugin     # D-05/D-09/D-10/D-11: plugin + validation gate
+provision_budget_guardrails    # create budget rule + write in-sandbox config.json (env-gated)
 
 # ---------------------------------------------------------------------------
 # Success banner

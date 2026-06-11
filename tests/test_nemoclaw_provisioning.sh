@@ -1041,6 +1041,46 @@ else
 fi
 
 # ===========================================================================
+# GROUP N: budget guardrail provisioning gate (env-driven)
+#
+#   provision_budget_guardrails() creates the Revenium budget rule + writes the
+#   in-sandbox config.json ONLY when REVENIUM_BUDGET_LIMIT + REVENIUM_BUDGET_PERIOD
+#   are set. Without them it must skip cleanly (no rule, no ledger key) and tell
+#   the operator how to set a budget — metering is unaffected.
+#
+#   N-a: no budget env → skips with guidance, budget-rules-created NOT written.
+#   (The create path is covered by live validation — it requires a real/stubbed
+#    `revenium guardrails budget-rules create`; see the host live-verify.)
+# ===========================================================================
+echo ""
+echo "--- GROUP N: budget guardrail provisioning gate (env-driven) ---"
+
+echo ""
+echo "  -- N-a: no REVENIUM_BUDGET_* → budget step skips cleanly --"
+
+TMP_HOME_Na=$(make_home)
+ARGV_Na=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-na.XXXXXX")
+TMP_HOMES+=("${ARGV_Na}")
+LEDGER_Na="${TMP_HOME_Na}/.nemoclaw/revenium-nemoclaw.ledger"
+# Seed everything through the enforcement plugin so the run reaches
+# provision_budget_guardrails; budget-rules-created is intentionally NOT seeded.
+_seed_full "${LEDGER_Na}"
+
+exit_code_na=0
+output_na=$(run_provision "${TMP_HOME_Na}" "${ARGV_Na}" 2>&1) || exit_code_na=$?
+
+if [[ "${exit_code_na}" -eq 0 ]] && echo "${output_na}" | grep -qi "Budget guardrails not auto-created"; then
+  pass "GROUP-N-a: budget step skips with guidance when REVENIUM_BUDGET_* unset"
+else
+  fail "GROUP-N-a: budget step did not skip cleanly without budget env (exit ${exit_code_na})"
+fi
+if ! grep -qE "^budget-rules-created=" "${LEDGER_Na}" 2>/dev/null; then
+  pass "GROUP-N-a: budget-rules-created ledger key NOT written on skip"
+else
+  fail "GROUP-N-a: budget-rules-created wrongly written when no budget configured"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
