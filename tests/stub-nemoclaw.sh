@@ -49,6 +49,21 @@
 #
 #   STUB_NEMOCLAW_SKILLS_LIST_OUTPUT (default "✓ ready  💰 revenium")
 #     Override the default output for the `openclaw skills list` exec path.
+#
+# Enforcement-plugin gate switches (Gate A / Gate B — v2026.5.22 probe shapes):
+#
+#   STUB_NEMOCLAW_PROMPT_CHARS (default "1637")
+#     promptChars value echoed by the `openclaw agent --json` probe (Gate A).
+#     Set below 1500 (e.g. "649") to simulate the no-injection baseline so Gate A
+#     fails.
+#
+#   STUB_NEMOCLAW_PLUGIN_STATUS (default "loaded")
+#     The `Status:` value echoed by `openclaw plugins inspect` (Gate B). Set to a
+#     non-"loaded" value (e.g. "error") to simulate an untrusted/inert plugin.
+#
+#   STUB_NEMOCLAW_PLUGIN_CONV_ACCESS (default "true")
+#     The `allowConversationAccess:` value echoed by `openclaw plugins inspect`
+#     (Gate B). Set "false" to simulate allowConversationAccess not taking effect.
 
 # No -e: we manage exits explicitly per subcommand dispatch
 set -uo pipefail
@@ -167,26 +182,49 @@ if [[ "${2:-}" == "exec" ]]; then
     fi
   fi
 
-  # --- openclaw agent --json (Gate A: promptChars check for enforcement plugin) ---
-  # Pattern: payload contains "openclaw agent" AND "--json" (literal dashes)
-  # Returns a stub JSON body with promptChars above the 1500 threshold so Gate A
-  # passes in the hermetic suite (no live sandbox needed for the --force idempotency test).
+  # --- openclaw agents list (Gate A: derive the default agent id) ---
+  # Pattern: payload contains "openclaw agents list" (note the plural "agents").
+  # Mirrors v2026.5.22 output so install_enforcement_plugin()'s awk derivation
+  # resolves the "(default)" agent. Must precede the "openclaw agent" --json
+  # handler below ("openclaw agents list" contains "openclaw agent" as a
+  # substring but never "--json", so order is defensive clarity).
   # SECURITY: string-compare only (T-16-SC).
-  if grep -qF "openclaw agent" "${_payload_file}" && grep -qF -- "--json" "${_payload_file}"; then
+  if grep -qF "openclaw agents list" "${_payload_file}"; then
     rm -f "${_payload_file}"
-    echo '{"currentTurn":{"promptChars":1637,"completionChars":0}}'
+    echo "Agents:"
+    echo "- main (default)"
     exit 0
   fi
 
-  # --- openclaw plugins inspect (Gate B: before_prompt_build + before_agent_finalize) ---
-  # Pattern: payload contains "openclaw plugins inspect"
-  # Returns a stub inspect output confirming both hooks are active.
+  # --- openclaw agent --json (Gate A: promptChars check for enforcement plugin) ---
+  # Pattern: payload contains "openclaw agent" AND "--json" (literal dashes).
+  # The real v2026.5.22 probe is `openclaw agent --agent <id> --json --message ping`;
+  # this matches regardless of the --agent target. Returns a stub JSON body with
+  # promptChars above the 1500 threshold so Gate A passes in the hermetic suite.
+  # STUB_NEMOCLAW_PROMPT_CHARS (default 1637) overrides the value for negative tests.
+  # SECURITY: string-compare only (T-16-SC).
+  if grep -qF "openclaw agent" "${_payload_file}" && grep -qF -- "--json" "${_payload_file}"; then
+    rm -f "${_payload_file}"
+    echo "{\"currentTurn\":{\"promptChars\":${STUB_NEMOCLAW_PROMPT_CHARS:-1637},\"completionChars\":0}}"
+    exit 0
+  fi
+
+  # --- openclaw plugins inspect (Gate B: loaded + allowConversationAccess) ---
+  # Pattern: payload contains "openclaw plugins inspect".
+  # Mirrors v2026.5.22 inspect output: "Status: loaded" + a Policy block with
+  # "allowConversationAccess: true" (hook names are NO LONGER enumerated in this
+  # OpenClaw version — Gate B asserts loaded + allowConversationAccess instead).
+  # Switches for negative tests:
+  #   STUB_NEMOCLAW_PLUGIN_STATUS       (default "loaded") — set e.g. "error" to fail Gate B's load check
+  #   STUB_NEMOCLAW_PLUGIN_CONV_ACCESS  (default "true")   — set "false" to fail Gate B's access check
   # SECURITY: string-compare only (T-16-SC).
   if grep -qF "openclaw plugins inspect" "${_payload_file}"; then
     rm -f "${_payload_file}"
-    echo "Plugin: revenium-enforcement"
-    echo "  Status: loaded"
-    echo "  Hooks: before_prompt_build, before_agent_finalize"
+    echo "Revenium Enforcement"
+    echo "id: revenium-enforcement"
+    echo "Status: ${STUB_NEMOCLAW_PLUGIN_STATUS:-loaded}"
+    echo "Policy:"
+    echo "  allowConversationAccess: ${STUB_NEMOCLAW_PLUGIN_CONV_ACCESS:-true}"
     exit 0
   fi
 

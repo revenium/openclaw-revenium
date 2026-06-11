@@ -652,6 +652,126 @@ else
 fi
 
 # ===========================================================================
+# GROUP K: enforcement-plugin Gate A/B (v2026.5.22 probe-shape fixes, NCENF-01)
+#
+#   K-a: Gate A passes the default agent via --agent (routing target) so
+#        `openclaw agent --json` runs on v2026.5.22 (without --agent it errors
+#        "No target session selected" and the probe false-fails). Assert
+#        "--agent" appears in the captured argv for the agent probe, and the
+#        install completes (enforcement-plugin-installed ledger key written —
+#        Gate A + Gate B both pass with the v2026.5.22 stub shapes).
+#   K-b: Gate A fails closed when promptChars is below the 1500 threshold
+#        (no-injection baseline) — install exits non-zero.
+#   K-c: Gate B fails closed when `plugins inspect` does not show Status: loaded.
+#   K-d: Gate B fails closed when allowConversationAccess is not true.
+#
+# All reach install_enforcement_plugin() via _seed_through_skill + mount dirs.
+# ===========================================================================
+echo ""
+echo "--- GROUP K: enforcement-plugin Gate A/B (v2026.5.22 probe-shape fixes) ---"
+
+# --- GROUP K-a: Gate A uses --agent routing target; install completes ---
+echo ""
+echo "  -- K-a: Gate A probe uses --agent routing target (v2026.5.22 fix) --"
+
+TMP_HOME_Ka=$(make_home)
+ARGV_Ka=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ka.XXXXXX")
+TMP_HOMES+=("${ARGV_Ka}")
+LEDGER_Ka="${TMP_HOME_Ka}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_through_skill "${LEDGER_Ka}"
+_MNT_Ka="${TMP_HOME_Ka}/sbx-openclaw-${REVENIUM_SANDBOX_NAME:-test-sandbox}"
+mkdir -p "${_MNT_Ka}/extensions" "${_MNT_Ka}/markers"
+touch "${_MNT_Ka}/markers/stub-gate-d-test.jsonl"
+
+exit_code_ka=0
+output_ka=$(run_provision "${TMP_HOME_Ka}" "${ARGV_Ka}" 2>&1) || exit_code_ka=$?
+
+# Assert: "--agent" present on the openclaw agent --json probe in captured argv
+if [[ -f "${ARGV_Ka}" ]] && grep -qF -- "--agent" "${ARGV_Ka}" 2>/dev/null \
+   && grep -qF "openclaw agent" "${ARGV_Ka}" 2>/dev/null \
+   && grep -qF -- "--json" "${ARGV_Ka}" 2>/dev/null; then
+  pass "GROUP-K-a: Gate A probe passes --agent routing target (no 'No target session' false-fail)"
+else
+  fail "GROUP-K-a: '--agent' NOT in captured argv for openclaw agent --json — Gate A would false-fail on v2026.5.22"
+fi
+
+# Assert: install completes (enforcement-plugin-installed ledger key written)
+if [[ "${exit_code_ka}" -eq 0 ]] && grep -qE "^enforcement-plugin-installed=" "${LEDGER_Ka}" 2>/dev/null; then
+  pass "GROUP-K-a: install completes — Gate A + Gate B pass with v2026.5.22 probe shapes"
+else
+  fail "GROUP-K-a: install did not complete (exit ${exit_code_ka}) — gates failed against v2026.5.22 stub"
+fi
+
+# --- GROUP K-b: Gate A fails closed when promptChars below threshold ---
+echo ""
+echo "  -- K-b: Gate A fails closed when promptChars < 1500 (no-injection baseline) --"
+
+TMP_HOME_Kb=$(make_home)
+ARGV_Kb=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-kb.XXXXXX")
+TMP_HOMES+=("${ARGV_Kb}")
+LEDGER_Kb="${TMP_HOME_Kb}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_through_skill "${LEDGER_Kb}"
+_MNT_Kb="${TMP_HOME_Kb}/sbx-openclaw-${REVENIUM_SANDBOX_NAME:-test-sandbox}"
+mkdir -p "${_MNT_Kb}/extensions" "${_MNT_Kb}/markers"
+touch "${_MNT_Kb}/markers/stub-gate-d-test.jsonl"
+
+exit_code_kb=0
+output_kb=$(STUB_NEMOCLAW_PROMPT_CHARS=649 \
+            run_provision "${TMP_HOME_Kb}" "${ARGV_Kb}" 2>&1) || exit_code_kb=$?
+
+if [[ "${exit_code_kb}" -ne 0 ]] && echo "${output_kb}" | grep -qi "promptChars=649"; then
+  pass "GROUP-K-b: Gate A fails closed (non-zero) when promptChars below threshold"
+else
+  fail "GROUP-K-b: Gate A did not fail closed on sub-threshold promptChars (exit ${exit_code_kb})"
+fi
+
+# --- GROUP K-c: Gate B fails closed when plugin not loaded ---
+echo ""
+echo "  -- K-c: Gate B fails closed when plugins inspect lacks 'Status: loaded' --"
+
+TMP_HOME_Kc=$(make_home)
+ARGV_Kc=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-kc.XXXXXX")
+TMP_HOMES+=("${ARGV_Kc}")
+LEDGER_Kc="${TMP_HOME_Kc}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_through_skill "${LEDGER_Kc}"
+_MNT_Kc="${TMP_HOME_Kc}/sbx-openclaw-${REVENIUM_SANDBOX_NAME:-test-sandbox}"
+mkdir -p "${_MNT_Kc}/extensions" "${_MNT_Kc}/markers"
+touch "${_MNT_Kc}/markers/stub-gate-d-test.jsonl"
+
+exit_code_kc=0
+output_kc=$(STUB_NEMOCLAW_PLUGIN_STATUS=error \
+            run_provision "${TMP_HOME_Kc}" "${ARGV_Kc}" 2>&1) || exit_code_kc=$?
+
+if [[ "${exit_code_kc}" -ne 0 ]] && echo "${output_kc}" | grep -qi "NOT loaded"; then
+  pass "GROUP-K-c: Gate B fails closed (non-zero) when plugin not loaded"
+else
+  fail "GROUP-K-c: Gate B did not fail closed when 'Status: loaded' absent (exit ${exit_code_kc})"
+fi
+
+# --- GROUP K-d: Gate B fails closed when allowConversationAccess not true ---
+echo ""
+echo "  -- K-d: Gate B fails closed when allowConversationAccess != true --"
+
+TMP_HOME_Kd=$(make_home)
+ARGV_Kd=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-kd.XXXXXX")
+TMP_HOMES+=("${ARGV_Kd}")
+LEDGER_Kd="${TMP_HOME_Kd}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_through_skill "${LEDGER_Kd}"
+_MNT_Kd="${TMP_HOME_Kd}/sbx-openclaw-${REVENIUM_SANDBOX_NAME:-test-sandbox}"
+mkdir -p "${_MNT_Kd}/extensions" "${_MNT_Kd}/markers"
+touch "${_MNT_Kd}/markers/stub-gate-d-test.jsonl"
+
+exit_code_kd=0
+output_kd=$(STUB_NEMOCLAW_PLUGIN_CONV_ACCESS=false \
+            run_provision "${TMP_HOME_Kd}" "${ARGV_Kd}" 2>&1) || exit_code_kd=$?
+
+if [[ "${exit_code_kd}" -ne 0 ]] && echo "${output_kd}" | grep -qi "allowConversationAccess not applied"; then
+  pass "GROUP-K-d: Gate B fails closed (non-zero) when allowConversationAccess != true"
+else
+  fail "GROUP-K-d: Gate B did not fail closed when allowConversationAccess false (exit ${exit_code_kd})"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

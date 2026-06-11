@@ -255,32 +255,47 @@ install_enforcement_plugin() {
     # value from the JSON field "promptChars": <N>. Gate B (openclaw plugins inspect)
     # remains the independent trust/active corroboration (T-15-RS-06).
     local _min_prompt_chars=1500  # conservative threshold; live evidence: 649 → 1637 (+988)
-    local _prompt_json _prompt_chars
+    local _default_agent _prompt_json _prompt_chars
+    # v2026.5.22: `openclaw agent` requires a routing target — with no existing
+    # session and no --agent it errors "No target session selected. Use --agent
+    # <id>" and emits no JSON (the probe then false-fails). Derive the default
+    # agent from the "(default)" row of `openclaw agents list` and pass it via
+    # --agent so the turn runs and returns currentTurn.promptChars. Fall back to
+    # "main" (the standard default agent) if the list can't be parsed.
+    _default_agent=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
+        "openclaw agents list 2>/dev/null" 2>/dev/null \
+        | awk '/\(default\)/ {print $2; exit}' || true)
+    _default_agent="${_default_agent:-main}"
     _prompt_json=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
-        "openclaw agent --json --message 'ping' 2>/dev/null" 2>/dev/null || true)
+        "openclaw agent --agent ${_default_agent} --json --message 'ping' 2>/dev/null" 2>/dev/null || true)
     _prompt_chars=$(echo "${_prompt_json}" | grep -oE '"promptChars"[[:space:]]*:[[:space:]]*[0-9]+' \
         | grep -oE '[0-9]+$' | head -1 || true)
     if [ -z "${_prompt_chars}" ]; then
-        fail "guard directive NOT injected — could not parse currentTurn.promptChars from openclaw agent --json. before_prompt_build may be inactive or untrusted. Aborting."
+        fail "guard directive NOT injected — could not parse currentTurn.promptChars from 'openclaw agent --agent ${_default_agent} --json'. before_prompt_build may be inactive or untrusted. Aborting."
     fi
     if [ "${_prompt_chars}" -lt "${_min_prompt_chars}" ]; then
         fail "guard directive NOT injected — currentTurn.promptChars=${_prompt_chars} below ${_min_prompt_chars}; before_prompt_build inactive or untrusted. Aborting."
     fi
-    info "Gate A passed: currentTurn.promptChars=${_prompt_chars} >= ${_min_prompt_chars} — directive injected"
+    info "Gate A passed: currentTurn.promptChars=${_prompt_chars} >= ${_min_prompt_chars} (agent '${_default_agent}') — directive injected"
 
-    # Gate B (D-09): confirm before_prompt_build AND before_agent_finalize are active.
-    # Missing before_prompt_build → plugin untrusted/inert.
-    # Missing before_agent_finalize → allowConversationAccess not applied.
+    # Gate B (D-09): confirm the plugin is loaded and conversation access is granted.
+    # v2026.5.22's `openclaw plugins inspect` no longer enumerates hook names
+    # (before_prompt_build/before_agent_finalize are absent from the output). It
+    # reports trust/load state as "Status: loaded" and the applied policy as
+    # "allowConversationAccess: true". Gate A already proved before_prompt_build
+    # fired (promptChars elevated); this gate confirms the plugin is trusted/loaded
+    # and that allowConversationAccess (required for the before_agent_finalize
+    # marker gate to register) took effect.
     local _inspect
     _inspect=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
         "openclaw plugins inspect revenium-enforcement 2>/dev/null" 2>/dev/null || true)
-    if ! echo "${_inspect}" | grep -q "before_prompt_build"; then
-        fail "before_prompt_build NOT active in plugins inspect — plugin untrusted or install incomplete. Aborting."
+    if ! echo "${_inspect}" | grep -qE "Status:[[:space:]]*loaded"; then
+        fail "revenium-enforcement NOT loaded ('Status: loaded' absent from plugins inspect) — plugin untrusted or install incomplete. Aborting."
     fi
-    if ! echo "${_inspect}" | grep -q "before_agent_finalize"; then
-        fail "before_agent_finalize NOT active in plugins inspect — allowConversationAccess may not have taken effect. Aborting."
+    if ! echo "${_inspect}" | grep -qE "allowConversationAccess:[[:space:]]*true"; then
+        fail "allowConversationAccess not applied (plugins inspect) — before_agent_finalize marker gate will not register. Aborting."
     fi
-    info "Gate B passed: before_prompt_build and before_agent_finalize confirmed active"
+    info "Gate B passed: revenium-enforcement loaded and allowConversationAccess:true confirmed"
 
     # Gate C (D-07): python3 preflight — write-marker.sh requires it.
     nemoclaw "${SANDBOX_NAME}" exec -- sh -lc "python3 --version" &>/dev/null \
