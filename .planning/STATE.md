@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: NemoClaw/OpenShell Support
-status: executing
-last_updated: "2026-06-10T19:28:03.087Z"
-last_activity: 2026-06-10
+status: verifying
+last_updated: "2026-06-11T01:30:29.364Z"
+last_activity: 2026-06-11
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 18
-  completed_plans: 17
-  percent: 80
+  completed_plans: 18
+  percent: 100
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-07 after v1.4 milestone start)
 
 **Core value:** Agents never silently blow through token budgets — every turn is guardrail-checked and the user keeps control past a threshold — and **every cost-incurring activity** (agent completions, guardrail enforcement events, and tool invocations) is metered and attributed by root session, task type, and agentic job, so spend is fully observable in Revenium with no blind spots.
-**Current focus:** Phase 16 — skill-deploy-docs
+**Current focus:** v1.4 milestone complete — all 5 phases done
 
 ## Current Position
 
-Phase: 16 (skill-deploy-docs) — EXECUTING
-Plan: 3 of 3
-Status: Ready to execute
-Last activity: 2026-06-10
+Phase: 16 (skill-deploy-docs) — COMPLETE
+Plan: 3 of 3 — COMPLETE
+Status: v1.4 milestone all plans executed; ready for /gsd-verify-work
+Last activity: 2026-06-11
 
 ## Performance Metrics
 
@@ -65,6 +65,7 @@ Last activity: 2026-06-10
 | Phase 15 P05 | 30 | 1 tasks | 2 files |
 | Phase 16 P01 | 8 | 2 tasks | 3 files |
 | Phase 16 P02 | 3 | 2 tasks | 2 files |
+| Phase 16 P03 | 120 | 2 tasks | 3 files |
 
 ## v1.4 Phase Map
 
@@ -104,6 +105,7 @@ Recent decisions affecting current work:
 - [Phase 11]: post-install must not auto-restart the gateway — install step documents restart requirement and emits note only (Pitfall 6)
 - [Phase ?]: B-01 RESOLVED: Gate A passes live with promptChars=1645 (15-04 fix works on OpenClaw 2026.5.22)
 - [Phase ?]: B-05 still failing: Nemotron routes exec through tool_search_code indirect calls; before_tool_call never fires; disk persistence fix is moot on this host
+- [Phase 16]: SC1/NCDEPLOY-01 and SC2/NCDEPLOY-02 verified live (Re-run 3, faab3be) — D-02 ready assertion PASSED; zero undocumented install steps; --force idempotency fix shipped; overall install exit-1 is Phase 15 Gate A (B-01/NCENF-01) tracked as follow-up todo
 
 ### Roadmap Evolution
 
@@ -112,7 +114,7 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None.
+- [nemoclaw-install-gate-a-exit1] install.sh --nemoclaw overall exit-1 at Phase 15 Gate A (B-01/NCENF-01) on live Nemotron host — medium severity; skill deploy SC1 unaffected; fix requires updating Gate A promptChars check to accept --agent flag or mock path. See `.planning/todos/pending/nemoclaw-install-gate-a-exit1.md`.
 
 ### Quick Tasks Completed
 
@@ -156,7 +158,7 @@ Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 ## Session Continuity
 
-Last session: 2026-06-10T19:28:03.082Z
+Last session: 2026-06-11T01:30:29.359Z
 Stopped at: Phase 16 context gathered
 Resume file: None
 

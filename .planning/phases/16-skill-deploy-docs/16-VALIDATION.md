@@ -38,11 +38,11 @@ created: 2026-06-10
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 16-01-01 | 01 | 1 | NCDEPLOY-01 | T-16-01 / — | SKILL.md path guard fails hard with actionable message when skill dir is wrong (prevents SSHFS abort) | unit (bash) | `bash tests/test_nemoclaw_provisioning.sh` | ❌ W0 | ⬜ pending |
-| 16-01-02 | 01 | 1 | NCDEPLOY-01 | — | `install_skill_nemoclaw()` asserts `✓ ready` via `openclaw skills list`; fails hard if revenium skill not ready | unit (bash) | `bash tests/test_nemoclaw_provisioning.sh` | ❌ W0 | ⬜ pending |
-| 16-02-01 | 02 | 1 | NCDEPLOY-02 | — | `docs/nemoclaw-setup.md` exists with Prerequisites / install steps / `✓ ready` verify / parallel-path / macOS error / Troubleshooting / Uninstall sections | smoke | `grep -Eq 'Prerequisites' docs/nemoclaw-setup.md && grep -q 'macOS' docs/nemoclaw-setup.md` | ❌ W0 | ⬜ pending |
-| 16-02-02 | 02 | 1 | NCDEPLOY-02 | — | `README.md` contains pointer link to `docs/nemoclaw-setup.md` and standalone path unchanged | smoke | `grep -q 'nemoclaw-setup.md' README.md` | ❌ W0 | ⬜ pending |
-| 16-03-01 | 03 | 2 | NCDEPLOY-01, NCDEPLOY-02 | — | Live clean-host install follows only the docs; `✓ ready` observed; evidence recorded in 16-VALIDATION evidence log | manual (live sandbox) | manual — see Manual-Only Verifications | N/A | ⬜ pending |
+| 16-01-01 | 01 | 1 | NCDEPLOY-01 | T-16-01 / — | SKILL.md path guard fails hard with actionable message when skill dir is wrong (prevents SSHFS abort) | unit (bash) | `bash tests/test_nemoclaw_provisioning.sh` | ✅ W1 | ✅ green |
+| 16-01-02 | 01 | 1 | NCDEPLOY-01 | — | `install_skill_nemoclaw()` asserts `✓ ready` via `openclaw skills list`; fails hard if revenium skill not ready | unit (bash) | `bash tests/test_nemoclaw_provisioning.sh` | ✅ W1 | ✅ green |
+| 16-02-01 | 02 | 1 | NCDEPLOY-02 | — | `docs/nemoclaw-setup.md` exists with Prerequisites / install steps / `✓ ready` verify / parallel-path / macOS error / Troubleshooting / Uninstall sections | smoke | `grep -Eq 'Prerequisites' docs/nemoclaw-setup.md && grep -q 'macOS' docs/nemoclaw-setup.md` | ✅ W1 | ✅ green |
+| 16-02-02 | 02 | 1 | NCDEPLOY-02 | — | `README.md` contains pointer link to `docs/nemoclaw-setup.md` and standalone path unchanged | smoke | `grep -q 'nemoclaw-setup.md' README.md` | ✅ W1 | ✅ green |
+| 16-03-01 | 03 | 2 | NCDEPLOY-01, NCDEPLOY-02 | — | Live clean-host install follows only the docs; `✓ ready` observed; evidence recorded in 16-VALIDATION evidence log | manual (live sandbox) | manual — see Manual-Only Verifications | N/A | ✅ green (human approved 2026-06-11) |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -66,14 +66,30 @@ created: 2026-06-10
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies (16-03-01 is manual-only by nature — live host)
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 15s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies (16-03-01 is manual-only by nature — live host)
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 15s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** APPROVED 2026-06-11 (human checkpoint — SC1+SC2 verified)
+
+---
+
+### Human Checkpoint Decision (Task 2)
+
+**Date:** 2026-06-11
+**Decision:** approved: SC1+SC2 verified
+**Reviewer:** human operator
+
+**SC1 (NCDEPLOY-01) — PASSED:** The D-02 `✓ ready` assertion fired and passed live (not ledger-skipped) on the live NemoClaw sandbox (34.224.27.67 / revenium-spike) across all three re-runs. SC1-a (skill install, D-02 assertion) and SC1-c (independent `openclaw skills list` → `✓ ready  💰 revenium`) confirmed via Re-run 3 (code version faab3be). The `--force` idempotency fix is shipped, tested (27/27 unit tests), and pushed to origin/main.
+
+**SC2 (NCDEPLOY-02) — PASS:** Re-run 2 and Re-run 3 confirmed zero undocumented steps once the Phase 16 NemoClaw scripts were published to GitHub (critical doc-bug-1 from Re-run 1 resolved by pushing main to origin). All commands run were documented in `docs/nemoclaw-setup.md`.
+
+**Overall install exit-1 note:** The overall `install.sh --nemoclaw` exit code remains 1 (Re-run 3) due to Phase 15 Gate A (B-01/NCENF-01) — `openclaw agent --json` requires `--agent <id>` and the prompt-chars check fails on the live Nemotron host. This is a **pre-existing Phase 15 limitation**, out of scope for Phase 16. It is tracked as follow-up todo `.planning/todos/pending/nemoclaw-install-gate-a-exit1.md` (committed 5daac3f). The skill-deploy half (SC1) and doc-driven install (SC2) are independently verified.
+
+**Plan 16-03 status:** COMPLETE.
 
 ---
 

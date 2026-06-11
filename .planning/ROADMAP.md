@@ -6,7 +6,7 @@
 - ✅ **v1.1 Agentic Job Tracking** — Phases 5–8 (shipped 2026-06-04)
 - ✅ **v1.2 Metering Completeness** — Phases 9–10 (shipped 2026-06-04)
 - ✅ **v1.3 Reliable Attribution** — Phase 11 (shipped 2026-06-05)
-- 🔲 **v1.4 NemoClaw/OpenShell Support** — Phases 12–16 (in progress)
+- ✅ **v1.4 NemoClaw/OpenShell Support** — Phases 12–16 (shipped 2026-06-11)
 
 ## Phases
 
@@ -18,7 +18,7 @@
 - [x] **Phase 13: Sandbox Provisioning — Egress, CLI & Authenticated Metering** — Apply the `revenium` egress policy preset, deliver the revenium binary into the sandbox, close the authenticated-meter spike (completed 2026-06-08)
 - [x] **Phase 14: Host-Side Metering Loop** — Host cron + `nemoclaw share mount` pipeline that keeps `guardrail-status.json` current for the in-sandbox agent (completed 2026-06-08)
 - [x] **Phase 15: Per-Turn Enforcement Plugin** — `before_prompt_build` guardrail-directive plugin + `before_agent_finalize` marker-gate adapter for NemoClaw (highest-risk phase) (completed 2026-06-10)
-- [ ] **Phase 16: Skill Deploy & Docs** — `nemoclaw skill install` wiring and operator documentation for the NemoClaw install path
+- [x] **Phase 16: Skill Deploy & Docs** — `nemoclaw skill install` wiring and operator documentation for the NemoClaw install path (completed 2026-06-11)
 
 ### ✅ v1.3 Reliable Attribution (Shipped 2026-06-05)
 
@@ -85,7 +85,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 13. Sandbox Provisioning — Egress, CLI & Authenticated Metering | v1.4 | 3/3 | Complete    | 2026-06-08 |
 | 14. Host-Side Metering Loop | v1.4 | 3/3 | Complete    | 2026-06-08 |
 | 15. Per-Turn Enforcement Plugin | v1.4 | 7/7 | Complete    | 2026-06-10 |
-| 16. Skill Deploy & Docs | v1.4 | 2/3 | In Progress|  |
+| 16. Skill Deploy & Docs | v1.4 | 3/3 | Complete   | 2026-06-11 |
 
 ## Phase Details
 
@@ -262,7 +262,7 @@ Plans:
   3. The setup documentation covers the NemoClaw path prerequisites (Linux, Docker, NemoClaw installed, `sshfs`), the parallel-path guarantee (standalone path untouched), and the macOS-unsupported constraint with an explicit error message
   4. The existing standalone OpenClaw setup docs are not changed or contradicted by the NemoClaw additions
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 **Wave 1**
@@ -272,6 +272,6 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 16-03-PLAN.md — Live clean-host doc-driven validation gate (D-03): real `✓ ready` evidence in 16-VALIDATION.md + blocking human checkpoint (SC1+SC2)
+- [x] 16-03-PLAN.md — Live clean-host doc-driven validation gate (D-03): real `✓ ready` evidence in 16-VALIDATION.md + blocking human checkpoint (SC1+SC2)
 
 **UI hint**: no
