@@ -85,7 +85,7 @@ Deferred at close: Phase 9 live guardrail-halt UAT/verification on host 172.16.1
 | 13. Sandbox Provisioning — Egress, CLI & Authenticated Metering | v1.4 | 3/3 | Complete    | 2026-06-08 |
 | 14. Host-Side Metering Loop | v1.4 | 3/3 | Complete    | 2026-06-08 |
 | 15. Per-Turn Enforcement Plugin | v1.4 | 7/7 | Complete    | 2026-06-10 |
-| 16. Skill Deploy & Docs | v1.4 | 3/3 | Complete   | 2026-06-11 |
+| 16. Skill Deploy & Docs | v1.4 | 3/3 | Complete    | 2026-06-11 |
 
 ## Phase Details
 
