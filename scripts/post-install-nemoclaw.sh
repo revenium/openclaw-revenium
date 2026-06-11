@@ -114,8 +114,11 @@ export PATH="${HOME}/.local/bin:${PATH}"
 ensure_mount() {
     local mnt="$1" _try _out
     for _try in 1 2 3; do
-        # Healthy: in the mount table AND the root stats OK.
-        if grep -qsF " ${mnt} " /proc/mounts 2>/dev/null && stat "${mnt}" >/dev/null 2>&1; then
+        # Healthy: a live mount (in the table AND the root stats OK), OR the skill dir
+        # is already visible through it. The first clause wins for a real cache-lagged
+        # mount (stat the ROOT, not the lagging subdir); the second covers the
+        # already-populated case (and the hermetic test harness, which has no /proc/mounts entry).
+        if { grep -qsF " ${mnt} " /proc/mounts 2>/dev/null && stat "${mnt}" >/dev/null 2>&1; } || [ -d "${mnt}/skills" ]; then
             return 0
         fi
         # Listed but the root won't stat → dead/stale → clear it.
@@ -129,7 +132,7 @@ ensure_mount() {
         echo "${_out}" | grep -qiE "already exists|already mounted" && continue
         sleep 1
     done
-    grep -qsF " ${mnt} " /proc/mounts 2>/dev/null && stat "${mnt}" >/dev/null 2>&1
+    { grep -qsF " ${mnt} " /proc/mounts 2>/dev/null && stat "${mnt}" >/dev/null 2>&1; } || [ -d "${mnt}/skills" ]
 }
 
 # ---------------------------------------------------------------------------
