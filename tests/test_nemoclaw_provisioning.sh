@@ -487,14 +487,116 @@ else
 fi
 
 # ===========================================================================
+# GROUP J: idempotency — openclaw plugins install is invoked with --force
+#
+#   J-a: The captured argv for the enforcement-plugin install step contains
+#        "--force" on the openclaw plugins install line, proving the fix is
+#        present (not just that the step exits 0).
+#   J-b: Re-running install_enforcement_plugin() on a sandbox where the
+#        enforcement-plugin-installed ledger key is ABSENT (even if a plugin
+#        dir was previously placed by step 2 of the same function) succeeds —
+#        exits 0 and writes the ledger key — because --force allows replace.
+#        This simulates the "plugin already exists" scenario that caused
+#        exit 1 before the fix (Re-run 2 evidence, 16-VALIDATION.md).
+#
+# The stub's default exec handler exits 0 for the openclaw plugins install
+# payload (no specific dispatch needed for --force; the real semantics are
+# tested live).  The share mount handler also exits 0 by default.  We seed
+# all Phase 13 + metering-loop + skill-installed-nemoclaw ledger keys so the
+# function-under-test is reached without touching the live-sandbox gates.
+# ===========================================================================
+echo ""
+echo "--- GROUP J: idempotency — openclaw plugins install invoked with --force ---"
+
+# Helper: seed ALL ledger keys needed to reach install_enforcement_plugin()
+_seed_through_skill() {
+  local ledger_file="$1"
+  cat >> "${ledger_file}" << 'SEED_J'
+revenium-policy-applied=1
+gh-release-policy-applied=1
+cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
+creds-written=1
+meter-probe-passed=1
+metering-loop-installed=1
+skill-installed-nemoclaw=1
+SEED_J
+}
+
+# --- GROUP J-a: --force present in captured argv ---
+echo ""
+echo "  -- J-a: --force present in captured argv for openclaw plugins install --"
+
+TMP_HOME_Ja=$(make_home)
+ARGV_Ja=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ja.XXXXXX")
+TMP_HOMES+=("${ARGV_Ja}")
+LEDGER_Ja="${TMP_HOME_Ja}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_through_skill "${LEDGER_Ja}"
+# Create the SSHFS mount point subdirectories that the install steps require.
+# In the hermetic env the mount is a plain dir (not a real SSHFS mount); the
+# share mount stub exits 0, but cp dst requires extensions/ and Gate D requires
+# a pre-existing stub marker .jsonl in markers/ (write-marker.sh runs in-sandbox
+# and cannot write to the host-side mount in the hermetic suite).
+_MNT_Ja="${TMP_HOME_Ja}/sbx-openclaw-${REVENIUM_SANDBOX_NAME:-test-sandbox}"
+mkdir -p "${_MNT_Ja}/extensions" "${_MNT_Ja}/markers"
+touch "${_MNT_Ja}/markers/stub-gate-d-test.jsonl"
+
+exit_code_ja=0
+output_ja=$(run_provision "${TMP_HOME_Ja}" "${ARGV_Ja}" 2>&1) || exit_code_ja=$?
+
+# Assert: "--force" appears in the captured argv file
+if [[ -f "${ARGV_Ja}" ]] && grep -qF -- "--force" "${ARGV_Ja}" 2>/dev/null; then
+  pass "GROUP-J-a: '--force' found in captured argv for openclaw plugins install"
+else
+  fail "GROUP-J-a: '--force' NOT found in captured argv — openclaw plugins install missing --force flag"
+fi
+
+# Also assert "plugins" and "install" appear (confirms it's the right call, not unrelated --force)
+if [[ -f "${ARGV_Ja}" ]] && grep -qF "plugins" "${ARGV_Ja}" 2>/dev/null && \
+   grep -qF "install" "${ARGV_Ja}" 2>/dev/null; then
+  pass "GROUP-J-a: 'plugins' and 'install' also present in captured argv (correct call site)"
+else
+  fail "GROUP-J-a: 'plugins' or 'install' NOT found in captured argv — unexpected call site"
+fi
+
+# --- GROUP J-b: re-install on existing plugin dir succeeds (exit 0, ledger written) ---
+echo ""
+echo "  -- J-b: re-install with pre-existing plugin dir exits 0 (idempotent) --"
+
+TMP_HOME_Jb=$(make_home)
+ARGV_Jb=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-jb.XXXXXX")
+TMP_HOMES+=("${ARGV_Jb}")
+LEDGER_Jb="${TMP_HOME_Jb}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_through_skill "${LEDGER_Jb}"
+# Do NOT seed enforcement-plugin-installed — we want install_enforcement_plugin()
+# to run from scratch (simulating re-run with pre-existing plugin dir).
+# Create the SSHFS mount point subdirectories that cp -r and Gate D require.
+_MNT_Jb="${TMP_HOME_Jb}/sbx-openclaw-${REVENIUM_SANDBOX_NAME:-test-sandbox}"
+mkdir -p "${_MNT_Jb}/extensions" "${_MNT_Jb}/markers"
+touch "${_MNT_Jb}/markers/stub-gate-d-test.jsonl"
+
+exit_code_jb=0
+output_jb=$(run_provision "${TMP_HOME_Jb}" "${ARGV_Jb}" 2>&1) || exit_code_jb=$?
+
+# Assert: exit 0 (install succeeds end-to-end, not aborted at plugins install)
+if [[ "${exit_code_jb}" -eq 0 ]]; then
+  pass "GROUP-J-b: re-install exits 0 — openclaw plugins install --force is idempotent"
+else
+  fail "GROUP-J-b: re-install exited ${exit_code_jb} — expected 0 (--force should allow replace)"
+fi
+
+# Assert: enforcement-plugin-installed ledger key written
+if [[ -f "${LEDGER_Jb}" ]] && grep -qE "^enforcement-plugin-installed=" "${LEDGER_Jb}" 2>/dev/null; then
+  pass "GROUP-J-b: enforcement-plugin-installed ledger key written after idempotent re-install"
+else
+  fail "GROUP-J-b: enforcement-plugin-installed NOT in ledger after re-install"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 echo ""
-echo "NOTE: GROUP A-H are in the expected state; GROUP I (I-a, I-b, I-c) are RED"
-echo "      pending Task 2 implementing the SKILL.md guard and ✓ ready assertion"
-echo "      in scripts/post-install-nemoclaw.sh."
 if [[ "${FAIL}" -gt 0 ]]; then
   exit 1
 fi

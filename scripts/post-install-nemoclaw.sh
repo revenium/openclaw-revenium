@@ -201,8 +201,14 @@ install_enforcement_plugin() {
     # Step 3: Trust-install via openclaw plugins install (T-15-05 provenance gate)
     # A hand-placed copy loads but its hooks are inert — the install records trust.
     # In-sandbox path: /sandbox/.openclaw/extensions/revenium-enforcement
+    # --force makes this idempotent: step 2 (cp -r) always places the plugin dir
+    # before this call runs, so openclaw plugins install without --force fails on
+    # re-runs with "plugin already exists" (CR-01 || true guard cannot fix this —
+    # a non-forced re-install leaves the plugin untrusted/inert, not just skipped).
+    # --force replaces the existing entry; the fail() guard on the right still fires
+    # on genuine errors (bad path, permission denied, etc.).
     # -------------------------------------------------------------------------
-    nemoclaw "${SANDBOX_NAME}" exec -- openclaw plugins install \
+    nemoclaw "${SANDBOX_NAME}" exec -- openclaw plugins install --force \
         /sandbox/.openclaw/extensions/revenium-enforcement \
         || fail "openclaw plugins install failed — plugin will be untrusted/inert. Aborting."
     info "Plugin trust-installed via openclaw plugins install"

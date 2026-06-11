@@ -167,6 +167,46 @@ if [[ "${2:-}" == "exec" ]]; then
     fi
   fi
 
+  # --- openclaw agent --json (Gate A: promptChars check for enforcement plugin) ---
+  # Pattern: payload contains "openclaw agent" AND "--json" (literal dashes)
+  # Returns a stub JSON body with promptChars above the 1500 threshold so Gate A
+  # passes in the hermetic suite (no live sandbox needed for the --force idempotency test).
+  # SECURITY: string-compare only (T-16-SC).
+  if grep -qF "openclaw agent" "${_payload_file}" && grep -qF -- "--json" "${_payload_file}"; then
+    rm -f "${_payload_file}"
+    echo '{"currentTurn":{"promptChars":1637,"completionChars":0}}'
+    exit 0
+  fi
+
+  # --- openclaw plugins inspect (Gate B: before_prompt_build + before_agent_finalize) ---
+  # Pattern: payload contains "openclaw plugins inspect"
+  # Returns a stub inspect output confirming both hooks are active.
+  # SECURITY: string-compare only (T-16-SC).
+  if grep -qF "openclaw plugins inspect" "${_payload_file}"; then
+    rm -f "${_payload_file}"
+    echo "Plugin: revenium-enforcement"
+    echo "  Status: loaded"
+    echo "  Hooks: before_prompt_build, before_agent_finalize"
+    exit 0
+  fi
+
+  # --- python3 --version (Gate C: python3 preflight for write-marker.sh) ---
+  # Pattern: payload contains "python3 --version"
+  if grep -qF "python3 --version" "${_payload_file}"; then
+    rm -f "${_payload_file}"
+    echo "Python 3.11.0"
+    exit 0
+  fi
+
+  # --- write-marker.sh smoke test (Gate D) ---
+  # Pattern: payload contains "write-marker.sh"
+  # Creates a stub .jsonl file in the expected mount location so the ls check passes.
+  # SECURITY: only the stub-controlled path is written to; no user input evaluated.
+  if grep -qF "write-marker.sh" "${_payload_file}"; then
+    rm -f "${_payload_file}"
+    exit 0
+  fi
+
   # --- Meter completion probe ---
   # Pattern: payload contains "meter completion" or "meter" AND "completion"
   if grep -qF "meter completion" "${_payload_file}" || \
