@@ -107,8 +107,6 @@ You should see the revenium skill listed as `✓ ready`:
 
 The installer also asserts this automatically (step 8 above) and aborts if the skill is not ready — so if the install completed successfully, this step is a confirmation.
 
-> **Running on NemoClaw/OpenShell?** See [NemoClaw Setup](docs/nemoclaw-setup.md) for the parallel install path.
-
 ---
 
 ## Parallel-Path Guarantee
