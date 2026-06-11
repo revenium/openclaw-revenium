@@ -28,14 +28,11 @@ Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) a
 
 - **`revenium` CLI** — delivered as a prebuilt binary tarball into the sandbox by the installer. **Do not install via Homebrew for the NemoClaw path** — Homebrew is not available inside an OpenShell sandbox, and the CLI must be accessible in-sandbox. The installer fetches, sha256-verifies, and installs the binary to `/sandbox/.local/bin/revenium` automatically.
 
-- **Required environment variables** — export these on the host before running the installer:
-  ```bash
-  export REVENIUM_SANDBOX_NAME=<your-sandbox-name>   # the NemoClaw sandbox to provision
-  export REVENIUM_API_KEY=<your-api-key>             # required — the installer writes this in-sandbox
-  export REVENIUM_TEAM_ID=<your-team-id>             # optional but recommended
-  export REVENIUM_TENANT_ID=<your-tenant-id>         # optional but recommended
-  export REVENIUM_OWNER_ID=<your-owner-id>           # optional but recommended
-  ```
+- **Revenium credentials** — you'll set these as environment variables when you run the installer (the exact `export` commands are in [Installation Step 2](#2-export-credentials-and-sandbox-name-then-run-the-nemoclaw-install-script)). You will need:
+  - `REVENIUM_SANDBOX_NAME` — the NemoClaw sandbox to provision **(required)**
+  - `REVENIUM_API_KEY` — the installer writes this in-sandbox **(required)**
+  - `REVENIUM_TEAM_ID`, `REVENIUM_TENANT_ID`, `REVENIUM_OWNER_ID` — optional but recommended
+
   Your Revenium credentials can be found at [app.revenium.ai/connections](https://app.revenium.ai/connections).
 
 ## Installation
