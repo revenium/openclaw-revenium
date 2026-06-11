@@ -148,5 +148,18 @@ No gaps. All phase-13 success criteria are verified:
 
 ---
 
+## Post-ship hardening (v1.4.1 — 2026-06-11)
+
+This phase verified passed on 2026-06-08, but a **live UAT pass on a clean host (2026-06-11)** found the install path broken end-to-end and surfaced Phase-13 provisioning gaps that the hermetic suite couldn't model. Fixed on `origin/main` (HEAD `fa7deeb`):
+
+- **Per-sandbox-UUID provisioning ledger** (`dd20f81`) — the host-global ledger skipped a 2nd/recreated sandbox wholesale. The ledger is now scoped per-sandbox **instance UUID** (`nemoclaw <name> status` Id → `revenium-nemoclaw-<uuid>.ledger`).
+- **Install-time budget guardrail provisioning** (`9382597`) — NemoClaw never created budget rules (the agent-guided flow doesn't run in-sandbox). Added `provision_budget_guardrails()`, **env-gated** on `REVENIUM_BUDGET_LIMIT` + `REVENIUM_BUDGET_PERIOD`, running `setup-guardrails.sh` on the host with `OPENCLAW_HOME=<mount>` so rule IDs land in the in-sandbox `config.json`.
+- **Consolidated `ensure_mount` SSHFS handling** (`1a9e93e`, `c07cd83`, `040c488`) — one bulletproof helper that self-heals a stale mount but does **not** tear down a healthy/populated mount on cache lag; health check made testable.
+
+Live-validated on Nemotron: egress policy, CLI delivery (sandbox + host), credential write, **budget-RULE creation in Revenium**, and metering all confirmed. The authenticated-meter result (the original SC4) remains valid.
+
+---
+
 _Verified: 2026-06-08T00:00:00Z_
 _Verifier: Claude (gsd-verifier)_
+_Post-ship hardening addendum: 2026-06-11 (v1.4.1)_

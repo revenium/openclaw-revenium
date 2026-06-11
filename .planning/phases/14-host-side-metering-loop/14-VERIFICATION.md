@@ -165,5 +165,17 @@ PATH="/tmp/empty-bin" bash scripts/install-nemoclaw-cron.sh --sandbox revenium-s
 
 ---
 
+## Post-ship hardening (v1.4.1 — 2026-06-11)
+
+This phase verified passed on 2026-06-08, but the **live UAT pass on a clean host (2026-06-11)** found the metering loop did not actually deliver to Revenium and that SSHFS mounts were fragile on fresh VMs. Fixed on `origin/main` (HEAD `fa7deeb`):
+
+- **Host-side `revenium` CLI install** (`405d568`) — the metering cron runs `report.sh` on the **host**, but the `revenium` binary was only installed **in-sandbox**, so metering was dead on a clean host. Added a host CLI install step (`deliver_revenium_cli_host`) so the cron can actually emit.
+- **Stale-SSHFS-mount self-heal** (`b6772c3` cron tick, `ea921c7` install-time mount sites) — dead/stale SSHFS mounts wedged remount with "permission denied creating the directory"; all mount sites now `fusermount -u` / `umount -l` before remount. Later consolidated into the shared `ensure_mount` helper (see Phase 13 addendum) so a healthy mount is not torn down on cache lag.
+
+The HUMAN-UAT caveat noted at original verification (revenium CLI absent from host PATH → emission path not exercised) is **closed** by the host-CLI install fix; metering→Revenium is now live-validated on Nemotron.
+
+---
+
 _Verified: 2026-06-08T23:22:15Z_
 _Verifier: Claude (gsd-verifier)_
+_Post-ship hardening addendum: 2026-06-11 (v1.4.1)_

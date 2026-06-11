@@ -6,7 +6,7 @@
 - ✅ **v1.1 Agentic Job Tracking** — Phases 5–8 (shipped 2026-06-04)
 - ✅ **v1.2 Metering Completeness** — Phases 9–10 (shipped 2026-06-04)
 - ✅ **v1.3 Reliable Attribution** — Phase 11 (shipped 2026-06-05)
-- ✅ **v1.4 NemoClaw/OpenShell Support** — Phases 12–16 (shipped 2026-06-11)
+- ✅ **v1.4 NemoClaw/OpenShell Support** — Phases 12–16 (shipped 2026-06-11) + **v1.4.1 post-ship install-path hardening** (2026-06-11, see note below)
 
 ## Phases
 
@@ -19,6 +19,18 @@
 - [x] **Phase 14: Host-Side Metering Loop** — Host cron + `nemoclaw share mount` pipeline that keeps `guardrail-status.json` current for the in-sandbox agent (completed 2026-06-08)
 - [x] **Phase 15: Per-Turn Enforcement Plugin** — `before_prompt_build` guardrail-directive plugin + `before_agent_finalize` marker-gate adapter for NemoClaw (highest-risk phase) (completed 2026-06-10)
 - [x] **Phase 16: Skill Deploy & Docs** — `nemoclaw skill install` wiring and operator documentation for the NemoClaw install path (completed 2026-06-11)
+
+#### v1.4.1 — Post-ship install-path hardening (2026-06-11)
+
+The v1.4 milestone was marked SHIPPED, but a **live UAT pass on a clean host (2026-06-11)** found the NemoClaw install path did **not** work end-to-end. ~14 real bugs/gaps were fixed (all on `origin/main`, HEAD `fa7deeb`) and the full loop now works on a fresh host: provision → skill `✓ ready` → enforcement plugin (all 4 gates pass) → metering → budget rule (in Revenium) → `guardrail-status.json` flowing → **`install.sh --nemoclaw` exits 0**.
+
+Fixes by area:
+- **Enforcement gates (Phase 15):** Gate A/B repaired for OpenClaw **v2026.5.22** — Gate A now derives the default agent and passes `--agent <id>` (was false-failing with "No target session selected"); Gate B asserts `Status: loaded` + `allowConversationAccess: true` instead of grepping hook names that version no longer emits (`323a2c6`). Gate D marker-visibility check warns-not-aborts on SSHFS cache lag (`58c52e6`). `common.sh` OPENCLAW_HOME sandbox normalization (`c0e14e3`) repaired in-sandbox `write-marker.sh` (OpenShell sets `OPENCLAW_HOME=/sandbox`, data under `$OPENCLAW_HOME/.openclaw`).
+- **Metering (Phase 14):** the cron runs `report.sh` on the **host**, but `revenium` was only installed in-sandbox → added host-side CLI install (`405d568`). Stale-SSHFS-mount self-heal in the cron tick (`b6772c3`) and at install-time mount sites (`ea921c7`), later consolidated into one `ensure_mount` helper that no longer tears down a healthy mount on cache lag (`1a9e93e`, `c07cd83`, `040c488`).
+- **Provisioning (Phase 13):** per-sandbox-**UUID** ledger so a 2nd/recreated sandbox isn't skipped (`dd20f81`); **install-time budget guardrail provisioning**, env-gated on `REVENIUM_BUDGET_LIMIT` + `REVENIUM_BUDGET_PERIOD` (`9382597`).
+- **Docs (Phase 16):** de-duplicated the `REVENIUM_*` export block, simplified the install command, surfaced the runbook in README, and documented the host-CLI + budget steps in the install sequence (`f673753`, `101b30a`, `c2c22d0`).
+
+**Live-validated on Nemotron:** metering→Revenium, egress policy, CLI delivery (sandbox **and** host), credential write, budget-RULE creation, skill deploy→`✓ ready`, `guardrail-status.json` flowing, **install exits 0**, and all 4 enforcement-plugin gates pass — including Gate A proving the per-turn guardrail directive is injected every turn (promptChars ~4599 vs ~649 baseline). **Not yet validated:** an actual budget-**breach** → hard HALT firing end-to-end on Nemotron. **Tracked limitations:** (a) **B-05** — Nemotron routes `exec` via `tool_search_code`, so the structural `before_tool_call` marker/exec-observation doesn't fire as it does on Claude (affects task-type attribution, **not** the per-turn directive); (b) the `/revenium` TUI slash command is degraded by an OpenClaw **gateway-pairing** issue (infra, not the skill — the command works as a typed agent message).
 
 ### ✅ v1.3 Reliable Attribution (Shipped 2026-06-05)
 

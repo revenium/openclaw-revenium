@@ -144,3 +144,19 @@ None. All prior gaps were closed by code fixes with live evidence and unit-test 
 _Verified: 2026-06-10_
 _Verifier: Claude (gsd-verifier)_
 _Re-verification: Yes — round 3, plans 15-06 (code fixes) and 15-07 (live re-validation) assessed_
+
+---
+
+## Post-ship hardening (v1.4.1 — 2026-06-11)
+
+The **live UAT pass on a clean host (2026-06-11)** found that the enforcement install-time gates false-failed against OpenClaw **v2026.5.22**, aborting the whole install with exit 1. This was previously mis-attributed to the B-05 Nemotron limitation; the actual root cause was two stale probes (the plugin itself loads fine — `Status: loaded`, `allowConversationAccess: true`). Fixed on `origin/main` (HEAD `fa7deeb`):
+
+- **Gate A/B probe fix for v2026.5.22** (`323a2c6`) — Gate A ran `openclaw agent --json` with no routing target → "No target session selected"; it now derives the default agent (`openclaw agents list` "(default)" row, fallback `main`) and passes `--agent <id>`. Gate B grepped hook names that v2026.5.22 no longer enumerates; it now asserts `Status: loaded` + `allowConversationAccess: true`.
+- **`common.sh` OPENCLAW_HOME sandbox normalization + Gate D path/label** (`c0e14e3`) — inside an OpenShell sandbox OpenClaw sets `OPENCLAW_HOME=/sandbox` with data under `$OPENCLAW_HOME/.openclaw`; `common.sh` assumed OPENCLAW_HOME *was* the `.openclaw` dir, which broke **in-sandbox `write-marker.sh` in general** (not just Gate D). Now normalizes by descending into `.openclaw` when `agents/` is absent there. Gate D fixed to a valid taxonomy label + the correct `${MNT}/skills/revenium/markers/` path. New `tests/test_common_paths.sh` (5/0).
+- **Gate D marker-visibility resilience** (`58c52e6`) — the over-the-mount marker check now warns-not-aborts (SSHFS cache lag is transient; the in-sandbox write is the real proof; the metering loop self-heals the mount).
+
+**Result:** `install.sh --nemoclaw` now exits **0** with all four gates passing live on Nemotron — including **Gate A proving the per-turn guardrail directive is injected every turn** (promptChars ~4599 vs ~649 baseline). The SC3 B-05 limitation (Nemotron routes `exec` via `tool_search_code` so the structural `before_tool_call` marker chain doesn't fire as on Claude) **remains a known limitation** affecting task-type attribution — it does **not** affect the per-turn directive, which is now proven to inject. Still not validated end-to-end: an actual budget-**breach** → hard HALT on Nemotron.
+
+---
+
+_Post-ship hardening addendum: 2026-06-11 (v1.4.1)_

@@ -117,6 +117,8 @@ Each task was committed atomically:
 
 **Gate A install exit-1 (Phase 15 B-01/NCENF-01):** The overall `install.sh --nemoclaw` exits 1 at Phase 15's Gate A verification step because `openclaw agent --json --message ping` requires `--agent <id>` on the live Nemotron host. This is a pre-existing Phase 15 limitation, not caused by any Phase 16 changes. Tracked at `.planning/todos/pending/nemoclaw-install-gate-a-exit1.md`.
 
+> **RESOLVED (2026-06-11, v1.4.1 post-ship hardening):** this Gate A exit-1 was root-caused to a stale OpenClaw-v2026.5.22 probe (Gate A now derives + passes `--agent <id>`; commit `323a2c6`) — **not** the B-05 Nemotron limitation. `install.sh --nemoclaw` now exits **0** with all four gates passing live. The todo above is resolved and moved to `.planning/todos/completed/nemoclaw-install-gate-a-exit1.md`.
+
 ## Issues Encountered
 
 - **Re-run 1 critical doc-bug-1 (resolved):** The initial live run discovered the GitHub repo did not yet have the Phase 16 NemoClaw scripts published. The git clone gave the pre-NemoClaw version of the repo. This was resolved by pushing the accumulated phase work to `origin/main` (commit `c4cb54b`). Re-runs 2 and 3 confirmed the repo now contains the correct scripts.
