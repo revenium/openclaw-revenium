@@ -100,6 +100,38 @@ yaml_dquote() {
 # ---------------------------------------------------------------------------
 export PATH="${HOME}/.local/bin:${PATH}"
 
+# ensure_mount <mnt> — guarantee a usable SSHFS share mount at <mnt>, robustly.
+# Single source of truth for SSHFS mount handling (used by every mount site). It is
+# deliberately bulletproof against SSHFS flakiness:
+#   - Health is judged by stat-ing the MOUNTPOINT ROOT (not a subdirectory), so a
+#     transient subdir cache-lag never makes a healthy mount look broken.
+#   - A mount that is in /proc/mounts but whose root won't stat is dead/stale — it is
+#     lazily unmounted before remounting.
+#   - "already mounted / already exists" from `nemoclaw share mount` is treated as
+#     SUCCESS (the mount is present), never a fatal error.
+#   - A healthy mount is NEVER torn down.
+# Returns 0 iff <mnt> ends up mounted and its root is accessible.
+ensure_mount() {
+    local mnt="$1" _try _out
+    for _try in 1 2 3; do
+        # Healthy: in the mount table AND the root stats OK.
+        if grep -qsF " ${mnt} " /proc/mounts 2>/dev/null && stat "${mnt}" >/dev/null 2>&1; then
+            return 0
+        fi
+        # Listed but the root won't stat → dead/stale → clear it.
+        if grep -qsF " ${mnt} " /proc/mounts 2>/dev/null; then
+            fusermount -u "${mnt}" 2>/dev/null || umount -l "${mnt}" 2>/dev/null || true
+            sleep 1
+        fi
+        mkdir -p "${mnt}" 2>/dev/null || true
+        _out=$(nemoclaw "${SANDBOX_NAME}" share mount /sandbox/.openclaw "${mnt}" 2>&1 || true)
+        # "already mounted/exists" means it is present — re-evaluate at the top.
+        echo "${_out}" | grep -qiE "already exists|already mounted" && continue
+        sleep 1
+    done
+    grep -qsF " ${mnt} " /proc/mounts 2>/dev/null && stat "${mnt}" >/dev/null 2>&1
+}
+
 # ---------------------------------------------------------------------------
 # Phase 14/15 functions — metering loop + enforcement plugin
 # ---------------------------------------------------------------------------
@@ -182,21 +214,7 @@ install_enforcement_plugin() {
     # -------------------------------------------------------------------------
     local MNT
     MNT="${HOME}/sbx-openclaw-${SANDBOX_NAME}"
-    # (Re)mount only if not already a live mountpoint. `mountpoint -q` is false for a
-    # fresh OR a dead/stale mount (stat fails on a dropped SSHFS), and true for a
-    # healthy one — even when a `${MNT}/skills` listing is briefly cache-lagged. This
-    # avoids tearing down a working mount, which fails with "mkdir: Already exists".
-    if ! mountpoint -q "${MNT}" 2>/dev/null; then
-        mkdir -p "${MNT}"
-        # Clear a stale/dead SSHFS mount (in /proc/mounts but inaccessible after the
-        # backing SSH connection drops) before remounting — otherwise `share mount`
-        # fails with "permission denied creating the directory".
-        if grep -qsF " ${MNT} " /proc/mounts 2>/dev/null || mount 2>/dev/null | grep -qF " ${MNT} "; then
-            fusermount -u "${MNT}" 2>/dev/null || umount -l "${MNT}" 2>/dev/null || true
-        fi
-        nemoclaw "${SANDBOX_NAME}" share mount /sandbox/.openclaw "${MNT}" \
-            || fail "mount failed — is ${SANDBOX_NAME} running?"
-    fi
+    ensure_mount "${MNT}" || fail "mount failed — is ${SANDBOX_NAME} running?"
     info "Share mount confirmed at ${MNT}"
 
     # -------------------------------------------------------------------------
@@ -372,18 +390,7 @@ provision_budget_guardrails() {
     # IN-SANDBOX skill dir (OPENCLAW_HOME=mount → STATE_DIR=mount/skills/revenium).
     local MNT
     MNT="${HOME}/sbx-openclaw-${SANDBOX_NAME}"
-    # Reuse the mount the enforcement-plugin step just established; only (re)mount if
-    # it is not a live mountpoint (see install_enforcement_plugin). Tearing down a
-    # healthy mount over a cache-lagged "${MNT}/skills" listing fails with
-    # "mkdir: Already exists".
-    if ! mountpoint -q "${MNT}" 2>/dev/null; then
-        mkdir -p "${MNT}"
-        if grep -qsF " ${MNT} " /proc/mounts 2>/dev/null || mount 2>/dev/null | grep -qF " ${MNT} "; then
-            fusermount -u "${MNT}" 2>/dev/null || umount -l "${MNT}" 2>/dev/null || true
-        fi
-        nemoclaw "${SANDBOX_NAME}" share mount /sandbox/.openclaw "${MNT}" \
-            || fail "mount failed — cannot write budget config into sandbox '${SANDBOX_NAME}'."
-    fi
+    ensure_mount "${MNT}" || fail "mount failed — cannot write budget config into sandbox '${SANDBOX_NAME}'."
 
     local shadow_flag=""
     [[ -n "${REVENIUM_BUDGET_SHADOW:-}" ]] && shadow_flag="--shadow-mode"

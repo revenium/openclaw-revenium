@@ -41,17 +41,22 @@ log() {
 #   Must run BEFORE auth sourcing or cron.sh delegation so a dead mount
 #   never triggers a guardrail-status.json write.
 # ---------------------------------------------------------------------------
-if ! mountpoint -q "${MNT}" 2>/dev/null || ! [[ -d "${MNT}/skills" ]]; then
-  log "mount down — attempting remount: ${SANDBOX_NAME}"
-  # A stale/dead SSHFS mount (still listed in /proc/mounts but inaccessible —
-  # "Transport endpoint is not connected" / "permission denied" on stat, e.g. after
-  # the backing SSH connection drops) blocks `share mount` with "permission denied
-  # creating the directory" and wedges every tick. Clear it before remounting.
-  if grep -qsF " ${MNT} " /proc/mounts 2>/dev/null || mount 2>/dev/null | grep -qF " ${MNT} "; then
+# Health = in the mount table AND the mountpoint ROOT stats OK. Stat the root, not a
+# subdir — a transient SSHFS subdir cache-lag must not look broken or trigger a
+# teardown of a healthy mount. Only (re)mount when not healthy.
+if ! { grep -qsF " ${MNT} " /proc/mounts 2>/dev/null && stat "${MNT}" >/dev/null 2>&1; }; then
+  log "mount not healthy — (re)mounting: ${SANDBOX_NAME}"
+  # Dead/stale (listed but root won't stat — backing SSH connection dropped) blocks
+  # `share mount` with "permission denied creating the directory". Clear it first.
+  if grep -qsF " ${MNT} " /proc/mounts 2>/dev/null; then
     log "clearing stale mount at ${MNT}"
     fusermount -u "${MNT}" 2>>"${LOG_FILE}" || umount -l "${MNT}" 2>>"${LOG_FILE}" || true
+    sleep 1
   fi
-  if ! nemoclaw "${SANDBOX_NAME}" share mount /sandbox/.openclaw "${MNT}" 2>>"${LOG_FILE}"; then
+  mkdir -p "${MNT}" 2>/dev/null || true
+  # "already mounted/exists" is not a failure; verify the end state below.
+  nemoclaw "${SANDBOX_NAME}" share mount /sandbox/.openclaw "${MNT}" >>"${LOG_FILE}" 2>&1 || true
+  if ! { grep -qsF " ${MNT} " /proc/mounts 2>/dev/null && stat "${MNT}" >/dev/null 2>&1; }; then
     log "remount failed — skipping tick (rc=3)"
     exit 3
   fi
