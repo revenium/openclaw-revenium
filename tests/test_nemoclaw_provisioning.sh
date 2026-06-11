@@ -486,6 +486,66 @@ else
   fail "GROUP-I-c: skill-installed-nemoclaw NOT in ledger (✓ ready assertion not yet implemented)"
 fi
 
+# --- GROUP I-d: not-ready substring in skills-list output → assertion must FAIL (CR-01 regression) ---
+# This test exercises the exact false-positive that CR-01 documents: a revenium
+# line containing "not-ready" satisfies the OLD unanchored `grep -q "ready"` but
+# must FAIL the fixed anchored `grep -Eq '(^|[[:space:]])ready([[:space:]]|$)'`.
+echo ""
+echo "  -- I-d: skills-list contains 'not-ready revenium' → ready assertion must reject (CR-01 regression) --"
+
+TMP_HOME_Id=$(make_home)
+ARGV_Id=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-id.XXXXXX")
+TMP_HOMES+=("${ARGV_Id}")
+LEDGER_Id="${TMP_HOME_Id}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_phase13_14_ledger "${LEDGER_Id}"
+
+exit_code_id=0
+output_id=$(STUB_NEMOCLAW_SKILLS_LIST_OUTPUT='✗ not-ready  💰 revenium' \
+            run_provision "${TMP_HOME_Id}" "${ARGV_Id}" 2>&1) || exit_code_id=$?
+
+# Assert: exits non-zero (the gate must fire on a not-ready line)
+if [[ "${exit_code_id}" -ne 0 ]]; then
+  pass "GROUP-I-d: exits non-zero when skills-list shows 'not-ready' for revenium (CR-01 regression)"
+else
+  fail "GROUP-I-d: exited 0 — 'not-ready' substring incorrectly accepted as ready (CR-01 unanchored grep regression)"
+fi
+
+# Assert: output mentions "NOT ready" (confirms the assertion fired, not some other error)
+if echo "${output_id}" | grep -qi "NOT ready"; then
+  pass "GROUP-I-d: output contains 'NOT ready' message (assertion fired correctly)"
+else
+  fail "GROUP-I-d: 'NOT ready' NOT in output — wrong failure mode"
+fi
+
+# --- GROUP I-e: anchored ready match — '✓ ready  💰 revenium' line passes assertion ---
+echo ""
+echo "  -- I-e: skills-list contains '✓ ready 💰 revenium' → assertion passes (anchor happy-path) --"
+
+TMP_HOME_Ie=$(make_home)
+ARGV_Ie=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ie.XXXXXX")
+TMP_HOMES+=("${ARGV_Ie}")
+LEDGER_Ie="${TMP_HOME_Ie}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_phase13_14_ledger "${LEDGER_Ie}"
+echo "enforcement-plugin-installed=1" >> "${LEDGER_Ie}"
+
+exit_code_ie=0
+output_ie=$(STUB_NEMOCLAW_SKILLS_LIST_OUTPUT='│ ✓ ready  │ 💰 revenium │' \
+            run_provision "${TMP_HOME_Ie}" "${ARGV_Ie}" 2>&1) || exit_code_ie=$?
+
+# Assert: exits 0 (the anchored ready pattern matches the table-row format)
+if [[ "${exit_code_ie}" -eq 0 ]]; then
+  pass "GROUP-I-e: exits 0 when skills-list shows table-row '✓ ready' for revenium"
+else
+  fail "GROUP-I-e: exited ${exit_code_ie} — anchored ready regex incorrectly rejected genuine ready line"
+fi
+
+# Assert: ledger key skill-installed-nemoclaw present (confirms the function ran to completion)
+if [[ -f "${LEDGER_Ie}" ]] && grep -qE "^skill-installed-nemoclaw=" "${LEDGER_Ie}" 2>/dev/null; then
+  pass "GROUP-I-e: skill-installed-nemoclaw ledger key written (function completed)"
+else
+  fail "GROUP-I-e: skill-installed-nemoclaw NOT in ledger — function did not complete"
+fi
+
 # ===========================================================================
 # GROUP J: idempotency — openclaw plugins install is invoked with --force
 #
