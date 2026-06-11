@@ -182,8 +182,12 @@ install_enforcement_plugin() {
     # -------------------------------------------------------------------------
     local MNT
     MNT="${HOME}/sbx-openclaw-${SANDBOX_NAME}"
-    mkdir -p "${MNT}"
-    if ! mountpoint -q "${MNT}" 2>/dev/null || [[ ! -d "${MNT}/skills" ]]; then
+    # (Re)mount only if not already a live mountpoint. `mountpoint -q` is false for a
+    # fresh OR a dead/stale mount (stat fails on a dropped SSHFS), and true for a
+    # healthy one — even when a `${MNT}/skills` listing is briefly cache-lagged. This
+    # avoids tearing down a working mount, which fails with "mkdir: Already exists".
+    if ! mountpoint -q "${MNT}" 2>/dev/null; then
+        mkdir -p "${MNT}"
         # Clear a stale/dead SSHFS mount (in /proc/mounts but inaccessible after the
         # backing SSH connection drops) before remounting — otherwise `share mount`
         # fails with "permission denied creating the directory".
@@ -368,9 +372,12 @@ provision_budget_guardrails() {
     # IN-SANDBOX skill dir (OPENCLAW_HOME=mount → STATE_DIR=mount/skills/revenium).
     local MNT
     MNT="${HOME}/sbx-openclaw-${SANDBOX_NAME}"
-    mkdir -p "${MNT}"
-    if ! mountpoint -q "${MNT}" 2>/dev/null || [[ ! -d "${MNT}/skills" ]]; then
-        # Clear a stale/dead SSHFS mount before remounting (see install_enforcement_plugin).
+    # Reuse the mount the enforcement-plugin step just established; only (re)mount if
+    # it is not a live mountpoint (see install_enforcement_plugin). Tearing down a
+    # healthy mount over a cache-lagged "${MNT}/skills" listing fails with
+    # "mkdir: Already exists".
+    if ! mountpoint -q "${MNT}" 2>/dev/null; then
+        mkdir -p "${MNT}"
         if grep -qsF " ${MNT} " /proc/mounts 2>/dev/null || mount 2>/dev/null | grep -qF " ${MNT} "; then
             fusermount -u "${MNT}" 2>/dev/null || umount -l "${MNT}" 2>/dev/null || true
         fi
