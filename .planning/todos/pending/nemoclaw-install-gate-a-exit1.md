@@ -2,11 +2,42 @@
 id: nemoclaw-install-gate-a-exit1
 title: "install.sh --nemoclaw exits 1 at Phase 15 Gate A (B-01/NCENF-01) on live Nemotron host"
 created: 2026-06-10
-source: 16-03 live validation (Re-run 3)
+updated: 2026-06-11
+status: fix-implemented-pending-e2e
+source: 16-03 live validation (Re-run 3); root-caused during Phase 16 UAT on host 18.212.94.67
 relates_phase: 15
 severity: medium
-tags: [nemoclaw, enforcement, gate-a, b-05, install-exit-code]
+tags: [nemoclaw, enforcement, gate-a, gate-b, b-05, install-exit-code]
 ---
+
+## RESOLUTION (2026-06-11) — fix implemented + pushed + gate-verified live
+
+Root cause was NOT the B-05 Nemotron limitation — it was two stale verification
+probes vs OpenClaw **v2026.5.22** (the plugin itself loads fine, `Status: loaded`,
+`allowConversationAccess: true`):
+
+- **Gate A** ran `openclaw agent --json --message ping` with **no routing target** →
+  v2026.5.22 errors "No target session selected. Use --agent <id>" → empty output →
+  promptChars unparseable → false-fail. Fix: derive the default agent from
+  `openclaw agents list` (the "(default)" row, fallback `main`) and pass `--agent`.
+- **Gate B** grepped `plugins inspect` for `before_prompt_build`/`before_agent_finalize`,
+  which v2026.5.22 no longer enumerates. Fix: assert `Status: loaded` +
+  `allowConversationAccess: true` instead.
+
+Fixed in `scripts/post-install-nemoclaw.sh` (commit 323a2c6), stub + GROUP K tests
+added (provisioning suite 36/0), pushed to origin/main. **Verified live on host
+18.212.94.67 / sandbox revenium-ftw**: agent derivation → `main`; Gate A promptChars
+= 4194 ≥ 1500; Gate B `Status: loaded` + `allowConversationAccess: true` both present.
+
+**Remaining to close:** literal end-to-end `install.sh --nemoclaw` exit 0 (operator
+re-run on revenium-ftw, pending). Separate observation: the agent turn fell back to
+**embedded** with `pairing required: device is asking for more scopes than currently
+approved` — the Gateway path may need a one-time scope/pairing approval (does not
+block the gates, which pass via embedded fallback).
+
+---
+
+### Original report (superseded by the resolution above)
 
 ## Problem
 
