@@ -29,11 +29,31 @@ added (provisioning suite 36/0), pushed to origin/main. **Verified live on host
 18.212.94.67 / sandbox revenium-ftw**: agent derivation → `main`; Gate A promptChars
 = 4194 ≥ 1500; Gate B `Status: loaded` + `allowConversationAccess: true` both present.
 
+**Phase 16 UAT surfaced two more in-sandbox bugs past Gate A (commit c0e14e3):**
+- **common.sh OPENCLAW_HOME** — inside an OpenShell sandbox OpenClaw sets
+  `OPENCLAW_HOME=/sandbox` (parent), data at `$OPENCLAW_HOME/.openclaw`, but
+  common.sh assumed OPENCLAW_HOME *is* the .openclaw dir → `STATE_DIR`,
+  `TAXONOMY_FILE`, `SESSIONS_DIR`, ledgers all dropped `.openclaw`
+  (`/sandbox/skills/revenium/task-taxonomy.json` not found). This broke
+  **in-sandbox write-marker.sh in general**, not just Gate D. Fix: normalize
+  OPENCLAW_HOME (descend into `.openclaw` when the home lacks `agents/` but
+  `.openclaw/agents` exists; no-op for standalone). New `tests/test_common_paths.sh`.
+- **Gate D smoke** — used the invalid label `testing` (not in task-taxonomy) and
+  checked `${MNT}/markers/` instead of `${MNT}/skills/revenium/markers/`. Fixed to
+  `debugging` + the correct mount-relative path.
+
+**All four gates now verified live on revenium-ftw (host 18.212.94.67):**
+A promptChars=4194 · B loaded+allowConversationAccess · C python3 · D
+`write-marker.sh debugging` → `marker written: /sandbox/.openclaw/skills/revenium/markers/…jsonl`
+(exit 0, valid record). Hermetic suites 36/0 + 5/0.
+
 **Remaining to close:** literal end-to-end `install.sh --nemoclaw` exit 0 (operator
-re-run on revenium-ftw, pending). Separate observation: the agent turn fell back to
-**embedded** with `pairing required: device is asking for more scopes than currently
-approved` — the Gateway path may need a one-time scope/pairing approval (does not
-block the gates, which pass via embedded fallback).
+re-run on revenium-ftw — in-sandbox skill re-deployed with the fix,
+`enforcement-plugin-installed` ledger key clear, so the re-run executes the
+enforcement step and should pass all gates). Separate observation: the agent turn
+fell back to **embedded** with `pairing required: device is asking for more scopes
+than currently approved` — the Gateway path may need a one-time scope/pairing
+approval (does not block the gates, which pass via embedded fallback).
 
 ---
 
