@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: NemoClaw/OpenShell Support
-status: milestone_complete
-last_updated: 2026-06-11T01:48:43.376Z
+status: completed
+stopped_at: context exhaustion at 75% (2026-06-11)
+last_updated: "2026-06-11T19:11:44.220Z"
 last_activity: 2026-06-11
 progress:
-  total_phases: 5
+  total_phases: 8
   completed_phases: 5
   total_plans: 18
   completed_plans: 27
-  percent: 100
-stopped_at: Milestone complete (Phase 16 was final phase)
+  percent: 63
 ---
 
 # Project State
@@ -160,8 +160,8 @@ Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 ## Session Continuity
 
-Last session: 2026-06-11T01:30:29.359Z
-Stopped at: Phase 16 context gathered
+Last session: 2026-06-11T19:11:44.213Z
+Stopped at: context exhaustion at 75% (2026-06-11)
 Resume file: None
 
 ## Operator Next Steps
