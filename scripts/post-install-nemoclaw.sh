@@ -303,14 +303,19 @@ install_enforcement_plugin() {
     info "Gate C passed: python3 present in sandbox"
 
     # Gate D (D-07): marker smoke — write a test marker and confirm it appears
-    # under the mount (verifies the mount + write path end-to-end).
+    # under the mount (verifies the mount + write path end-to-end). The smoke
+    # uses a valid task-taxonomy label ('debugging') — write-marker.sh rejects
+    # any label not in task-taxonomy.json. In-sandbox the skill (and its markers/
+    # dir) lives at $OPENCLAW_HOME/.openclaw/skills/revenium, and MNT mounts
+    # /sandbox/.openclaw, so the marker is visible over the mount at
+    # ${MNT}/skills/revenium/markers/ (NOT ${MNT}/markers/).
     nemoclaw "${SANDBOX_NAME}" exec -- sh -lc \
-        "bash ~/.openclaw/skills/revenium/scripts/write-marker.sh testing" 2>/dev/null \
+        "bash ~/.openclaw/skills/revenium/scripts/write-marker.sh debugging" 2>/dev/null \
         || fail "marker smoke test failed — write-marker.sh not functional in sandbox. Aborting."
-    if ! ls "${MNT}/markers/"*.jsonl &>/dev/null; then
-        fail "marker smoke test: no .jsonl file appeared in ${MNT}/markers/ — mount or write path broken. Aborting."
+    if ! ls "${MNT}/skills/revenium/markers/"*.jsonl &>/dev/null; then
+        fail "marker smoke test: no .jsonl file appeared in ${MNT}/skills/revenium/markers/ — mount or write path broken. Aborting."
     fi
-    info "Gate D passed: marker smoke test — .jsonl visible over mount at ${MNT}/markers/"
+    info "Gate D passed: marker smoke test — .jsonl visible over mount at ${MNT}/skills/revenium/markers/"
 
     ledger_set "enforcement-plugin-installed" "1"
     info "Enforcement plugin installed and validated (all gates passed)"

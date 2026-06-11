@@ -597,8 +597,8 @@ _seed_through_skill "${LEDGER_Ja}"
 # a pre-existing stub marker .jsonl in markers/ (write-marker.sh runs in-sandbox
 # and cannot write to the host-side mount in the hermetic suite).
 _MNT_Ja="${TMP_HOME_Ja}/sbx-openclaw-${REVENIUM_SANDBOX_NAME:-test-sandbox}"
-mkdir -p "${_MNT_Ja}/extensions" "${_MNT_Ja}/markers"
-touch "${_MNT_Ja}/markers/stub-gate-d-test.jsonl"
+mkdir -p "${_MNT_Ja}/extensions" "${_MNT_Ja}/skills/revenium/markers"
+touch "${_MNT_Ja}/skills/revenium/markers/stub-gate-d-test.jsonl"
 
 exit_code_ja=0
 output_ja=$(run_provision "${TMP_HOME_Ja}" "${ARGV_Ja}" 2>&1) || exit_code_ja=$?
@@ -631,8 +631,8 @@ _seed_through_skill "${LEDGER_Jb}"
 # to run from scratch (simulating re-run with pre-existing plugin dir).
 # Create the SSHFS mount point subdirectories that cp -r and Gate D require.
 _MNT_Jb="${TMP_HOME_Jb}/sbx-openclaw-${REVENIUM_SANDBOX_NAME:-test-sandbox}"
-mkdir -p "${_MNT_Jb}/extensions" "${_MNT_Jb}/markers"
-touch "${_MNT_Jb}/markers/stub-gate-d-test.jsonl"
+mkdir -p "${_MNT_Jb}/extensions" "${_MNT_Jb}/skills/revenium/markers"
+touch "${_MNT_Jb}/skills/revenium/markers/stub-gate-d-test.jsonl"
 
 exit_code_jb=0
 output_jb=$(run_provision "${TMP_HOME_Jb}" "${ARGV_Jb}" 2>&1) || exit_code_jb=$?
@@ -680,8 +680,8 @@ TMP_HOMES+=("${ARGV_Ka}")
 LEDGER_Ka="${TMP_HOME_Ka}/.nemoclaw/revenium-nemoclaw.ledger"
 _seed_through_skill "${LEDGER_Ka}"
 _MNT_Ka="${TMP_HOME_Ka}/sbx-openclaw-${REVENIUM_SANDBOX_NAME:-test-sandbox}"
-mkdir -p "${_MNT_Ka}/extensions" "${_MNT_Ka}/markers"
-touch "${_MNT_Ka}/markers/stub-gate-d-test.jsonl"
+mkdir -p "${_MNT_Ka}/extensions" "${_MNT_Ka}/skills/revenium/markers"
+touch "${_MNT_Ka}/skills/revenium/markers/stub-gate-d-test.jsonl"
 
 exit_code_ka=0
 output_ka=$(run_provision "${TMP_HOME_Ka}" "${ARGV_Ka}" 2>&1) || exit_code_ka=$?
@@ -712,8 +712,8 @@ TMP_HOMES+=("${ARGV_Kb}")
 LEDGER_Kb="${TMP_HOME_Kb}/.nemoclaw/revenium-nemoclaw.ledger"
 _seed_through_skill "${LEDGER_Kb}"
 _MNT_Kb="${TMP_HOME_Kb}/sbx-openclaw-${REVENIUM_SANDBOX_NAME:-test-sandbox}"
-mkdir -p "${_MNT_Kb}/extensions" "${_MNT_Kb}/markers"
-touch "${_MNT_Kb}/markers/stub-gate-d-test.jsonl"
+mkdir -p "${_MNT_Kb}/extensions" "${_MNT_Kb}/skills/revenium/markers"
+touch "${_MNT_Kb}/skills/revenium/markers/stub-gate-d-test.jsonl"
 
 exit_code_kb=0
 output_kb=$(STUB_NEMOCLAW_PROMPT_CHARS=649 \
@@ -735,8 +735,8 @@ TMP_HOMES+=("${ARGV_Kc}")
 LEDGER_Kc="${TMP_HOME_Kc}/.nemoclaw/revenium-nemoclaw.ledger"
 _seed_through_skill "${LEDGER_Kc}"
 _MNT_Kc="${TMP_HOME_Kc}/sbx-openclaw-${REVENIUM_SANDBOX_NAME:-test-sandbox}"
-mkdir -p "${_MNT_Kc}/extensions" "${_MNT_Kc}/markers"
-touch "${_MNT_Kc}/markers/stub-gate-d-test.jsonl"
+mkdir -p "${_MNT_Kc}/extensions" "${_MNT_Kc}/skills/revenium/markers"
+touch "${_MNT_Kc}/skills/revenium/markers/stub-gate-d-test.jsonl"
 
 exit_code_kc=0
 output_kc=$(STUB_NEMOCLAW_PLUGIN_STATUS=error \
@@ -758,8 +758,8 @@ TMP_HOMES+=("${ARGV_Kd}")
 LEDGER_Kd="${TMP_HOME_Kd}/.nemoclaw/revenium-nemoclaw.ledger"
 _seed_through_skill "${LEDGER_Kd}"
 _MNT_Kd="${TMP_HOME_Kd}/sbx-openclaw-${REVENIUM_SANDBOX_NAME:-test-sandbox}"
-mkdir -p "${_MNT_Kd}/extensions" "${_MNT_Kd}/markers"
-touch "${_MNT_Kd}/markers/stub-gate-d-test.jsonl"
+mkdir -p "${_MNT_Kd}/extensions" "${_MNT_Kd}/skills/revenium/markers"
+touch "${_MNT_Kd}/skills/revenium/markers/stub-gate-d-test.jsonl"
 
 exit_code_kd=0
 output_kd=$(STUB_NEMOCLAW_PLUGIN_CONV_ACCESS=false \

@@ -32,6 +32,17 @@ if [[ -z "${OPENCLAW_HOME:-}" ]]; then
   unset _oc_home _candidate
 fi
 
+# Sandbox normalization (NemoClaw/OpenShell). OpenClaw running inside an OpenShell
+# sandbox sets OPENCLAW_HOME to the parent (e.g. /sandbox) with the real data dir
+# at $OPENCLAW_HOME/.openclaw, whereas standalone OpenClaw points OPENCLAW_HOME at
+# the .openclaw dir itself. If the configured OPENCLAW_HOME does not directly hold
+# the openclaw layout (no agents/) but a nested .openclaw/ does, descend into it so
+# STATE_DIR / SESSIONS_DIR / ledgers resolve correctly in-sandbox. This is a no-op
+# for standalone (its OPENCLAW_HOME already contains agents/).
+if [[ ! -d "${OPENCLAW_HOME}/agents" && -d "${OPENCLAW_HOME}/.openclaw/agents" ]]; then
+  OPENCLAW_HOME="${OPENCLAW_HOME}/.openclaw"
+fi
+
 # ---------------------------------------------------------------------------
 # Path constants (OpenClaw collapsed model: STATE_DIR == skill directory).
 # Unlike Hermes which separates ~/.hermes/skills/revenium/ from
