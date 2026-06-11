@@ -558,6 +558,7 @@ if [[ "${WORK_DONE}" -eq 1 ]]; then
     echo "  Config:    /sandbox/.config/revenium/config.yaml"
     echo "  Probe:     meter-probe-passed"
     echo "  Plugin:    revenium-enforcement (validated)"
+    echo "  Skill:     revenium (✓ ready)"
 else
     echo "  NemoClaw already provisioned — no changes (idempotent re-run)."
     echo ""
@@ -566,6 +567,6 @@ else
     echo "  keys from ${LEDGER_FILE} (e.g. creds-written, meter-probe-passed)"
     echo "  before re-running — note clearing meter-probe-passed emits a new event."
     echo "  To re-install the enforcement plugin, clear: enforcement-plugin-installed"
+    echo "  Skill:     revenium (deployed; ledger-gated, not re-verified this run)"
 fi
-echo "  Skill:     revenium (✓ ready)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
