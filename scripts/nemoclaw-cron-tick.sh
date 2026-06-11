@@ -43,6 +43,14 @@ log() {
 # ---------------------------------------------------------------------------
 if ! mountpoint -q "${MNT}" 2>/dev/null || ! [[ -d "${MNT}/skills" ]]; then
   log "mount down — attempting remount: ${SANDBOX_NAME}"
+  # A stale/dead SSHFS mount (still listed in /proc/mounts but inaccessible —
+  # "Transport endpoint is not connected" / "permission denied" on stat, e.g. after
+  # the backing SSH connection drops) blocks `share mount` with "permission denied
+  # creating the directory" and wedges every tick. Clear it before remounting.
+  if grep -qsF " ${MNT} " /proc/mounts 2>/dev/null || mount 2>/dev/null | grep -qF " ${MNT} "; then
+    log "clearing stale mount at ${MNT}"
+    fusermount -u "${MNT}" 2>>"${LOG_FILE}" || umount -l "${MNT}" 2>>"${LOG_FILE}" || true
+  fi
   if ! nemoclaw "${SANDBOX_NAME}" share mount /sandbox/.openclaw "${MNT}" 2>>"${LOG_FILE}"; then
     log "remount failed — skipping tick (rc=3)"
     exit 3
