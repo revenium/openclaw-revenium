@@ -508,6 +508,74 @@ else
   fail "C4a: no create invocation found for C4 (expected at least 1)"
 fi
 
+# ---------------------------------------------------------------------------
+# C5: cross-deployment guard — a same-scope rule whose name carries a DIFFERENT
+#     deployment label must NOT be adopted (and must not be renamed); a new
+#     rule is created instead. (Live incident 2026-06-12: scope-only matching
+#     would have adopted+renamed revenium-ftw-2's rule on a shared tenant.)
+# ---------------------------------------------------------------------------
+FIXTURE_FOREIGN='[{"id":"foreign-1","name":"OpenClaw Monthly Budget — otherhost","windowType":"MONTHLY","groupBy":"AGENT","filters":[{"dimension":"AGENT","operator":"STARTS_WITH","value":"openclaw-"}]}]'
+
+STUB_REVENIUM_BUDGET_RULES_JSON="${FIXTURE_FOREIGN}" \
+  run_interactive "" "${STDIN_C}" "REVENIUM_BUDGET_LABEL=myhost" > /dev/null 2>&1 || true
+
+NUM_C5=$(count_invocations)
+if [[ "${NUM_C5}" -eq 1 ]]; then
+  pass "C5a: foreign-labeled same-scope rule NOT adopted — new rule created"
+else
+  fail "C5a: expected 1 create invocation (no adopt of foreign rule), got ${NUM_C5}"
+fi
+
+config_c5_ids=$(python3 -c "
+import json
+try:
+    d = json.load(open('${FAKE_SKILL_DIR}/config.json'))
+    print(json.dumps(d.get('ruleIds', [])))
+except Exception:
+    print('error')
+")
+if [[ "${config_c5_ids}" == '["rule-stub-test"]' ]]; then
+  pass "C5b: config.json ruleIds is the NEW rule, not the foreign one"
+else
+  fail "C5b: expected ruleIds=[\"rule-stub-test\"], got ${config_c5_ids}"
+fi
+
+update_count_c5=$(python3 -c "
+try:
+    n = sum(1 for line in open('${UPDATE_FILE}') if line.strip() == 'UPDATE')
+    print(n)
+except Exception:
+    print(0)
+")
+if [[ "${update_count_c5}" -eq 0 ]]; then
+  pass "C5c: foreign rule never renamed (zero update invocations)"
+else
+  fail "C5c: expected 0 update invocations on foreign rule, got ${update_count_c5}"
+fi
+
+# ---------------------------------------------------------------------------
+# C6: own-label rule IS adopted (label guard must not break same-host idempotency)
+# ---------------------------------------------------------------------------
+FIXTURE_MINE='[{"id":"existing-mine","name":"OpenClaw Monthly Budget — myhost","windowType":"MONTHLY","groupBy":"AGENT","filters":[{"dimension":"AGENT","operator":"STARTS_WITH","value":"openclaw-"}]}]'
+
+STUB_REVENIUM_BUDGET_RULES_JSON="${FIXTURE_MINE}" \
+  run_interactive "" "${STDIN_C}" "REVENIUM_BUDGET_LABEL=myhost" > /dev/null 2>&1 || true
+
+NUM_C6=$(count_invocations)
+config_c6_ids=$(python3 -c "
+import json
+try:
+    d = json.load(open('${FAKE_SKILL_DIR}/config.json'))
+    print(json.dumps(d.get('ruleIds', [])))
+except Exception:
+    print('error')
+")
+if [[ "${NUM_C6}" -eq 0 && "${config_c6_ids}" == '["existing-mine"]' ]]; then
+  pass "C6: own-labeled same-scope rule still adopted (0 creates, ruleIds=[\"existing-mine\"])"
+else
+  fail "C6: expected adopt of own-labeled rule (0 creates + ruleIds=[\"existing-mine\"]), got creates=${NUM_C6} ruleIds=${config_c6_ids}"
+fi
+
 # ===========================================================================
 # SUITE D: default mode — autonomousMode written explicitly
 #

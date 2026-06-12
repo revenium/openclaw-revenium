@@ -67,6 +67,9 @@ IDEMPOTENCY:
   creating a duplicate. If multiple same-scope rules are detected, setup warns, prints
   the exact `revenium guardrails budget-rules delete <id> --yes` command for each, and
   adopts the first without auto-deleting — a shared tenant may host other hosts' rules.
+  Cross-deployment guard: a same-scope rule whose name carries a DIFFERENT deployment
+  label ("... — <label>") is never adopted or renamed — only rules labeled for this
+  deployment (REVENIUM_BUDGET_LABEL / hostname) or unlabeled legacy rules match.
 
 REVENIUM_BUDGET_LABEL:
   Optional env var. When set, its value is appended to the rule name as a
@@ -314,6 +317,15 @@ budget_label() {
 # python3 env-passing heredoc to compare each rule's scope (filters, windowType
 # or period field, groupBy) against the desired scope. Prints matching rule ids,
 # one per line. Returns 0; empty output = no matches.
+#
+# Cross-deployment guard: on a shared tenant, OTHER hosts' rules have the SAME
+# scope (AGENT:STARTS_WITH:openclaw- / period / groupBy) — scope alone would
+# adopt-and-RENAME another deployment's rule (observed live 2026-06-12 against
+# revenium-ftw-2's rule). Rules whose display name carries a deployment label
+# ("... — <label>") are therefore only matched when the label equals THIS
+# deployment's budget_label(); unlabeled rules (legacy/hand-created) remain
+# adoptable as before.
+#
 # Fail-open: if the list call exits non-zero OR stdout is not valid JSON, the
 # function returns 0 with no output (treated as "none found" → caller proceeds
 # to create as normal). Bash 3.2 safe; no associative arrays, no herestrings.
@@ -327,6 +339,9 @@ find_existing_rules() {
   # "AGENT:STARTS_WITH:<prefix>" always; extra_filter appended when non-empty.
   local desired_filter_base="AGENT:STARTS_WITH:${REVENIUM_AGENT_PREFIX}"
 
+  local desired_label
+  desired_label=$(budget_label)
+
   local list_json
   list_json=$(revenium guardrails budget-rules list --output json 2>/dev/null) || list_json=""
 
@@ -336,6 +351,7 @@ find_existing_rules() {
   DESIRED_GROUP_BY="${desired_group_by}" \
   DESIRED_FILTER_BASE="${desired_filter_base}" \
   DESIRED_EXTRA_FILTER="${desired_extra_filter}" \
+  DESIRED_LABEL="${desired_label}" \
   python3 - <<'PY'
 import json, os
 
@@ -361,6 +377,7 @@ desired_period = os.environ.get('DESIRED_PERIOD', '').upper()
 desired_group_by = os.environ.get('DESIRED_GROUP_BY', 'AGENT').upper()
 desired_filter_base = os.environ.get('DESIRED_FILTER_BASE', '')
 desired_extra_filter = os.environ.get('DESIRED_EXTRA_FILTER', '')
+desired_label = os.environ.get('DESIRED_LABEL', '')
 
 # Build desired filter set (normalize each colon-joined filter string)
 desired_filters = set()
@@ -394,6 +411,18 @@ for rule in rules:
         rule_group_by = str(rule.get('groupBy') or 'AGENT').upper()
         if rule_group_by != desired_group_by:
             continue
+
+        # Cross-deployment guard: a name carrying a deployment label
+        # ("... — <label>", em-dash separator from the rule_name template)
+        # belongs to whichever deployment minted it. Adopt only when the
+        # label is OURS; skip foreign-labeled rules so a shared tenant never
+        # gets another host's rule adopted and renamed. Unlabeled names
+        # (legacy/hand-created) stay adoptable.
+        rule_name = str(rule.get('name') or '')
+        if ' — ' in rule_name:
+            rule_label = rule_name.rsplit(' — ', 1)[1].strip()
+            if rule_label and rule_label != desired_label:
+                continue
 
         # All match — print the id
         print(rule['id'])

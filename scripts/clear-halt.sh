@@ -8,8 +8,16 @@
 
 set -euo pipefail
 
-SKILL_DIR="${HOME}/.openclaw/skills/revenium"
-GUARDRAIL_STATUS_FILE="${SKILL_DIR}/guardrail-status.json"
+# Resolve the skill state dir via common.sh so this works everywhere the other
+# scripts do: standalone installs, host-side against a sandbox mount
+# (OPENCLAW_HOME=<mount>), and in-sandbox (OPENCLAW_HOME=/sandbox with the
+# .openclaw normalization). Previously hardcoded ${HOME}/.openclaw, which could
+# not target a sandbox over the mount.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+. "${SCRIPT_DIR}/common.sh"
+
+GUARDRAIL_STATUS_FILE="${STATE_DIR}/guardrail-status.json"
 
 if [[ ! -f "${GUARDRAIL_STATUS_FILE}" ]]; then
   echo "No guardrail-status.json found — nothing to clear."

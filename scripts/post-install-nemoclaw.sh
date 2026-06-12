@@ -60,6 +60,42 @@ fail()  { echo ""; echo "  ✗ $*" >&2; exit 1; }
 command_exists() { command -v "$1" &>/dev/null; }
 
 # ---------------------------------------------------------------------------
+# nemoclaw — timeout-guarded wrapper over the real nemoclaw binary.
+# A wedged in-sandbox OpenClaw gateway makes `nemoclaw exec`/`recover` hang
+# indefinitely (observed live 2026-06-12: an `openclaw skills list` exec hung
+# the install for 1h+). This function shadows the binary for every call site
+# in this script and enforces a hard ceiling, so a wedged gateway fails the
+# install with an actionable message instead of hanging it.
+#
+# Ceilings are sized per call shape (live agent turns legitimately take
+# 70-120s+); override any single call with NEMOCLAW_TIMEOUT_SECONDS=<n>.
+# `timeout` is coreutils — always present on the Linux hosts this path gates
+# on; if absent (macOS hermetic-test runs) the call passes through unguarded.
+# `timeout` execs nemoclaw via PATH, so test stubs keep working.
+# ---------------------------------------------------------------------------
+nemoclaw() {
+    local _secs="${NEMOCLAW_TIMEOUT_SECONDS:-}"
+    if [[ -z "${_secs}" ]]; then
+        case "$*" in
+            *"openclaw agent"*)   _secs=300 ;;  # live agent turn (Gate A)
+            *" recover"*)         _secs=240 ;;  # sandbox/gateway restart
+            *" skill install "*)  _secs=240 ;;  # copies the skill tree
+            *)                    _secs=120 ;;  # exec one-shots, inspect, etc.
+        esac
+    fi
+    local _rc=0
+    if command_exists timeout; then
+        timeout "${_secs}" nemoclaw "$@" || _rc=$?
+    else
+        command nemoclaw "$@" || _rc=$?
+    fi
+    if [[ "${_rc}" -eq 124 ]]; then
+        warn "nemoclaw call timed out after ${_secs}s (args: ${1:-} ${2:-} ...) — the in-sandbox gateway may be wedged. Try: nemoclaw ${SANDBOX_NAME:-<name>} recover, then re-run the install."
+    fi
+    return "${_rc}"
+}
+
+# ---------------------------------------------------------------------------
 # Ledger helpers (D-07)
 # Reads/writes LEDGER_FILE (the variable, not a hardcoded path).
 # ---------------------------------------------------------------------------
