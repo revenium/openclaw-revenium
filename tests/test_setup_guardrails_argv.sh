@@ -509,6 +509,80 @@ else
 fi
 
 # ===========================================================================
+# SUITE D: default mode — autonomousMode written explicitly
+#
+# guardrail-check.sh derives halted = autonomousMode AND blocked; an absent
+# field reads as false, so hard limits never hard-halt. Default mode must
+# therefore ALWAYS write the field: false without --autonomous, true with it.
+# (This is the non-interactive path the NemoClaw install uses.)
+# ===========================================================================
+echo ""
+echo "=== Suite D: default mode autonomousMode write-back ==="
+
+# run_default: reset capture, seed config.json, run default mode with given flags
+run_default() {
+  : > "${INVOCATION_FILE}"
+  : > "${UPDATE_FILE}"
+  : > "${ORDER_FILE}"
+  printf '{}\n' > "${FAKE_SKILL_DIR}/config.json"
+
+  env \
+    OPENCLAW_HOME="${FAKE_HOME}" \
+    INVOCATION_FILE="${INVOCATION_FILE}" \
+    UPDATE_FILE="${UPDATE_FILE}" \
+    ORDER_FILE="${ORDER_FILE}" \
+    HELP_HAS_TASK_TYPE="" \
+    REVENIUM_BIN="${STUB_BIN}/revenium" \
+    STUB_REVENIUM_BUDGET_RULES_JSON='[]' \
+    bash "${REPO_ROOT}/scripts/setup-guardrails.sh" --hard-limit 100 --period MONTHLY "$@"
+}
+
+# read_autonomous_mode: print config.json autonomousMode as python repr (True/False/MISSING)
+read_autonomous_mode() {
+  python3 -c "
+import json
+try:
+    d = json.load(open('${FAKE_SKILL_DIR}/config.json'))
+    print(repr(d['autonomousMode']) if 'autonomousMode' in d else 'MISSING')
+except Exception:
+    print('ERROR')
+"
+}
+
+# D1: default mode WITHOUT --autonomous → autonomousMode explicitly false
+run_default > /dev/null 2>&1 || true
+AUTO_D1=$(read_autonomous_mode)
+if [[ "${AUTO_D1}" == "False" ]]; then
+  pass "D1: default mode writes autonomousMode=false when --autonomous absent"
+else
+  fail "D1: expected autonomousMode False, got ${AUTO_D1}"
+fi
+
+# D2: default mode WITH --autonomous → autonomousMode true
+run_default --autonomous > /dev/null 2>&1 || true
+AUTO_D2=$(read_autonomous_mode)
+if [[ "${AUTO_D2}" == "True" ]]; then
+  pass "D2: default mode writes autonomousMode=true with --autonomous"
+else
+  fail "D2: expected autonomousMode True, got ${AUTO_D2}"
+fi
+
+# D3: ruleIds still written alongside autonomousMode (no regression of write-back)
+RULE_IDS_D3=$(python3 -c "
+import json
+try:
+    d = json.load(open('${FAKE_SKILL_DIR}/config.json'))
+    print(json.dumps(d.get('ruleIds', [])))
+except Exception:
+    print('ERROR')
+")
+if [[ "${RULE_IDS_D3}" == '["rule-stub-test"]' ]]; then
+  pass "D3: default mode still writes ruleIds alongside autonomousMode"
+else
+  fail "D3: expected ruleIds [\"rule-stub-test\"], got ${RULE_IDS_D3}"
+fi
+
+# ===========================================================================
 # SUMMARY
 # ===========================================================================
 echo ""

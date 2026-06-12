@@ -373,9 +373,10 @@ install_enforcement_plugin() {
 # budget. The standalone path creates rules via the agent-guided interactive flow,
 # which does not run inside a NemoClaw sandbox; this is the non-interactive
 # equivalent. Gated on REVENIUM_BUDGET_LIMIT + REVENIUM_BUDGET_PERIOD — without them,
-# budget setup is left to the operator (run setup-guardrails.sh afterward). Runs the
-# unmodified setup-guardrails.sh on the host with OPENCLAW_HOME=<mount> so config.json
-# lands in the sandbox. Ledger key: budget-rules-created.
+# budget setup is left to the operator (run setup-guardrails.sh afterward). Optional
+# REVENIUM_BUDGET_AUTONOMOUS=true sets autonomousMode=true (breach → hard halt instead
+# of warn-and-ask). Runs the unmodified setup-guardrails.sh on the host with
+# OPENCLAW_HOME=<mount> so config.json lands in the sandbox. Ledger key: budget-rules-created.
 provision_budget_guardrails() {
     if ledger_has "budget-rules-created"; then
         info "Budget guardrail rules already created (ledger) — skipping."
@@ -387,7 +388,9 @@ provision_budget_guardrails() {
         return 0
     fi
 
-    step "Creating Revenium budget guardrail rule (limit=${REVENIUM_BUDGET_LIMIT}, period=${REVENIUM_BUDGET_PERIOD})"
+    local autonomous_label="warn-and-ask"
+    [[ "${REVENIUM_BUDGET_AUTONOMOUS:-}" == "true" ]] && autonomous_label="hard-halt (autonomous)"
+    step "Creating Revenium budget guardrail rule (limit=${REVENIUM_BUDGET_LIMIT}, period=${REVENIUM_BUDGET_PERIOD}, breach=${autonomous_label})"
 
     # Establish the SSHFS mount so setup-guardrails.sh writes config.json into the
     # IN-SANDBOX skill dir (OPENCLAW_HOME=mount → STATE_DIR=mount/skills/revenium).
@@ -398,6 +401,13 @@ provision_budget_guardrails() {
     local shadow_flag=""
     [[ -n "${REVENIUM_BUDGET_SHADOW:-}" ]] && shadow_flag="--shadow-mode"
 
+    # REVENIUM_BUDGET_AUTONOMOUS=true → --autonomous → config.json autonomousMode=true:
+    # on a rule breach guardrail-check.sh sets halted:true and the agent hard-halts.
+    # Default (unset/anything else) → autonomousMode=false: breach = warn-and-ask,
+    # which relies on per-turn LLM compliance to actually stop.
+    local autonomous_flag=""
+    [[ "${REVENIUM_BUDGET_AUTONOMOUS:-}" == "true" ]] && autonomous_flag="--autonomous"
+
     # setup-guardrails.sh creates the rule via the host `revenium` CLI (authenticated
     # by the exported REVENIUM_* env) and writes ruleIds to config.json under
     # OPENCLAW_HOME/skills/revenium. It self-bootstraps config.json and is idempotent
@@ -405,7 +415,7 @@ provision_budget_guardrails() {
     OPENCLAW_HOME="${MNT}" \
     REVENIUM_BUDGET_LABEL="${REVENIUM_BUDGET_LABEL:-${SANDBOX_NAME}}" \
     bash "${SCRIPT_DIR}/setup-guardrails.sh" \
-        --hard-limit "${REVENIUM_BUDGET_LIMIT}" --period "${REVENIUM_BUDGET_PERIOD}" ${shadow_flag} \
+        --hard-limit "${REVENIUM_BUDGET_LIMIT}" --period "${REVENIUM_BUDGET_PERIOD}" ${shadow_flag} ${autonomous_flag} \
         || fail "setup-guardrails.sh failed — budget rule not created. Verify REVENIUM_API_KEY and that the host 'revenium' CLI is authenticated."
 
     # Confirm ruleIds actually landed in the in-sandbox config.json.

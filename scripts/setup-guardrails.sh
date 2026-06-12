@@ -2,7 +2,7 @@
 set -euo pipefail
 # setup-guardrails.sh — interactive rule-creation entry point for the Phase 3
 # guardrails-native budget enforcement. Two modes per D-02:
-#   default     : --hard-limit N --period P [--shadow-mode] from CLI args.
+#   default     : --hard-limit N --period P [--shadow-mode] [--autonomous] from CLI args.
 #   --interactive: operator prompts; called by SKILL.md Setup Flow (D-18).
 # Legacy migration mode is intentionally absent (D-02/D-03 decision).
 # Idempotent via ruleIds-presence pre-check; flock-guarded via RULES_LOCK_FILE.
@@ -39,7 +39,7 @@ setup-guardrails.sh — create Revenium guardrails budget rules for OpenClaw
 
 MODES:
   Default mode (all args from CLI flags):
-    setup-guardrails.sh --hard-limit 100 --period MONTHLY [--shadow-mode]
+    setup-guardrails.sh --hard-limit 100 --period MONTHLY [--shadow-mode] [--autonomous]
 
   Interactive mode (operator prompts; used by SKILL.md Setup Flow):
     setup-guardrails.sh --interactive [--shadow-mode]
@@ -48,6 +48,12 @@ OPTIONS:
   --hard-limit <N>    Budget hard limit (numeric, e.g. 50.00). Required in default mode.
   --period <P>        Budget period: DAILY | WEEKLY | MONTHLY | QUARTERLY. Required in default mode.
   --shadow-mode       Created rule runs in shadow mode (observe only, no blocking). D-08.
+  --autonomous        Default mode only: write autonomousMode=true to config.json — on a
+                      rule breach guardrail-check.sh sets halted:true and the agent
+                      HARD-HALTS (no warn-and-ask). Without this flag default mode writes
+                      autonomousMode=false: a breach sets warned:true and the agent asks
+                      the user for permission each turn instead of halting. Interactive
+                      mode prompts for this and ignores the flag.
   --interactive       Collect all args from operator prompts.
   --help              Show this usage block and exit.
 
@@ -76,6 +82,9 @@ EXAMPLES:
   # Default mode — MONTHLY hard limit:
   setup-guardrails.sh --hard-limit 100 --period MONTHLY
 
+  # Default mode — hard-halt on breach (autonomous enforcement):
+  setup-guardrails.sh --hard-limit 100 --period MONTHLY --autonomous
+
   # Shadow mode — observe only:
   setup-guardrails.sh --interactive --shadow-mode
 
@@ -91,11 +100,16 @@ MODE="default"
 HARD_LIMIT=""
 PERIOD=""
 SHADOW_MODE="false"
+AUTONOMOUS_MODE="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --interactive)
       MODE="interactive"
+      shift
+      ;;
+    --autonomous)
+      AUTONOMOUS_MODE="true"
       shift
       ;;
     --hard-limit)
@@ -135,6 +149,8 @@ if [[ "${MODE}" == "default" ]]; then
     error "default mode requires --hard-limit and --period"
     exit 2
   fi
+elif [[ "${AUTONOMOUS_MODE}" == "true" ]]; then
+  warn "--autonomous is ignored in interactive mode — the autonomous-mode prompt decides"
 fi
 
 # ---------------------------------------------------------------------------
@@ -700,10 +716,13 @@ run_default() {
   fi
 
   local new_rule_ids_json="[\"${RULE_ID}\"]"
-  write_rule_ids_to_config "${new_rule_ids_json}"
+  # Write autonomousMode explicitly (true with --autonomous, else false) so the
+  # field always exists: guardrail-check.sh derives halted = autonomous AND blocked,
+  # and an absent field silently reads as false — hard limits would never hard-halt.
+  write_rule_ids_and_config "${new_rule_ids_json}" "${AUTONOMOUS_MODE}"
 
-  info "config.json now contains ruleIds=[${RULE_ID}]"
-  echo "Created 1 rule(s). config.json updated. ruleIds=${new_rule_ids_json}"
+  info "config.json now contains ruleIds=[${RULE_ID}] autonomousMode=${AUTONOMOUS_MODE}"
+  echo "Created 1 rule(s). config.json updated. ruleIds=${new_rule_ids_json} autonomousMode=${AUTONOMOUS_MODE}"
 }
 
 # ---------------------------------------------------------------------------

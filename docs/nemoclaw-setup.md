@@ -58,6 +58,11 @@ export REVENIUM_OWNER_ID=<your-owner-id>
 export REVENIUM_BUDGET_LIMIT=100              # numeric hard limit, e.g. 100.00
 export REVENIUM_BUDGET_PERIOD=MONTHLY        # DAILY | WEEKLY | MONTHLY | QUARTERLY
 # export REVENIUM_BUDGET_SHADOW=1            # optional: warn-only (no blocking)
+# export REVENIUM_BUDGET_AUTONOMOUS=true     # optional: HARD-HALT the agent when the
+                                             # hard limit is breached. Default (unset):
+                                             # warn-and-ask — over the limit, the agent
+                                             # asks permission each turn instead of
+                                             # halting (relies on per-turn LLM compliance)
 
 bash ~/.openclaw/skills/revenium/scripts/install.sh --nemoclaw
 ```
