@@ -14,7 +14,7 @@ Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) a
   brew install revenium/tap/revenium
   ```
 
-  The skill is gated on this binary and won't load without it. (`post-install.sh` also installs it automatically via Homebrew if it's missing — see [step 2](#2-run-post-install-setup).)
+  The skill is gated on this binary and won't load without it. (`post-install.sh` also installs it automatically via Homebrew if it's missing — see [step 2](#2-configure-credentials-and-run-post-install-one-step).)
 - [Revenium](https://app.revenium.ai/connections) API key, Team ID, Tenant ID, and Owner ID
 
 ## Installation
@@ -29,53 +29,51 @@ clawhub install --force --dir ~/.openclaw/skills revenium
 
 > Installing for local development or testing from this Git repo instead of ClawHub? See [Installing from the GitHub repo](#installing-from-the-github-repo-local-development) below.
 
-### 2. Run post-install setup
+### 2. Configure credentials and run post-install (one step)
 
-ClawHub does not run post-install scripts, so run the setup script **first** — it installs any missing prerequisites (including the `revenium` CLI itself, which the next step needs) and configures OpenClaw sandbox access:
+ClawHub does not run post-install scripts, so run the setup script yourself. Export your Revenium credentials first and everything happens in a single run — post-install installs any missing prerequisites (including the `revenium` CLI itself), persists the exported credentials to the host config, and snapshots them into the sandbox:
 
 ```bash
+export REVENIUM_API_KEY=<API_KEY>
+export REVENIUM_TEAM_ID=<TEAM_ID>
+export REVENIUM_TENANT_ID=<TENANT_ID>
+export REVENIUM_OWNER_ID=<OWNER_ID>
+
+# Optional — create a budget guardrail rule at install time (mirrors the NemoClaw
+# install). If you omit these, the agent walks you through budget setup on first run.
+export REVENIUM_BUDGET_LIMIT=100              # numeric hard limit, e.g. 100.00
+export REVENIUM_BUDGET_PERIOD=MONTHLY         # DAILY | WEEKLY | MONTHLY | QUARTERLY
+# export REVENIUM_BUDGET_AUTONOMOUS=true      # hard-halt the agent on breach (default: warn-and-ask)
+# export REVENIUM_BUDGET_SHADOW=1             # observe-only (no blocking)
+
 bash ~/.openclaw/skills/revenium/scripts/post-install.sh
 ```
 
 This will:
 
 1. Check for and install the `revenium` CLI and `jq` via Homebrew (if missing), and verify `python3` is available
-2. Mark the skill's scripts as executable
-3. Configure the Docker sandbox under `agents.defaults.sandbox.docker` in `~/.openclaw/openclaw.json`:
+2. Persist the exported `REVENIUM_*` credentials to the host config (`~/.config/revenium/config.yaml`)
+3. Mark the skill's scripts as executable
+4. Configure the Docker sandbox under `agents.defaults.sandbox.docker` in `~/.openclaw/openclaw.json`:
    - Bind-mounts `~/.openclaw` (rw — skills, sessions, logs, `guardrail-status.json`) and the Homebrew `bin`/`lib` directories containing `revenium` and `jq` (ro)
    - Sets `PATH`, `HOME`, `LD_LIBRARY_PATH`, and `SSL_CERT_FILE` in the container environment
-   - Injects `REVENIUM_API_KEY` / `REVENIUM_API_URL` / `REVENIUM_TEAM_ID` / `REVENIUM_TENANT_ID` / `REVENIUM_OWNER_ID` from your host config (so the CLI inside the sandbox is authenticated **without** mounting `~/.config`)
+   - Injects `REVENIUM_API_KEY` / `REVENIUM_API_URL` / `REVENIUM_TEAM_ID` / `REVENIUM_TENANT_ID` / `REVENIUM_OWNER_ID` into the sandbox (so the CLI inside the sandbox is authenticated **without** mounting `~/.config`)
    - Sets `dangerouslyAllowExternalBindSources: true` — required so the gateway accepts the `~/.openclaw` and Homebrew binds, which live outside the sandbox's default `~/.openclaw/workspace` root. It does **not** mount any credential path; those remain hard-blocked by OpenClaw regardless of this flag.
-4. Enable `autoAllowSkills` in `~/.openclaw/exec-approvals.json` so skill-declared binaries are auto-approved
-5. Seed an initial `guardrail-status.json` so the agent doesn't error before the cron's first run
-6. Seed an initial `config.json` (prompts interactively for `autonomousMode`) so operators can set the halt-vs-warn behavior up front
-7. Inject a mandatory guardrail check into `AGENTS.md` so enforcement is always in context
-8. Deploy `BUDGET-GUARD.md` into the workspace so enforcement is injected into isolated/cron sessions too
-9. Verify the installation
+5. Enable `autoAllowSkills` in `~/.openclaw/exec-approvals.json` so skill-declared binaries are auto-approved
+6. Seed an initial `guardrail-status.json` so the agent doesn't error before the cron's first run
+7. Seed an initial `config.json` with the halt-vs-warn behavior (`autonomousMode` — taken from `REVENIUM_BUDGET_AUTONOMOUS` when exported, otherwise prompted on interactive shells)
+8. Inject a mandatory guardrail check into `AGENTS.md` so enforcement is always in context
+9. Deploy `BUDGET-GUARD.md` into the workspace so enforcement is injected into isolated/cron sessions too
+10. **If `REVENIUM_BUDGET_LIMIT` + `REVENIUM_BUDGET_PERIOD` are set:** create the Revenium budget guardrail rule (writing `ruleIds` into `config.json`) and install the metering cron that keeps `guardrail-status.json` fresh
+11. Verify the installation
 
-> **On this first run your Revenium credentials aren't set yet**, so post-install will warn that it couldn't inject them into the sandbox — that's expected. You'll set them and re-run post-install in [step 3](#3-set-revenium-credentials-on-the-host-then-re-run-post-install).
+> **Already ran `revenium config set …` on this host?** The exports are optional — when the env vars are absent, post-install reads your existing `~/.config/revenium/config.yaml`.
 
 > **Already have prerequisites installed?** Pass `--skip-prereqs` to skip Homebrew installs and fail immediately if anything is missing.
 
-### 3. Set Revenium credentials on the host, then re-run post-install
+> **Credentials reach the sandbox as a snapshot, not live.** OpenClaw's sandbox hard-blocks mounting credential paths (anything under `~/.config`), so the skill cannot bind-mount your `revenium` config into the container. Instead, post-install injects them as `REVENIUM_*` environment variables into the sandbox. This means **any time you rotate credentials, you must re-run post-install and restart the gateway** (steps 2–3) to refresh them. Setting `revenium config set` from inside an agent session has no effect on the sandbox.
 
-Now that the `revenium` CLI is installed (step 2), set your credentials on the host and re-run post-install so they get injected into the sandbox:
-
-```bash
-revenium config set key <API_KEY>
-revenium config set team-id <TEAM_ID>
-revenium config set tenant-id <TENANT_ID>
-revenium config set owner-id <OWNER_ID>
-revenium config show          # confirm the values are set
-
-bash ~/.openclaw/skills/revenium/scripts/post-install.sh   # re-run to snapshot creds into the sandbox
-```
-
-The `revenium` CLI stores these at `~/.config/revenium/config.yaml`.
-
-> **Credentials reach the sandbox as a snapshot, not live.** OpenClaw's sandbox hard-blocks mounting credential paths (anything under `~/.config`), so the skill cannot bind-mount your `revenium` config into the container. Instead, post-install reads your host credentials and injects them as `REVENIUM_*` environment variables into the sandbox. This means **any time you set or rotate credentials, you must re-run post-install and restart the gateway** (steps 3–4) to refresh them. Setting `revenium config set` from inside an agent session has no effect on the sandbox.
-
-### 4. Restart the OpenClaw gateway
+### 3. Restart the OpenClaw gateway
 
 Restart the gateway so the sandbox and credential changes take effect:
 
@@ -83,7 +81,7 @@ Restart the gateway so the sandbox and credential changes take effect:
 openclaw gateway restart
 ```
 
-### 5. Verify
+### 4. Verify
 
 ```bash
 openclaw skills list
@@ -93,7 +91,9 @@ You should see `revenium` in the list (`✓ ready`). If not, confirm `revenium` 
 
 ### First-time setup (automatic)
 
-The metering cron and guardrail rules are configured the first time you interact with the agent after installing the skill. The agent walks you through configuring your budget and creates the guardrail rules — no manual script execution needed.
+If you exported `REVENIUM_BUDGET_LIMIT` + `REVENIUM_BUDGET_PERIOD` in step 2, the budget rule and metering cron were already created at install time — you're done.
+
+Otherwise, the metering cron and guardrail rules are configured the first time you interact with the agent after installing the skill. The agent walks you through configuring your budget and creates the guardrail rules — no manual script execution needed.
 
 To verify the cron is running after setup:
 
@@ -116,7 +116,7 @@ bash ~/.openclaw/skills/revenium/scripts/uninstall-cron.sh
 Use this when you want to run or test unreleased changes (e.g. a feature branch) instead of the ClawHub release. The key constraints, both enforced by OpenClaw's sandbox:
 
 - The skill must be a **real directory** inside `~/.openclaw/skills/` — **do not symlink** a clone from elsewhere. OpenClaw rejects skills whose path resolves outside the skills root (`reason=symlink-escape`).
-- Credentials are injected into the sandbox as a **snapshot** at post-install time. Because post-install is also what installs the `revenium` CLI, the order is: run post-install once (installs the CLI) → `revenium config set …` → re-run post-install to snapshot the creds. Re-run post-install after any later credential change too.
+- Credentials are injected into the sandbox as a **snapshot** at post-install time. Export `REVENIUM_*` before running post-install (it persists them to the host config and snapshots them into the sandbox in one run). Re-run post-install after any later credential change too.
 
 ### 1. Clone directly into the skills directory
 
@@ -130,20 +130,22 @@ git config core.fileMode false   # post-install chmods scripts; this stops mode
                                  # changes from dirtying the tree and blocking pulls
 ```
 
-### 2. Run post-install, set credentials, re-run post-install, restart
+### 2. Configure credentials, run post-install, restart
 
 ```bash
-# Run post-install FIRST — it installs the `revenium` CLI (and jq) if missing.
-# On this first run creds aren't set yet, so it warns it couldn't inject them — expected.
-bash ~/.openclaw/skills/revenium/scripts/post-install.sh
+# Export creds first — post-install installs the `revenium` CLI (and jq) if
+# missing, persists these to the host config, and snapshots them into the
+# sandbox, all in one run.
+export REVENIUM_API_KEY=<API_KEY>
+export REVENIUM_TEAM_ID=<TEAM_ID>
+export REVENIUM_TENANT_ID=<TENANT_ID>
+export REVENIUM_OWNER_ID=<OWNER_ID>
 
-# Now that the CLI exists, set Revenium credentials on the host...
-revenium config set key <API_KEY>
-revenium config set team-id <TEAM_ID>
-revenium config set tenant-id <TENANT_ID>
-revenium config set owner-id <OWNER_ID>
+# Optional — create the budget rule + metering cron at install time:
+# export REVENIUM_BUDGET_LIMIT=100
+# export REVENIUM_BUDGET_PERIOD=MONTHLY
+# export REVENIUM_BUDGET_AUTONOMOUS=true   # hard-halt on breach (default: warn-and-ask)
 
-# ...and re-run post-install to snapshot them into the sandbox, then restart.
 bash ~/.openclaw/skills/revenium/scripts/post-install.sh
 openclaw gateway restart
 ```
@@ -171,7 +173,7 @@ openclaw gateway restart   # if post-install was re-run
 
 Setup happens automatically the first time the agent tries to perform an operation (or run `/revenium` to start it manually). The agent will:
 
-1. Confirm your **Revenium API key**, **Team ID**, **Tenant ID**, and **Owner ID** are visible in the sandbox (set on the host, per [step 3](#3-set-revenium-credentials-on-the-host-then-re-run-post-install))
+1. Confirm your **Revenium API key**, **Team ID**, **Tenant ID**, and **Owner ID** are visible in the sandbox (set on the host, per [step 2](#2-configure-credentials-and-run-post-install-one-step))
 2. Ask for a **budget threshold** (e.g., `5.00`)
 3. Ask for a **budget period** (DAILY, WEEKLY, MONTHLY, or QUARTERLY)
 4. Optionally enable **shadow mode** (record breaches without enforcing) and **autonomous mode** (halt-on-exceed with notifications to Slack, Discord, Telegram, etc.)

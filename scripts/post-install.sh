@@ -120,6 +120,36 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 1b. Persist Revenium credentials passed via environment (one-step setup)
+# ---------------------------------------------------------------------------
+# The revenium CLI is installed by §1 above, so `revenium config set` can never
+# run BEFORE the first post-install — which used to force a run → config set →
+# re-run dance. Exporting REVENIUM_* before a single post-install run now does
+# it all: the values are persisted to the host config here, and the §3 sandbox
+# block below prefers the same env values over the config-file parse, so creds
+# reach the sandbox in this same run. Mirrors the NemoClaw env-driven install.
+if [[ -n "${REVENIUM_API_KEY:-}" ]]; then
+  step "Persisting Revenium credentials from environment"
+  if revenium config set key "${REVENIUM_API_KEY}" >/dev/null 2>&1; then
+    info "API key persisted to host config"
+  else
+    warn "could not persist API key via 'revenium config set' — sandbox injection still uses the env value this run"
+  fi
+  if [[ -n "${REVENIUM_TEAM_ID:-}" ]]; then
+    revenium config set team-id "${REVENIUM_TEAM_ID}" >/dev/null 2>&1 || warn "could not persist team-id"
+  fi
+  if [[ -n "${REVENIUM_TENANT_ID:-}" ]]; then
+    revenium config set tenant-id "${REVENIUM_TENANT_ID}" >/dev/null 2>&1 || warn "could not persist tenant-id"
+  fi
+  if [[ -n "${REVENIUM_OWNER_ID:-}" ]]; then
+    revenium config set owner-id "${REVENIUM_OWNER_ID}" >/dev/null 2>&1 || warn "could not persist owner-id"
+  fi
+  if [[ -n "${REVENIUM_API_URL:-}" ]]; then
+    revenium config set api-url "${REVENIUM_API_URL}" >/dev/null 2>&1 || warn "could not persist api-url"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 2. Verify skill files are in place
 # ---------------------------------------------------------------------------
 step "Checking skill files in ${SKILL_DIR}"
@@ -271,11 +301,20 @@ if [[ -f "${REVENIUM_CONFIG_FILE}" ]]; then
   REV_TENANT=$(sed -n 's/^tenant-id:[[:space:]]*//p' "${REVENIUM_CONFIG_FILE}" | head -1)
   REV_OWNER=$(sed -n 's/^owner-id:[[:space:]]*//p' "${REVENIUM_CONFIG_FILE}" | head -1)
 fi
+# Env overrides (one-step setup, §1b): REVENIUM_* values exported for THIS run
+# win over the config-file snapshot parsed above — so a fresh install with
+# exported creds injects them into the sandbox without a second run.
+if [[ -n "${REVENIUM_API_KEY:-}" ]];   then REV_KEY="${REVENIUM_API_KEY}"; fi
+if [[ -n "${REVENIUM_API_URL:-}" ]];   then REV_API_URL="${REVENIUM_API_URL}"; fi
+if [[ -n "${REVENIUM_TEAM_ID:-}" ]];   then REV_TEAM="${REVENIUM_TEAM_ID}"; fi
+if [[ -n "${REVENIUM_TENANT_ID:-}" ]]; then REV_TENANT="${REVENIUM_TENANT_ID}"; fi
+if [[ -n "${REVENIUM_OWNER_ID:-}" ]];  then REV_OWNER="${REVENIUM_OWNER_ID}"; fi
+
 export REV_KEY REV_API_URL REV_TEAM REV_TENANT REV_OWNER
 if [[ -z "${REV_KEY}" ]]; then
   warn "Revenium API key not set yet at ${REVENIUM_CONFIG_FILE}."
-  warn "Set credentials on the host, then re-run post-install.sh to inject them into the sandbox:"
-  warn "  revenium config set key <KEY>   (also team-id, tenant-id, owner-id)"
+  warn "Either export REVENIUM_API_KEY (+ REVENIUM_TEAM_ID etc.) and re-run post-install.sh,"
+  warn "or set them on the host and re-run:  revenium config set key <KEY>   (also team-id, tenant-id, owner-id)"
 fi
 
 # Generate a CA certificate bundle for sandboxed environments.
@@ -498,7 +537,12 @@ if [[ -f "${SKILL_CONFIG_FILE}" ]]; then
   info "config.json already exists — leaving autonomousMode untouched"
 else
   AUTONOMOUS_MODE="false"
-  if [[ -t 0 && -t 1 ]]; then
+  if [[ "${REVENIUM_BUDGET_AUTONOMOUS:-}" == "true" || "${REVENIUM_BUDGET_AUTONOMOUS:-}" == "false" ]]; then
+    # One-step setup: the env answer wins and the prompt is skipped, so a
+    # scripted install never blocks on stdin.
+    AUTONOMOUS_MODE="${REVENIUM_BUDGET_AUTONOMOUS}"
+    info "autonomousMode=${AUTONOMOUS_MODE} (from REVENIUM_BUDGET_AUTONOMOUS)"
+  elif [[ -t 0 && -t 1 ]]; then
     printf "  Will this agent run autonomously with heartbeats? [y/N] "
     read -r AUTO_REPLY || AUTO_REPLY=""
     case "${AUTO_REPLY}" in
@@ -710,6 +754,44 @@ with open(config_path, "w") as f:
     f.write("\n")
 PYEOF
 info "Configured bootstrap-extra-files hook for budget guard"
+
+# ---------------------------------------------------------------------------
+# 8b. Optional: create the budget guardrail rule + metering cron (env-gated)
+# ---------------------------------------------------------------------------
+# Mirrors the NemoClaw install: export REVENIUM_BUDGET_LIMIT and
+# REVENIUM_BUDGET_PERIOD to create the Revenium budget rule non-interactively
+# at install time (REVENIUM_BUDGET_AUTONOMOUS=true → hard-halt on breach;
+# REVENIUM_BUDGET_SHADOW=1 → observe-only). A budget implies enforcement, so
+# the metering cron that keeps guardrail-status.json fresh is installed in the
+# same step. Without these vars, budget + cron setup stays agent-guided via
+# /revenium on first run — existing behavior unchanged.
+if [[ -n "${REVENIUM_BUDGET_LIMIT:-}" && -n "${REVENIUM_BUDGET_PERIOD:-}" ]]; then
+  step "Creating Revenium budget guardrail rule (limit=${REVENIUM_BUDGET_LIMIT}, period=${REVENIUM_BUDGET_PERIOD})"
+
+  if [[ -f "${SKILL_CONFIG_FILE}" ]] && jq -e '(.ruleIds // []) | length > 0' "${SKILL_CONFIG_FILE}" >/dev/null 2>&1; then
+    info "Budget rule already configured (ruleIds present in config.json) — skipping creation"
+  else
+    BUDGET_FLAGS=""
+    if [[ "${REVENIUM_BUDGET_AUTONOMOUS:-}" == "true" ]]; then
+      BUDGET_FLAGS="--autonomous"
+    fi
+    if [[ -n "${REVENIUM_BUDGET_SHADOW:-}" ]]; then
+      BUDGET_FLAGS="${BUDGET_FLAGS} --shadow-mode"
+    fi
+    # shellcheck disable=SC2086  # BUDGET_FLAGS is intentionally word-split
+    if bash "${SKILL_DIR}/scripts/setup-guardrails.sh" --hard-limit "${REVENIUM_BUDGET_LIMIT}" --period "${REVENIUM_BUDGET_PERIOD}" ${BUDGET_FLAGS}; then
+      info "Budget guardrail rule created (ruleIds written to config.json)"
+    else
+      warn "budget rule creation failed — run setup-guardrails.sh manually or use /revenium (metering is unaffected)"
+    fi
+  fi
+
+  if bash "${SKILL_DIR}/scripts/install-cron.sh"; then
+    info "Metering cron installed/updated"
+  else
+    warn "metering cron install failed — run install-cron.sh manually (guardrail status stays stale without it)"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 9. Verify

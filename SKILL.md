@@ -260,6 +260,13 @@ On ANY failure during the Setup Flow: report what went wrong, tell the user to r
 
 When the user invokes `/revenium`:
 
+**Bare invocation = act, don't interrogate.** `/revenium` with no arguments (or no actionable request attached) is a command, not an open question. Do NOT ask the user what they want, do NOT present a menu of options, and do NOT ask for an "underlying task" — this skill IS the task when invoked directly. Route immediately:
+
+- **Setup complete** (config.json has a non-empty `ruleIds` array) → run the status flow below and present the report.
+- **Setup NOT complete** → start the Setup Flow from the Setup section, beginning with its first step.
+
+Only when the user attaches an explicit request to the command (e.g. `/revenium reconfigure`, "change my budget", "why was I halted?") should you do that instead.
+
 ### If Setup Is Complete (config.json has a non-empty `ruleIds` array)
 
 **Before displaying status, check for legacy filter rules (D-08, one-time):**
