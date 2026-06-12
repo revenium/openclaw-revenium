@@ -56,8 +56,27 @@ install_with_brew() {
     brew tap "${tap}" 2>/dev/null || true
   fi
 
+  # Recent Homebrew enables its Linux build sandbox by default, which needs a
+  # ROOTLESS bwrap (unprivileged user namespaces). Fresh Ubuntu 24.04+ images
+  # restrict those via AppArmor, so `brew install` aborts with "Bubblewrap is
+  # required to use the Linux sandbox" even while fetching bubblewrap itself
+  # as a dependency. Our formulae install from bottles (no source build), so
+  # when no usable rootless bwrap exists, disable the build sandbox for THIS
+  # install only instead of failing the whole post-install. The probe mirrors
+  # what brew needs: bwrap present AND able to open a user namespace.
+  local _no_linux_sandbox=""
+  if [[ "$(uname -s)" == "Linux" ]] && \
+     ! bwrap --unshare-user --bind / / true >/dev/null 2>&1; then
+    _no_linux_sandbox=1
+    warn "no usable rootless bwrap — installing ${formula} with HOMEBREW_NO_SANDBOX_LINUX=1 (to restore brew's build sandbox later: sudo apt-get install -y bubblewrap)"
+  fi
+
   echo "    → brew install ${formula}"
-  brew install "${formula}"
+  if [[ -n "${_no_linux_sandbox}" ]]; then
+    HOMEBREW_NO_SANDBOX_LINUX=1 brew install "${formula}"
+  else
+    brew install "${formula}"
+  fi
 }
 
 # --- revenium CLI ---
