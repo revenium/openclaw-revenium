@@ -1,8 +1,8 @@
 // GENERATED — do not edit. Source: BUDGET-GUARD.md
 // Rebuild by running: node scripts/bake-directive.js (or npm run build)
 //
-// guard.js — Baked-in guardrail directive for the revenium-enforcement plugin.
-// The build step reads BUDGET-GUARD.md and escapes it into a template literal.
+// guard.js — Baked-in directive for the revenium-enforcement plugin.
+// The build step reads the source markdown and escapes it into a template literal.
 // No fs I/O at hook time — the directive is a pure static constant (D-02).
 export const GUARD_DIRECTIVE = `## Guardrail Enforcement (Mandatory)
 

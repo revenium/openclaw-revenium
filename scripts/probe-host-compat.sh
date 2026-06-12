@@ -22,7 +22,7 @@ wn()   { line "$1" "⚠ $2"; warn=$((warn+1)); }
 no()   { line "$1" "✗ $2"; fail=$((fail+1)); }
 
 echo "=================================================="
-echo " Spike 001 — NemoClaw host compatibility probe"
+echo " NemoClaw host compatibility probe"
 echo "=================================================="
 
 OS="$(uname -s)"

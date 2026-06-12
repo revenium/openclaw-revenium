@@ -20,6 +20,7 @@
  */
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { GUARD_DIRECTIVE } from "./guard.js";
+import { METERING_DIRECTIVE } from "./metering.js";
 import {
   safeBeforeToolCall,
   safeBeforeAgentFinalize,
@@ -38,11 +39,19 @@ export default definePluginEntry({
     // defensive second layer that also guards the ctx/event dereferences below.
 
     // before_prompt_build: NOT a conversation hook — no allowConversationAccess needed.
-    // Injects BUDGET-GUARD.md contents (baked at build, D-02) with <revenium-guard> tag (D-10).
+    // Injects two directives on every turn:
+    //   <revenium-guard>    — BUDGET-GUARD.md guardrail enforcement (turn START), D-02/D-10
+    //   <revenium-metering> — task-classification + job-declaration completion gates (turn END)
+    // The metering block is the NemoClaw equivalent of standalone post-install.sh step 7b
+    // (which injects it into AGENTS.md). Without it the in-sandbox agent is never told to
+    // run write-marker.sh / write-job-marker.sh, so Revenium sees no task-type attribution
+    // and no agentic jobs — the markers report.sh needs to call `revenium jobs create`.
     api.on("before_prompt_build", () => {
       try {
         return {
-          prependContext: "<revenium-guard>\n" + GUARD_DIRECTIVE + "\n</revenium-guard>",
+          prependContext:
+            "<revenium-guard>\n" + GUARD_DIRECTIVE + "\n</revenium-guard>\n" +
+            "<revenium-metering>\n" + METERING_DIRECTIVE + "\n</revenium-metering>",
         };
       } catch {
         return undefined; // fail-open: never block the turn

@@ -105,6 +105,53 @@ describe("before_prompt_build - guard directive injection", () => {
 });
 
 // ---------------------------------------------------------------------------
+// before_prompt_build — metering directive injection (task classification + job
+// declaration). On the NemoClaw path there is no AGENTS.md injection (standalone
+// post-install.sh step 7b), so these completion-gate directives MUST ride the
+// before_prompt_build hook — otherwise the agent never writes task/job markers
+// and Revenium sees no task-type attribution and no agentic jobs.
+// ---------------------------------------------------------------------------
+
+describe("before_prompt_build - metering directive injection (jobs + task-type)", () => {
+  // Mirror the exact prependContext assembled in index.ts.
+  async function buildContext() {
+    const { GUARD_DIRECTIVE } = await import("./guard.js");
+    const { METERING_DIRECTIVE } = await import("./metering.js");
+    return (
+      "<revenium-guard>\n" + GUARD_DIRECTIVE + "\n</revenium-guard>\n" +
+      "<revenium-metering>\n" + METERING_DIRECTIVE + "\n</revenium-metering>"
+    );
+  }
+
+  test("prependContext wraps the metering block in <revenium-metering> tags", async () => {
+    const ctx = await buildContext();
+    assert.ok(ctx.includes("<revenium-metering>"), "must contain opening metering tag");
+    assert.ok(ctx.includes("</revenium-metering>"), "must contain closing metering tag");
+  });
+
+  test("METERING_DIRECTIVE instructs the agent to declare jobs via write-job-marker.sh", async () => {
+    const { METERING_DIRECTIVE } = await import("./metering.js");
+    assert.ok(METERING_DIRECTIVE.includes("write-job-marker.sh"), "must reference the job-marker writer");
+    assert.ok(METERING_DIRECTIVE.includes("Job Declaration"), "must contain the Job Declaration gate heading");
+    assert.ok(METERING_DIRECTIVE.includes("--job-type"), "must show the agentic-job declaration flags");
+  });
+
+  test("METERING_DIRECTIVE instructs the agent to classify tasks via write-marker.sh", async () => {
+    const { METERING_DIRECTIVE } = await import("./metering.js");
+    assert.ok(METERING_DIRECTIVE.includes("write-marker.sh"), "must reference the task-marker writer");
+    assert.ok(METERING_DIRECTIVE.includes("Task Classification"), "must contain the Task Classification gate heading");
+  });
+
+  test("injected context carries BOTH guard and metering directives every turn", async () => {
+    const ctx = await buildContext();
+    assert.ok(ctx.includes("Guardrail Enforcement"), "guard directive present");
+    assert.ok(ctx.includes("write-job-marker.sh"), "job-declaration directive present");
+    // Stays well above the Gate A promptChars floor (1500) so install verification passes.
+    assert.ok(ctx.length > 1500, `assembled directive must exceed the Gate A floor (got ${ctx.length})`);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // before_tool_call — exec tool tracking (carried over from plugin/src/index.test.js)
 // ---------------------------------------------------------------------------
 
