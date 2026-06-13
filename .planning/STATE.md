@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: NemoClaw/OpenShell Support
-status: completed
-last_updated: "2026-06-13T01:46:19.668Z"
-last_activity: 2026-06-12
+status: Awaiting next milestone
+last_updated: "2026-06-13T02:20:38.956Z"
+last_activity: 2026-06-13 — Milestone v1.4 completed and archived
 progress:
-  total_phases: 8
+  total_phases: 5
   completed_phases: 5
   total_plans: 18
-  completed_plans: 27
-  percent: 63
+  completed_plans: 18
+  percent: 100
 ---
 
 # Project State
@@ -24,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-07 after v1.4 milestone start)
 
 ## Current Position
 
-Phase: 16
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-06-12
+Phase: Milestone v1.4 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-13 — Milestone v1.4 completed and archived
 
 ## Performance Metrics
 
@@ -133,6 +133,15 @@ Standing follow-up carried forward: Phase 9 live guardrail-halt E2E on host 172.
 
 ## Deferred Items
 
+Items acknowledged and deferred at v1.4 milestone close on 2026-06-13:
+
+| Category | Item | Status | Note |
+|----------|------|--------|------|
+| uat_gap | 14-HUMAN-UAT | accepted | Phase 14 host-side metering loop — the two human-verification items (live cron tick + GROUP F sshfs message on Linux) were confirmed during v1.4.1 UAT on multiple clean hosts; the metering loop is in production use across NemoClaw + vanilla deployments. 0 open scenarios. |
+| todo | 16-review-deferred-findings | open (minor polish) | WR-04 (GROUP I-c exit-code assertion) and IN-03 (`~11 min` doc-timing wording) remain; IN-01 resolved during v1.4.1. Non-blocking docs/test polish. |
+| quick_task | 260327-o1o / 260604-qo0 / 260605-enh | missing (cosmetic) | Same three quick tasks flagged at v1.3 close — all COMPLETE with committed work; flagged only because their SUMMARY frontmatter lacks a `status:` field. No action needed. |
+| carry-forward | 09-HUMAN-UAT / 09-VERIFICATION | still open | Phase 9 (v1.2) live guardrail-halt E2E on host 172.16.1.247 — validated via production use rather than formal UAT; standing follow-up across milestones. NOT yet validated for v1.4: a real budget-BREACH → hard HALT firing end-to-end on Nemotron. |
+
 Items acknowledged and deferred at v1.3 milestone close on 2026-06-06:
 
 | Category | Item | Status | Note |
@@ -165,4 +174,4 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Plan Phase 12: `/gsd-plan-phase 12`
+- Start the next milestone with /gsd-new-milestone

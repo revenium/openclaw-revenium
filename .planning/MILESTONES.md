@@ -1,5 +1,33 @@
 # Milestones
 
+## v1.4 NemoClaw/OpenShell Support (Shipped: 2026-06-11, hardened through 2026-06-13)
+
+**Phases completed:** 5 phases (12–16), 18 plans. Git range: `ac09477` (12-01) → `4273ae0`. ~123 files, +25.8k/−0.3k LOC across the milestone.
+
+**Delivered:** A parallel NemoClaw/OpenShell install path that lets the Revenium skill run guardrail-enforced and fully metered inside an OpenShell sandbox — leaving the standalone OpenClaw + Docker path byte-stable. All 10 requirements (NCINST-01/02, NCEGRESS-01, NCCLI-01/02, NCMETER-01, NCENF-01/02, NCDEPLOY-01/02) satisfied and live-validated.
+
+**Key accomplishments:**
+
+- **Phase 12 — Parallel Install Scaffolding & Detection:** `install.sh` dispatcher routing NemoClaw vs standalone OpenClaw vs macOS (explicit macOS refusal, no silent no-op); standalone path byte-stable.
+- **Phase 13 — Sandbox Provisioning:** two-preset egress, sha256-pinned in-sandbox CLI delivery, config-file credential write, and an authenticated `revenium meter completion` → HTTP 2xx live from inside the sandbox (closed spike 003).
+- **Phase 14 — Host-Side Metering Loop:** host cron reads OpenClaw session JSONL over a `nemoclaw share mount` SSHFS mount and refreshes `guardrail-status.json` — no per-tick `exec`, no in-sandbox cron daemon.
+- **Phase 15 — Per-Turn Enforcement Plugin:** `before_prompt_build` guardrail-directive plugin (highest-risk requirement) reaching every turn, plus the `before_agent_finalize` marker-gate adapter.
+- **Phase 16 — Skill Deploy & Docs:** `nemoclaw skill install` wiring behind a SKILL.md guard + hardened `✓ ready` assertion, and the `docs/nemoclaw-setup.md` operator runbook.
+
+**v1.4.1 — post-ship install-path hardening (2026-06-11):** A clean-host UAT found the milestone marked-shipped but broken end-to-end; ~14 fixes made `install.sh --nemoclaw` exit 0 with all four enforcement gates passing live — Gate A/B v2026.5.22 probe repair, per-sandbox-UUID ledger, env-gated install-time budget provisioning, consolidated `ensure_mount` SSHFS self-heal, host-side CLI install, `common.sh` OPENCLAW_HOME sandbox normalization. The stale "install exits 1 at the gate" claim (which had leaked into a downstream doc) was corrected throughout.
+
+**Post-ship jobs & enforcement (2026-06-12/13, live-validated on NemoClaw/Sonnet + vanilla/Opus hosts):**
+
+- **Hard-halt arming:** non-interactive setup never wrote `autonomousMode`, so a hard limit could never halt — added `--autonomous` / `REVENIUM_BUDGET_AUTONOMOUS`; a real breach now hard-halts (proven live).
+- **Jobs delivery:** NemoClaw never injected the job-declaration directive (plugin baked only the guardrail directive) — fixed; then a cron-tick race that silently dropped markers was fixed with a per-session ledger-gated sweep.
+- **Declare-at-start job lifecycle:** `RUNNING` open marker → interval spend stamping → `--close` terminal, with a stale-open janitor — jobs now visible in-flight with true per-job spend (additive; one-shot terminal form retained for NemoClaw compatibility).
+- **Per-turn directive injection as the compliance driver:** OpenClaw 2026.6.6 silently vetoes `before_agent_finalize` revise on tool-using turns, and ambient AGENTS.md directives don't hold compliance — both plugins now prepend the metering directives every turn (the NemoClaw-proven mechanism), closing the file-tool and conversational blind spots.
+- **Setup UX:** one-step env-driven vanilla install (creds + budget in a single post-install run) and decisive bare `/revenium` (acts, never interrogates).
+
+**Known deferred items at close:** 4 (see STATE.md → Deferred Items). NOT yet validated: a real budget-BREACH → hard HALT end-to-end on Nemotron. Tracked externals: OpenClaw 2026.6.6 finalize-revise veto (report upstream), NemoClaw gateway wedge on tool-using turns (infra), Revenium 429-on-breach metering blackout (confirm with Revenium). Follow-up for next milestone: cut a ClawHub release and rebuild the NemoClaw plugin to adopt the job lifecycle there.
+
+---
+
 ## v1.3 Reliable Attribution (Shipped: 2026-06-06)
 
 **Phases completed:** 1 phase (Phase 11), 3 plans, 8 tasks

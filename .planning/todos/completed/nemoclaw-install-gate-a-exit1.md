@@ -1,9 +1,9 @@
 ---
 id: nemoclaw-install-gate-a-exit1
-title: "install.sh --nemoclaw exits 1 at Phase 15 Gate A (B-01/NCENF-01) on live Nemotron host"
+title: "RESOLVED — install.sh --nemoclaw Gate A exit-1 was a stale OpenClaw v2026.5.22 probe (now exits 0, all 4 gates pass live)"
 created: 2026-06-10
 updated: 2026-06-11
-status: fix-implemented-pending-e2e
+status: resolved
 source: 16-03 live validation (Re-run 3); root-caused during Phase 16 UAT on host 18.212.94.67
 relates_phase: 15
 severity: medium
@@ -47,13 +47,20 @@ A promptChars=4194 · B loaded+allowConversationAccess · C python3 · D
 `write-marker.sh debugging` → `marker written: /sandbox/.openclaw/skills/revenium/markers/…jsonl`
 (exit 0, valid record). Hermetic suites 36/0 + 5/0.
 
-**Remaining to close:** literal end-to-end `install.sh --nemoclaw` exit 0 (operator
-re-run on revenium-ftw — in-sandbox skill re-deployed with the fix,
-`enforcement-plugin-installed` ledger key clear, so the re-run executes the
-enforcement step and should pass all gates). Separate observation: the agent turn
-fell back to **embedded** with `pairing required: device is asking for more scopes
-than currently approved` — the Gateway path may need a one-time scope/pairing
-approval (does not block the gates, which pass via embedded fallback).
+**CLOSED (2026-06-11):** the literal end-to-end `install.sh --nemoclaw` **exit 0** is
+now confirmed live on Nemotron — all four enforcement gates pass, including Gate A
+proving the per-turn guardrail directive is injected every turn (promptChars ~4599 vs
+~649 baseline). The full install loop (provision → skill `✓ ready` → enforcement
+plugin → metering → budget rule → `guardrail-status.json` flowing) works on a clean
+host. The "exits 1 at the enforcement gate" claim is **stale/false** and has been
+corrected across ROADMAP/PROJECT/Phase-15-16 docs.
+
+Carried-forward (separate, non-blocking): the `/revenium` TUI slash command degrades to
+**embedded** with `pairing required: device is asking for more scopes than currently
+approved` — an OpenClaw **gateway-pairing** issue (infra, not the skill). The command
+works as a typed agent message and the gates pass via the embedded fallback. Also still
+**not** validated end-to-end: an actual budget-**breach** → hard HALT on Nemotron, and
+the B-05 `tool_search_code` indirection still limits task-type marker attribution.
 
 ---
 
