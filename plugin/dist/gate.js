@@ -160,11 +160,26 @@ export function resetState() {
  * @param {Record<string,unknown>} params - The event.params.
  * @param {{ log?: (msg: string) => void }} [opts] - Optional logger.
  */
+// Tools that do NOT make a turn substantive on their own (2026-06-13).
+// The directive's own bar is "ANY tool other than read-only file inspection" —
+// but the original gate only observed exec/bash, so turns doing real work via
+// the write/edit file tools escaped enforcement entirely (observed live:
+// a file-creating turn with zero markers). Read-only lookups and the search
+// surface stay exempt so status checks and heartbeats never trip the gate.
+const READ_ONLY_TOOLS = new Set(["read", "tool_search", "tool_search_code"]);
+
 export function handleBeforeToolCall(runId, toolName, params, opts = {}) {
   if (!runId) return;
 
-  // Treat both "exec" and "bash" as exec tool calls (Pitfall 5).
-  if (toolName !== "exec" && toolName !== "bash") return;
+  // Non-exec working tools (write, edit, etc.) mark the run substantive but
+  // carry no marker-script evidence — only exec can run write-marker.sh.
+  if (toolName !== "exec" && toolName !== "bash") {
+    if (typeof toolName === "string" && toolName && !READ_ONLY_TOOLS.has(toolName)) {
+      execRuns.add(runId);
+      persistRunState(runId, markedTaskRuns.has(runId));
+    }
+    return;
+  }
 
   // One-time diagnostic log: record observed toolName + param key names.
   if (!_loggedFirstExec) {
@@ -240,37 +255,73 @@ export function handleBeforeToolCall(runId, toolName, params, opts = {}) {
  * @param {unknown} transcript - The event.messages array (or undefined/null).
  * @returns {TranscriptScanResult}
  */
+// Final replies above this word count are substantive per the directive's own
+// threshold ("> 200 words"), even with zero tool calls — long conversational /
+// creative turns must classify too (observed live 2026-06-13: 40 minutes of
+// chat-only arcs with zero markers).
+const SUBSTANTIVE_TEXT_WORDS = 200;
+
 function scanTranscriptForExec(transcript) {
-  const NO_EVIDENCE = { execFound: false, markerFound: false };
+  const NO_EVIDENCE = { execFound: false, markerFound: false, substantiveText: false };
   try {
     if (!Array.isArray(transcript)) return NO_EVIDENCE;
     let execFound = false;
     let markerFound = false;
+    let lastAssistantText = "";
     for (const entry of transcript) {
       try {
         const msg = entry && entry.message;
         if (!msg || msg.role !== "assistant") continue;
         const content = msg.content;
         if (!Array.isArray(content)) continue;
+        let entryText = "";
         for (const part of content) {
-          if (!part || part.type !== "toolCall" || part.name !== "tool_search_code") continue;
-          const code = part.arguments && typeof part.arguments.code === "string"
-            ? part.arguments.code
-            : null;
-          if (!code) continue;
-          if (code.includes("openclaw:core:exec")) {
+          if (!part) continue;
+          // Accumulate text parts — the LAST assistant message's text is the
+          // pending final reply at finalize time.
+          if (part.type === "text" && typeof part.text === "string") {
+            entryText += (entryText ? " " : "") + part.text;
+            continue;
+          }
+          if (part.type !== "toolCall") continue;
+          // (a) Nemotron indirection: tool_search_code wrapping openclaw:core:exec.
+          if (part.name === "tool_search_code") {
+            const code = part.arguments && typeof part.arguments.code === "string"
+              ? part.arguments.code
+              : null;
+            if (!code) continue;
+            if (code.includes("openclaw:core:exec")) {
+              execFound = true;
+              if (MARKER_INVOKE.test(code)) {
+                markerFound = true;
+              }
+            }
+            continue;
+          }
+          // (b) Direct tool calls: any non-read-only tool makes the turn
+          // substantive; exec/bash args are also checked for the marker script.
+          if (typeof part.name === "string" && part.name && !READ_ONLY_TOOLS.has(part.name)) {
             execFound = true;
-            // Check if this specific exec is write-marker.sh
-            if (MARKER_INVOKE.test(code)) {
-              markerFound = true;
+            if (part.name === "exec" || part.name === "bash") {
+              const args = part.arguments;
+              let cmd = args && typeof args.command === "string" ? args.command : null;
+              if (!cmd) cmd = args && typeof args.code === "string" ? args.code : null;
+              if (cmd && MARKER_INVOKE.test(cmd)) {
+                markerFound = true;
+              }
             }
           }
         }
+        if (entryText) lastAssistantText = entryText;
       } catch {
         /* tolerate malformed individual messages — continue scanning */
       }
     }
-    return { execFound, markerFound };
+    // (c) Substantive conversational turn: long final reply, judged by length
+    // only (no content analysis). Short replies and heartbeats never trigger.
+    const substantiveText =
+      lastAssistantText.split(/\s+/).filter(Boolean).length > SUBSTANTIVE_TEXT_WORDS;
+    return { execFound, markerFound, substantiveText };
   } catch {
     return NO_EVIDENCE; // fail-open: any structural error → no evidence
   }
@@ -322,13 +373,14 @@ export function handleBeforeAgentFinalize(runId, transcript) {
     /* fail-open: any read/parse error → pass through (undefined) */
   }
 
-  // Source 3: Transcript scan (B-05 — Nemotron tool_search_code exec pattern).
-  // Only reached when the in-process Sets and disk both have no evidence.
+  // Source 3: Transcript scan — Nemotron tool_search_code exec (B-05), direct
+  // non-read-only tool calls, and substantive final text (2026-06-13). Only
+  // reached when the in-process Sets and disk both have no evidence.
   // scan result is fail-open — never throws.
   const scan = scanTranscriptForExec(transcript);
-  if (scan.execFound) {
+  if (scan.execFound || scan.substantiveText) {
     if (scan.markerFound) return undefined; // write-marker.sh invoked in transcript
-    return _buildReviseAction(runId); // exec ran but no marker
+    return _buildReviseAction(runId); // substantive turn but no marker
   }
 
   // Non-substantive turn (no evidence from any source) → pass through.
@@ -348,10 +400,15 @@ function _buildReviseAction(runId) {
     reason: "turn not classified for Revenium metering",
     retry: {
       instruction:
-        "Before finishing, classify this turn by running: " +
+        "Before finishing: (1) classify this turn by running " +
         "`bash ~/.openclaw/skills/revenium/scripts/write-marker.sh <task_type>` " +
-        "(where <task_type> is one of the labels in task-taxonomy.json), " +
-        "then finish your response.",
+        "(where <task_type> is one of the labels in task-taxonomy.json). " +
+        "(2) If this turn STARTED a new goal arc with no job declared yet, also open it: " +
+        "`bash ~/.openclaw/skills/revenium/scripts/write-job-marker.sh " +
+        "--job-id <goal-slug>-<4hex> --job-name \"<short goal>\" --job-type <label> --status RUNNING`. " +
+        "If it CONCLUDED the current arc, close it instead: " +
+        "`bash ~/.openclaw/skills/revenium/scripts/write-job-marker.sh --close --status SUCCESS|FAILED|CANCELLED`. " +
+        "Then finish your response.",
       idempotencyKey: `marker-gate:${runId}`,
       maxAttempts: 1,
     },

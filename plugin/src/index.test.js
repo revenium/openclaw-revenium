@@ -94,10 +94,27 @@ describe("before_tool_call - exec tracking", () => {
     assert.ok(!markedTaskRuns.has(RUN_A), "markedTaskRuns should NOT contain runId");
   });
 
-  test("non-exec toolName is ignored", () => {
-    handleBeforeToolCall(RUN_A, "read_file", { path: "/some/file" });
-    assert.ok(!execRuns.has(RUN_A), "execRuns should NOT contain runId for non-exec tool");
+  test("read-only toolName (read) is ignored — status checks never trip the gate", () => {
+    handleBeforeToolCall(RUN_A, "read", { path: "/some/file" });
+    assert.ok(!execRuns.has(RUN_A), "execRuns should NOT contain runId for read-only tool");
     assert.ok(!markedTaskRuns.has(RUN_A), "markedTaskRuns should NOT contain runId");
+  });
+
+  test("tool_search / tool_search_code ignored in before_tool_call (search surface is read-only here)", () => {
+    handleBeforeToolCall(RUN_A, "tool_search", { query: "x" });
+    handleBeforeToolCall(RUN_A, "tool_search_code", { code: "openclaw.tools.list()" });
+    assert.ok(!execRuns.has(RUN_A), "execRuns should NOT contain runId");
+  });
+
+  test("non-exec WORKING tool (write) marks the run substantive (2026-06-13 file-tool blind spot)", () => {
+    handleBeforeToolCall(RUN_A, "write", { path: "/tmp/zoo.txt", content: "lion" });
+    assert.ok(execRuns.has(RUN_A), "execRuns should contain runId for a write tool call");
+    assert.ok(!markedTaskRuns.has(RUN_A), "write tool is not a marker invocation");
+  });
+
+  test("non-exec WORKING tool (edit) marks the run substantive", () => {
+    handleBeforeToolCall(RUN_A, "edit", { path: "/tmp/x", oldText: "a", newText: "b" });
+    assert.ok(execRuns.has(RUN_A), "execRuns should contain runId for an edit tool call");
   });
 
   test("no runId → no-op, no throw", () => {
@@ -613,5 +630,62 @@ describe("transcript-scan observation (B-05)", () => {
     }, "wrapper must still catch impl throws when transcript is present");
     const result = safeBeforeAgentFinalize(RUN_A, transcript, { log: () => {} }, boomWithTranscript);
     assert.strictEqual(result, undefined, "fail-open: must return undefined when impl throws");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lifecycle enforcement extensions (2026-06-13): file-tool blind spot +
+// substantive-final-text trigger + job-lifecycle revise instruction
+// ---------------------------------------------------------------------------
+
+describe("finalize - extended substantive detection (2026-06-13)", () => {
+  beforeEach(() => resetState());
+
+  const mkMsg = (parts) => ({ message: { role: "assistant", content: parts } });
+  const longText = Array.from({ length: 230 }, (_, i) => `word${i}`).join(" ");
+
+  test("substantive final text (>200 words, zero tools) → revise", () => {
+    const transcript = [mkMsg([{ type: "text", text: longText }])];
+    const result = handleBeforeAgentFinalize("run-lt-1", transcript);
+    assert.ok(result && result.action === "revise", "long conversational turn must be gated");
+  });
+
+  test("short final text + only read tool calls → pass-through", () => {
+    const transcript = [
+      mkMsg([{ type: "toolCall", name: "read", arguments: { path: "/x" } },
+             { type: "text", text: "All clear." }]),
+    ];
+    const result = handleBeforeAgentFinalize("run-lt-2", transcript);
+    assert.strictEqual(result, undefined, "trivial turn must pass through");
+  });
+
+  test("file-tool (write) call in transcript, no marker → revise (blind-spot fix)", () => {
+    const transcript = [
+      mkMsg([{ type: "toolCall", name: "write", arguments: { path: "/tmp/zoo.txt" } },
+             { type: "text", text: "Done." }]),
+    ];
+    const result = handleBeforeAgentFinalize("run-lt-3", transcript);
+    assert.ok(result && result.action === "revise", "write-tool turn without marker must be gated");
+  });
+
+  test("direct exec toolCall in transcript invoking write-marker.sh → pass-through", () => {
+    const transcript = [
+      mkMsg([{ type: "toolCall", name: "write", arguments: { path: "/tmp/zoo.txt" } },
+             { type: "toolCall", name: "exec",
+               arguments: { command: "bash ~/.openclaw/skills/revenium/scripts/write-marker.sh generation" } },
+             { type: "text", text: "Done." }]),
+    ];
+    const result = handleBeforeAgentFinalize("run-lt-4", transcript);
+    assert.strictEqual(result, undefined, "marker invocation in transcript satisfies the gate");
+  });
+
+  test("revise instruction includes the job lifecycle (RUNNING open + --close)", () => {
+    const transcript = [mkMsg([{ type: "text", text: longText }])];
+    const result = handleBeforeAgentFinalize("run-lt-5", transcript);
+    assert.ok(result, "expected a revise action");
+    assert.ok(result.retry.instruction.includes("write-marker.sh"), "task classification present");
+    assert.ok(result.retry.instruction.includes("write-job-marker.sh"), "job writer present");
+    assert.ok(result.retry.instruction.includes("--status RUNNING"), "open form present");
+    assert.ok(result.retry.instruction.includes("--close"), "close form present");
   });
 });
