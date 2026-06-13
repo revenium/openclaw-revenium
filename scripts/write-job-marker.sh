@@ -8,7 +8,22 @@
 # current session id (newest non-cron session file), and appends a job marker
 # under fcntl.LOCK_EX + O_APPEND.
 #
-# Usage:
+# Usage (lifecycle — declare at arc START, close at arc END):
+#   # arc start: opens the job (Revenium shows it running; spend stamps to it)
+#   bash ~/.openclaw/skills/revenium/scripts/write-job-marker.sh \
+#     --job-id "add-pagination-endpoint-3b1e" \
+#     --job-name "Add pagination to /api/users endpoint" \
+#     --job-type "feature_development" \
+#     --status "RUNNING"
+#
+#   # arc end: closes the open job recorded for this session (id remembered
+#   # via the per-session current-job state file; --job-id overrides)
+#   bash ~/.openclaw/skills/revenium/scripts/write-job-marker.sh \
+#     --close --status "SUCCESS"
+#
+# Usage (one-shot terminal form — fully supported, used when no RUNNING
+# marker was declared; this is the original v1.1 contract and what older
+# installed directives produce):
 #   bash ~/.openclaw/skills/revenium/scripts/write-job-marker.sh \
 #     --job-id "add-pagination-endpoint-3b1e" \
 #     --job-name "Add pagination to /api/users endpoint" \
@@ -20,7 +35,8 @@
 #
 # Exit codes:
 #   0  — marker written (prints "job marker written: <path>" to stdout)
-#   1  — unknown job_type, invalid status, or missing mandatory flag; no marker written
+#   1  — unknown job_type, invalid status, missing mandatory flag, or --close
+#        with no open job recorded; no marker written
 #
 # Security: ASVS V4 (markers/ mode 0700), ASVS V5 (allowlist + sid guard),
 #           env-passing heredoc (T-05-03), fcntl.LOCK_EX (T-05-06),
@@ -40,6 +56,7 @@ JOB_NAME_ARG=""
 JOB_TYPE_ARG=""
 STATUS_ARG=""
 FAILURE_REASON_ARG=""
+CLOSE_ARG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,25 +65,36 @@ while [[ $# -gt 0 ]]; do
     --job-type)       JOB_TYPE_ARG="$2";       shift 2 ;;
     --status)         STATUS_ARG="$2";         shift 2 ;;
     --failure-reason) FAILURE_REASON_ARG="$2"; shift 2 ;;
+    --close)          CLOSE_ARG="1";           shift ;;
     *) warn "write-job-marker.sh: unknown argument: $1"; exit 1 ;;
   esac
 done
 
-# Mandatory-flag bash-level presence check (before Python)
-if [[ -z "${JOB_ID_ARG}" || -z "${JOB_NAME_ARG}" || -z "${JOB_TYPE_ARG}" || -z "${STATUS_ARG}" ]]; then
-  warn "write-job-marker.sh: missing required flag(s): --job-id, --job-name, --job-type, --status"
-  exit 1
+# Mandatory-flag bash-level presence check (before Python).
+# --close needs only --status: id/name/type come from the per-session
+# current-job state file written by the RUNNING declaration (or --job-id wins).
+if [[ "${CLOSE_ARG}" == "1" ]]; then
+  if [[ -z "${STATUS_ARG}" ]]; then
+    warn "write-job-marker.sh: --close requires --status SUCCESS|FAILED|CANCELLED"
+    exit 1
+  fi
+else
+  if [[ -z "${JOB_ID_ARG}" || -z "${JOB_NAME_ARG}" || -z "${JOB_TYPE_ARG}" || -z "${STATUS_ARG}" ]]; then
+    warn "write-job-marker.sh: missing required flag(s): --job-id, --job-name, --job-type, --status"
+    exit 1
+  fi
 fi
 
 # Log-injection mitigation: truncate to 64 chars (mirrors TASK_TYPE_LOG pattern, T-05-07)
 JOB_TYPE_LOG="${JOB_TYPE_ARG:0:64}"
-info "write-job-marker: writing job marker for job_type='${JOB_TYPE_LOG}'"
+info "write-job-marker: writing job marker for job_type='${JOB_TYPE_LOG:-<from current-job state>}'"
 
 JOB_ID="${JOB_ID_ARG}" \
 JOB_NAME="${JOB_NAME_ARG}" \
 JOB_TYPE="${JOB_TYPE_ARG}" \
 STATUS="${STATUS_ARG}" \
 FAILURE_REASON="${FAILURE_REASON_ARG}" \
+CLOSE="${CLOSE_ARG}" \
 JOB_TAXONOMY_FILE="${JOB_TAXONOMY_FILE}" \
 MARKERS_DIR="${MARKERS_DIR}" \
 SESSIONS_DIR="${SESSIONS_DIR}" \
@@ -80,6 +108,7 @@ job_name_raw      = os.environ['JOB_NAME']
 job_type_raw      = os.environ['JOB_TYPE']
 status_raw        = os.environ['STATUS']
 failure_reason_raw = os.environ.get('FAILURE_REASON', '')
+close_mode        = os.environ.get('CLOSE', '') == '1'
 tax_file          = os.environ['JOB_TAXONOMY_FILE']
 markers_dir       = os.environ['MARKERS_DIR']
 sessions_dir      = os.environ['SESSIONS_DIR']
@@ -96,21 +125,9 @@ job_type       = sanitize(job_type_raw)   # validated against allowlist below
 status         = sanitize(status_raw)     # validated against allowlist below
 failure_reason = sanitize(failure_reason_raw)
 
-# --- Job taxonomy allowlist validation (ASVS V5 / T-05-08, D-14) ---
-try:
-    with open(tax_file, encoding='utf-8') as fh:
-        taxonomy = json.load(fh)
-    labels = set(taxonomy.get('labels', {}) if isinstance(taxonomy.get('labels'), dict) else taxonomy.get('labels', []))
-except Exception as exc:
-    raise SystemExit(f"write-job-marker: cannot load job taxonomy: {exc}")
-
-if job_type not in labels:
-    raise SystemExit(f"write-job-marker: unknown job_type: {job_type!r}")
-
-# --- Status allowlist validation (D-14) ---
-VALID_STATUSES = {'SUCCESS', 'FAILED', 'CANCELLED'}
-if status not in VALID_STATUSES:
-    raise SystemExit(f"write-job-marker: invalid status: {status!r} (must be SUCCESS, FAILED, or CANCELLED)")
+# NOTE: taxonomy + status allowlist validation moved BELOW sid resolution —
+# --close fills job_id/name/type from the per-session current-job state file,
+# which is keyed by sid, so the fields aren't final until the sid is known.
 
 # --- Resolve current session id: newest non-cron *.jsonl in SESSIONS_DIR ---
 # Pitfall 5: exclude cron sessions (keyed agent:main:cron:* in sessions.json)
@@ -224,6 +241,46 @@ if not re.fullmatch(r'[0-9a-fA-F-]+|pseudo-[0-9]+', sid):
 # --- Create markers dir mode 0700 (ASVS V4 / T-05-06) ---
 os.makedirs(markers_dir, mode=0o700, exist_ok=True)
 
+# --- Current-job state file (lifecycle) ---
+# A RUNNING declaration records {id, name, type} per session so the arc-end
+# `--close --status <terminal>` doesn't need the agent to remember the id.
+# Explicit --job-id always wins over the state file.
+state_path = os.path.join(markers_dir, f"{sid}.current-job.json")
+if close_mode and not job_id:
+    try:
+        with open(state_path, encoding='utf-8') as fh:
+            state = json.load(fh)
+        job_id   = sanitize(state.get('agentic_job_id', ''))
+        if not job_name:
+            job_name = sanitize(state.get('job_name', ''))
+        if not job_type:
+            job_type = sanitize(state.get('job_type', ''))
+    except Exception:
+        pass
+    if not job_id:
+        raise SystemExit(
+            "write-job-marker: --close but no open job recorded for this session — "
+            "pass --job-id (and --job-name/--job-type) explicitly")
+
+# --- Job taxonomy allowlist validation (ASVS V5 / T-05-08, D-14) ---
+try:
+    with open(tax_file, encoding='utf-8') as fh:
+        taxonomy = json.load(fh)
+    labels = set(taxonomy.get('labels', {}) if isinstance(taxonomy.get('labels'), dict) else taxonomy.get('labels', []))
+except Exception as exc:
+    raise SystemExit(f"write-job-marker: cannot load job taxonomy: {exc}")
+
+if job_type not in labels:
+    raise SystemExit(f"write-job-marker: unknown job_type: {job_type!r}")
+
+# --- Status allowlist validation (D-14) ---
+# RUNNING opens an arc (lifecycle); SUCCESS/FAILED/CANCELLED are terminal.
+VALID_STATUSES = {'RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED'}
+if status not in VALID_STATUSES:
+    raise SystemExit(f"write-job-marker: invalid status: {status!r} (must be RUNNING, SUCCESS, FAILED, or CANCELLED)")
+if close_mode and status == 'RUNNING':
+    raise SystemExit("write-job-marker: --close requires a terminal status (SUCCESS, FAILED, or CANCELLED)")
+
 # --- Build the job marker record (D-11, D-12) ---
 # 7 mandatory fields: kind, ts, sid, agentic_job_id, job_name, job_type, status
 marker_path = os.path.join(markers_dir, f"{sid}.jsonl")
@@ -243,8 +300,27 @@ if status == "FAILED" and failure_reason:
 # completion_id: id of the most recent assistant completion (Approach A key).
 # report.sh correlates job markers to completions by exact id; without this the
 # correlation silently degrades to timestamp-only (CR-01). Mirrors write-marker.sh.
-if completion_id:
+# RUNNING markers deliberately OMIT it: at arc start the most recent completion
+# belongs to the PREVIOUS turn; the open marker stamps completions by interval
+# (report.sh Phase C), not by id.
+if completion_id and status != "RUNNING":
     rec["completion_id"] = completion_id
+
+# --- Maintain the current-job state file ---
+if status == "RUNNING":
+    tmp_state = state_path + ".tmp"
+    with open(tmp_state, 'w', encoding='utf-8') as fh:
+        json.dump({"agentic_job_id": job_id, "job_name": job_name, "job_type": job_type}, fh)
+    os.chmod(tmp_state, 0o600)
+    os.replace(tmp_state, state_path)
+else:
+    # Terminal marker closes the arc — clear the state when it matches.
+    try:
+        with open(state_path, encoding='utf-8') as fh:
+            if json.load(fh).get('agentic_job_id') == job_id:
+                os.unlink(state_path)
+    except Exception:
+        pass
 
 # --- Append under fcntl.LOCK_EX + O_APPEND (T-05-06) ---
 # Use json.dumps with compact separators so no raw field bytes hit the file

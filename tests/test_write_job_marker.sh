@@ -432,6 +432,70 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Tests 13-17: lifecycle (RUNNING open + --close terminal + state file)
+# ---------------------------------------------------------------------------
+MARKER_FILE_LC="${TMP_MARKERS}/${FAKE_SID}.jsonl"
+STATE_FILE_LC="${TMP_MARKERS}/${FAKE_SID}.current-job.json"
+
+# Test 13: RUNNING accepted — exit 0, record has status RUNNING and NO
+# completion_id (open markers stamp by interval, not by id), state file written.
+output=$(run_job_marker \
+  --job-id "lifecycle-arc-13aa" \
+  --job-name "Lifecycle arc" \
+  --job-type "testing" \
+  --status "RUNNING" 2>&1)
+rc=$?
+rec13=$(grep '"agentic_job_id":"lifecycle-arc-13aa"' "${MARKER_FILE_LC}" | tail -1)
+if [[ ${rc} -eq 0 ]] && echo "${rec13}" | grep -q '"status":"RUNNING"' \
+   && ! echo "${rec13}" | grep -q 'completion_id' \
+   && grep -q '"agentic_job_id": "lifecycle-arc-13aa"' "${STATE_FILE_LC}" 2>/dev/null; then
+  pass "13: RUNNING marker written (no completion_id) + current-job state file recorded"
+else
+  fail "13: RUNNING lifecycle open failed (rc=${rc}, rec=${rec13:0:120}, state=$(cat "${STATE_FILE_LC}" 2>/dev/null | head -c 80))"
+fi
+
+# Test 14: --close SUCCESS — reuses id/name/type from state, clears state file.
+output=$(run_job_marker --close --status "SUCCESS" 2>&1)
+rc=$?
+rec14=$(grep '"agentic_job_id":"lifecycle-arc-13aa"' "${MARKER_FILE_LC}" | tail -1)
+if [[ ${rc} -eq 0 ]] && echo "${rec14}" | grep -q '"status":"SUCCESS"' \
+   && echo "${rec14}" | grep -q '"job_type":"testing"' \
+   && [[ ! -f "${STATE_FILE_LC}" ]]; then
+  pass "14: --close reuses open job id/type from state and clears the state file"
+else
+  fail "14: --close failed (rc=${rc}, rec=${rec14:0:120}, state-exists=$([[ -f ${STATE_FILE_LC} ]] && echo yes || echo no))"
+fi
+
+# Test 15: --close with no open job — exits non-zero, no marker appended.
+lines_before=$(grep -c '' "${MARKER_FILE_LC}" 2>/dev/null || echo 0)
+output=$(run_job_marker --close --status "SUCCESS" 2>&1)
+rc=$?
+lines_after=$(grep -c '' "${MARKER_FILE_LC}" 2>/dev/null || echo 0)
+if [[ ${rc} -ne 0 && "${lines_before}" -eq "${lines_after}" ]]; then
+  pass "15: --close with no open job exits non-zero and appends nothing"
+else
+  fail "15: expected non-zero + no append (rc=${rc}, lines ${lines_before}->${lines_after})"
+fi
+
+# Test 16: --close --status RUNNING — rejected (close needs a terminal status).
+output=$(run_job_marker --close --job-id "x-16aa" --job-name "X" --job-type "testing" --status "RUNNING" 2>&1)
+rc=$?
+if [[ ${rc} -ne 0 ]]; then
+  pass "16: --close --status RUNNING rejected"
+else
+  fail "16: --close --status RUNNING was accepted (rc=0)"
+fi
+
+# Test 17: --close with explicit --job-id works without a state file.
+output=$(run_job_marker --close --job-id "explicit-close-17aa" --job-name "Explicit close" --job-type "testing" --status "CANCELLED" 2>&1)
+rc=$?
+if [[ ${rc} -eq 0 ]] && grep -q '"agentic_job_id":"explicit-close-17aa"' "${MARKER_FILE_LC}"; then
+  pass "17: --close with explicit --job-id works without state file"
+else
+  fail "17: explicit-id close failed (rc=${rc})"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

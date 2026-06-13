@@ -115,23 +115,21 @@ The background cron (`cron.sh`) ships each conversation completion line to Reven
 
 ## JOB DECLARATION
 
-**MANDATORY — NON-NEGOTIABLE. Execute at arc boundaries — when a goal-arc concludes (completed, definitively failed, or abandoned).** This is a primary agent action (not a per-turn action). A job = a goal-arc. Declare it when the arc ends, not after every substantive turn.
+**MANDATORY — NON-NEGOTIABLE. Execute at BOTH arc boundaries: OPEN the job when a goal-arc begins, CLOSE it when the arc concludes (completed, definitively failed, or abandoned).** A job = a goal-arc. Most requests are one arc = one job. Opening at the start makes the job visible in Revenium while it runs and attributes the arc's spend to it as it accrues; closing records the outcome.
 
-Unlike TASK CLASSIFICATION (which fires per-turn), JOB DECLARATION fires once per goal-arc — at the boundary where the arc concludes. Aim for at least one declaration per session; a session with no clear arc conclusion may legitimately produce zero (D-04 — soft floor, no hard enforcement).
+Unlike TASK CLASSIFICATION (which fires per-turn), JOB DECLARATION fires at goal-arc boundaries. Aim for at least one open+close pair per session in which any real work occurred.
 
 ### Trigger (binary — no judgment calls)
 
-Declare a job marker if ANY of these are true:
+**OPEN (status RUNNING)** when the user gives you a goal that needs real work — any multi-step task, tool-using work, or substantive creative/analytical request. Open it BEFORE diving into the work. Skip opening only for trivial exchanges (≤ 2 sentences, zero tools).
 
-1. You completed the goal and self-verified (tests passed, build green, question fully answered).
-2. The arc has definitively failed (goal objectively unachievable with approaches available in this session).
-3. The user pivoted to a new goal before this arc was declared → write **CANCELLED** for the abandoned arc first, then begin the new arc.
+**CLOSE (terminal status)** if ANY of these are true:
 
-Skip ONLY when ALL of the following are true:
-- Your response is ≤ 2 sentences.
-- No arc was in progress.
+1. You completed the goal and self-verified (tests passed, build green, question fully answered) → **SUCCESS**.
+2. The arc has definitively failed (goal objectively unachievable with approaches available in this session) → **FAILED**.
+3. The user pivoted to a new goal before this arc concluded → close the abandoned arc **CANCELLED** first, then OPEN the new arc.
 
-There is no "borderline / when in doubt skip" path. When in doubt: use **CANCELLED** (see status bar below).
+There is no "borderline / when in doubt skip" path. When in doubt: close **CANCELLED** (see status bar below). If you reach the end of an arc you never opened, declare once with the full flags and a terminal status (the original one-shot form — still fully supported).
 
 ### Required action
 
@@ -161,20 +159,32 @@ Example: `add-pagination-endpoint-3b1e`
 
 The slug should be 3–6 words describing the goal. Generate 4 random hex characters as the suffix. You own and mint this ID — no external system generates it.
 
-**Step 3 — call `write-job-marker.sh`.** Run:
+**Step 3 — OPEN the job at arc start.** Run:
 
 ```
 bash ~/.openclaw/skills/revenium/scripts/write-job-marker.sh \
   --job-id <agentic_job_id> \
   --job-name "<short human-readable goal description>" \
   --job-type <label_from_step_1> \
-  --status SUCCESS|FAILED|CANCELLED \
+  --status RUNNING
+```
+
+The script remembers the open job for this session, so closing doesn't require repeating the id.
+
+**Step 4 — CLOSE the job at arc end.** Run:
+
+```
+bash ~/.openclaw/skills/revenium/scripts/write-job-marker.sh \
+  --close --status SUCCESS|FAILED|CANCELLED \
   [--failure-reason "<brief plain-text cause>"]
 ```
 
+If `--close` errors with "no open job recorded" (or you never opened the arc), declare once with the full flags from Step 3 and a terminal status instead of RUNNING — the original one-shot form, fully supported.
+
 **Status bar:**
+- **`RUNNING`:** the arc is underway (open form only — never a final state).
 - **`SUCCESS`:** positive, checkable evidence established in the session (tests passed, build green, question fully answered). "Made the change but could not verify" = CANCELLED, not SUCCESS.
-- **`FAILED`:** definitive negative terminal state (the fix didn't fix, build cannot pass, goal objectively unachievable). Include `--failure-reason` with a brief plain-text cause (FAILED-only — never pass `--failure-reason` for SUCCESS or CANCELLED).
+- **`FAILED`:** definitive negative terminal state (the fix didn't fix, build cannot pass, goal objectively unachievable). Include `--failure-reason` with a brief plain-text cause (FAILED-only — never pass `--failure-reason` for SUCCESS, CANCELLED, or RUNNING).
 - **`CANCELLED`:** catch-all and uncertainty-bias default. When in doubt: CANCELLED.
 
 **Confirmation and error handling:**

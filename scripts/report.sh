@@ -607,12 +607,14 @@ PY
   # never returns out of process_session.
   if [[ "${JOBS_CLI_CAPABLE}" == "true" && -s "${jobs_cache_file}" \
      && "${root_sid}" == "${session_id}" ]]; then
-    local _sw_ts _sw_aid _sw_name _sw_type _sw_status _sw_freason _sw_cid
+    local _sw_ts _sw_aid _sw_aid_raw _sw_name _sw_type _sw_status _sw_freason _sw_cid
     while IFS=$'\t' read -r _sw_ts _sw_aid _sw_name _sw_type _sw_status _sw_freason _sw_cid; do
       if [[ -z "${_sw_aid}" ]]; then
         continue
       fi
-      # Sanitize pipe/colon (parity with the rollup resolver, WR-01/D-08)
+      # Sanitize pipe/colon (parity with the rollup resolver, WR-01/D-08).
+      # Keep the raw form for same-cache lookups (rows store it unsanitized).
+      _sw_aid_raw="${_sw_aid}"
       _sw_aid="${_sw_aid//|/_}"
       _sw_aid="${_sw_aid//:/_}"
       local _sw_aid_log="${_sw_aid:0:64}"
@@ -641,11 +643,46 @@ PY
         fi
       fi
 
-      # --- outcome (ledger-gated; stale-or-uncorrelated markers only) ---
+      # --- stale-open janitor (lifecycle) ---
+      # A RUNNING marker with no terminal row for the same job after
+      # REVENIUM_JOB_STALE_HOURS (default 24) is an abandoned arc — close it
+      # CANCELLED so Revenium isn't left with phantom running jobs. Halted
+      # arcs are already closed by handle_halt; this catches walk-aways.
+      if [[ "${_sw_status}" == "RUNNING" ]] \
+         && ! grep -q "^JOB:${_sw_aid}:outcome:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
+        if ! awk -F'\t' -v id="${_sw_aid_raw}" '$2==id && ($5=="SUCCESS"||$5=="FAILED"||$5=="CANCELLED"){f=1} END{exit !f}' "${jobs_cache_file}" 2>/dev/null; then
+          local _sw_stale=""
+          _sw_stale=$(TS="${_sw_ts}" MAXH="${REVENIUM_JOB_STALE_HOURS:-24}" python3 - <<'PY' 2>/dev/null || true
+import os, time
+from datetime import datetime
+try:
+    ts = datetime.fromisoformat(os.environ['TS'].replace('Z', '+00:00'))
+    if (time.time() - ts.timestamp()) > float(os.environ['MAXH']) * 3600:
+        print('stale')
+except Exception:
+    pass
+PY
+)
+          if [[ "${_sw_stale}" == "stale" ]]; then
+            local _sw_jout _sw_jexit
+            _sw_jout=$(revenium jobs outcome "${_sw_aid}" --result CANCELLED --quiet 2>&1) && _sw_jexit=0 || _sw_jexit=$?
+            if [[ "${_sw_jexit}" -eq 0 ]] || echo "${_sw_jout}" | grep -qi "409\|already.exist\|conflict"; then
+              local _sw_jnow
+              _sw_jnow=$(python3 -c "import time; print(f'{time.time():.3f}')" 2>/dev/null || date +%s)
+              echo "JOB:${_sw_aid}:outcome:${_sw_jnow}:CANCELLED" >> "${JOBS_LEDGER_FILE}"
+              info "Job closed (stale janitor): agentic_job_id=${_sw_aid_log} result=CANCELLED (open > ${REVENIUM_JOB_STALE_HOURS:-24}h)"
+            else
+              warn "stale-job close failed: id=${_sw_aid_log} exit=${_sw_jexit} — retry next tick"
+            fi
+          fi
+        fi
+      fi
+
+      # --- outcome (terminal markers; ledger-gated) ---
       # Residual edge: a marker whose completion_id never gets TX-ledgered
       # (e.g. a usage-less message) defers here forever — accepted: the cid
       # always references a real assistant message harvested from the session.
-      if [[ -n "${_sw_status}" ]] \
+      if [[ "${_sw_status}" == "SUCCESS" || "${_sw_status}" == "FAILED" || "${_sw_status}" == "CANCELLED" ]] \
          && ! grep -q "^JOB:${_sw_aid}:outcome:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
         if [[ -z "${_sw_cid}" ]] || grep -q "^TX:${_sw_cid}$" "${LEDGER_FILE}" 2>/dev/null; then
           local _sw_outcome_cmd=( revenium jobs outcome "${_sw_aid}" --result "${_sw_status}" --quiet )
@@ -927,6 +964,45 @@ if cid:
             chosen = parts
             break
 
+# --- Phase C: open-arc interval match (lifecycle, 2026-06-13) ---
+# A RUNNING marker opens an arc at its ts; the arc closes at the first
+# terminal-status row for the same agentic_job_id (or stays open). A completion
+# whose ts falls inside an open interval stamps to that job — this is what
+# gives mid-arc spend per-job attribution (end-only markers land too late for
+# completions metered by earlier ticks). Latest-starting open interval wins.
+# RUNNING markers carry no completion_id, so Phase A never consumes them.
+# The synthesized row carries EMPTY status/failure: mid-arc completions must
+# stamp, never close (the terminal marker or the sweep does the closing).
+if chosen is None:
+    cts = parse_ts(cts_raw)
+    if cts is not None:
+        terminal_ts = {}
+        for parts in rows:
+            st = parts[4] if len(parts) > 4 else ''
+            if st in ('SUCCESS', 'FAILED', 'CANCELLED'):
+                jid = parts[1]
+                t = parse_ts(parts[0])
+                if t is not None and (jid not in terminal_ts or t < terminal_ts[jid]):
+                    terminal_ts[jid] = t
+        best = None
+        best_ts = None
+        for parts in rows:
+            st = parts[4] if len(parts) > 4 else ''
+            if st != 'RUNNING':
+                continue
+            ots = parse_ts(parts[0])
+            if ots is None or ots > cts:
+                continue
+            jid = parts[1]
+            tts = terminal_ts.get(jid)
+            if tts is not None and tts < cts:
+                continue  # arc closed before this completion
+            if best_ts is None or ots > best_ts:
+                best_ts = ots
+                best = parts
+        if best is not None:
+            chosen = [best[0], best[1], best[2], best[3], '', '', '']
+
 # --- Phase D: earliest job marker at or after completion ts (fallback) ---
 if chosen is None:
     cts = parse_ts(cts_raw)
@@ -934,6 +1010,8 @@ if chosen is None:
         row_cid = parts[6] if len(parts) > 6 else ''
         if row_cid:
             continue  # id-keyed: don't bleed via timestamp
+        if (parts[4] if len(parts) > 4 else '') == 'RUNNING':
+            continue  # open markers are interval-matched in Phase C only
         ts = parts[0]
         mts = parse_ts(ts)
         if mts is not None and cts is not None:
@@ -1167,7 +1245,10 @@ print(json.dumps([{'role': 'user', 'content': text}]))
     # FAILED/CANCELLED carry no --outcome-type. D-08: failure_reason via
     # --metadata FAILED-only.
     # ---------------------------------------------------------------------------
+    # Lifecycle: job_status is empty for completions stamped to an OPEN arc
+    # (Phase C) — they must never close the job; the terminal marker does.
     if [[ "${JOBS_CLI_CAPABLE}" == "true" && -n "${agentic_job_id}" \
+       && -n "${job_status}" \
        && "${root_sid}" == "${session_id}" ]]; then
       if grep -q "^JOB:${agentic_job_id}:outcome:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
         :   # already closed — idempotent skip (D-09)

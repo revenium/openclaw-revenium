@@ -103,8 +103,11 @@ run_report() {
   STUB_REVENIUM_ARGV_FILE="${_argv_file}" \
   OPENCLAW_HOME="${openclaw_home}" \
   HOME="${TMP_FAKE_HOME}" \
-  "${extra_env[@]+"${extra_env[@]}"}" \
+  env "${extra_env[@]+"${extra_env[@]}"}" \
   bash "${REPORT_SH}" 2>&1 || true
+  # (env: expanded VAR=val words are not recognized as assignment prefixes by
+  # the shell, so without `env` an extra_env entry would be executed as the
+  # command name. With no extras, `env bash ...` is behavior-identical.)
 }
 
 # ===========================================================================
@@ -1322,6 +1325,100 @@ fi
 rm -f "${ARGV_FILE_M2}"
 
 # ===========================================================================
+# GROUP LIFECYCLE: RUNNING open -> stamp -> close (declare-at-start, 2026-06-13)
+#
+# A RUNNING marker at arc start must: create the job immediately (visible in
+# Revenium while running), stamp completions inside the open interval with
+# --agentic-job-id (Phase C), and NOT close the job. The later terminal marker
+# closes it. A RUNNING marker with no terminal row past REVENIUM_JOB_STALE_HOURS
+# is closed CANCELLED by the stale janitor.
+# ===========================================================================
+SID_LC="6c6c6c6c-8888-8888-8888-6c6c6c6c6c6c"
+JOB_ID_LC="open-arc-lc-1a2b"
+
+TMP_HOME_LC=$(make_openclaw_home)
+ARGV_FILE_LC1=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-lc1.XXXXXX")
+ARGV_FILE_LC2=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-lc2.XXXXXX")
+
+SESSION_LC="${TMP_HOME_LC}/agents/main/sessions/${SID_LC}.jsonl"
+cat > "${SESSION_LC}" <<JSONL
+{"type":"session","version":3,"id":"${SID_LC}","timestamp":"2026-02-01T10:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-LC-001","parentId":"00000000","timestamp":"2026-02-01T10:00:30.000Z","message":{"role":"user","content":[{"type":"text","text":"Do the thing"}]}}
+{"type":"message","id":"comp-LC-001","parentId":"user-LC-001","timestamp":"2026-02-01T10:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Working"}],"usage":{"input":70,"output":35,"cacheRead":0,"cacheWrite":0,"totalTokens":105}}}
+JSONL
+
+# RUNNING marker at 10:01 — BEFORE the completion, no completion_id (open form)
+MARKER_LC="${TMP_HOME_LC}/skills/revenium/markers/${SID_LC}.jsonl"
+printf '%s\n' '{"kind":"job","ts":"2026-02-01T10:01:00Z","sid":"'"${SID_LC}"'","agentic_job_id":"'"${JOB_ID_LC}"'","job_name":"Open arc","job_type":"testing","status":"RUNNING"}' > "${MARKER_LC}"
+
+# Tick 1: create fires (sweep), completion stamps to the open job, NO outcome.
+# (Fixture timestamps are months old, so the stale janitor is pushed out of the
+# way with a huge threshold — LC-5 below tests the janitor with the default.)
+run_report "${TMP_HOME_LC}" "${ARGV_FILE_LC1}" "REVENIUM_JOB_STALE_HOURS=9999999" > /dev/null 2>&1
+JOBS_LEDGER_LC="${TMP_HOME_LC}/revenium-jobs.ledger"
+
+create_count_lc1=$(count_grep "^create$" "${ARGV_FILE_LC1}")
+outcome_count_lc1=$(count_grep "^outcome$" "${ARGV_FILE_LC1}")
+if [[ "${create_count_lc1}" -ge 1 && "${outcome_count_lc1}" -eq 0 ]]; then
+  pass "LC-1: RUNNING marker creates the job on tick 1 and does NOT close it"
+else
+  fail "LC-1: expected create>=1 outcome=0 on tick 1, got create=${create_count_lc1} outcome=${outcome_count_lc1}"
+fi
+
+id_count_lc1=$(count_grep "^${JOB_ID_LC}$" "${ARGV_FILE_LC1}")
+if [[ "${id_count_lc1}" -ge 2 ]]; then
+  pass "LC-2: completion inside the open interval is STAMPED with --agentic-job-id (id appears in create + stamp argv)"
+else
+  fail "LC-2: expected job id >=2 times in tick-1 argv (create + completion stamp), got ${id_count_lc1}"
+fi
+
+if grep -q "^JOB:${JOB_ID_LC}:created:" "${JOBS_LEDGER_LC}" 2>/dev/null \
+   && ! grep -q "^JOB:${JOB_ID_LC}:outcome:" "${JOBS_LEDGER_LC}" 2>/dev/null; then
+  pass "LC-3: ledger has created but NOT outcome after tick 1 (job stays open)"
+else
+  fail "LC-3: unexpected ledger state after tick 1: $(cat "${JOBS_LEDGER_LC}" 2>/dev/null | tr '\n' '|')"
+fi
+
+# Arc ends: terminal marker (what --close emits) referencing the now-TX-ledgered completion.
+printf '%s\n' '{"kind":"job","ts":"2026-02-01T10:05:00Z","sid":"'"${SID_LC}"'","agentic_job_id":"'"${JOB_ID_LC}"'","job_name":"Open arc","job_type":"testing","status":"SUCCESS","completion_id":"comp-LC-001"}' >> "${MARKER_LC}"
+
+# Tick 2: outcome fires; no duplicate create.
+run_report "${TMP_HOME_LC}" "${ARGV_FILE_LC2}" "REVENIUM_JOB_STALE_HOURS=9999999" > /dev/null 2>&1
+create_count_lc2=$(count_grep "^create$" "${ARGV_FILE_LC2}")
+outcome_count_lc2=$(count_grep "^outcome$" "${ARGV_FILE_LC2}")
+if [[ "${create_count_lc2}" -eq 0 && "${outcome_count_lc2}" -ge 1 ]] \
+   && grep -q "^JOB:${JOB_ID_LC}:outcome:.*:SUCCESS$" "${JOBS_LEDGER_LC}" 2>/dev/null; then
+  pass "LC-4: terminal marker closes the job on tick 2 (no duplicate create)"
+else
+  fail "LC-4: expected create=0 outcome>=1 + SUCCESS ledger, got create=${create_count_lc2} outcome=${outcome_count_lc2}"
+fi
+
+rm -f "${ARGV_FILE_LC1}" "${ARGV_FILE_LC2}" 2>/dev/null || true
+
+# --- Stale janitor: RUNNING with no terminal row past the threshold -> CANCELLED ---
+SID_LJ="7d7d7d7d-9999-9999-9999-7d7d7d7d7d7d"
+JOB_ID_LJ="abandoned-arc-lj-4e4e"
+TMP_HOME_LJ=$(make_openclaw_home)
+ARGV_FILE_LJ=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-lj.XXXXXX")
+SESSION_LJ="${TMP_HOME_LJ}/agents/main/sessions/${SID_LJ}.jsonl"
+cat > "${SESSION_LJ}" <<JSONL
+{"type":"session","version":3,"id":"${SID_LJ}","timestamp":"2026-02-01T11:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"comp-LJ-001","parentId":"00000000","timestamp":"2026-02-01T11:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Started"}],"usage":{"input":50,"output":25,"cacheRead":0,"cacheWrite":0,"totalTokens":75}}}
+JSONL
+# RUNNING marker months old (fixture date), never closed.
+printf '%s\n' '{"kind":"job","ts":"2026-02-01T11:01:00Z","sid":"'"${SID_LJ}"'","agentic_job_id":"'"${JOB_ID_LJ}"'","job_name":"Abandoned arc","job_type":"testing","status":"RUNNING"}' > "${TMP_HOME_LJ}/skills/revenium/markers/${SID_LJ}.jsonl"
+
+run_report "${TMP_HOME_LJ}" "${ARGV_FILE_LJ}" > /dev/null 2>&1
+JOBS_LEDGER_LJ="${TMP_HOME_LJ}/revenium-jobs.ledger"
+if grep -q "^JOB:${JOB_ID_LJ}:created:" "${JOBS_LEDGER_LJ}" 2>/dev/null \
+   && grep -q "^JOB:${JOB_ID_LJ}:outcome:.*:CANCELLED$" "${JOBS_LEDGER_LJ}" 2>/dev/null; then
+  pass "LC-5: stale janitor closes an abandoned RUNNING job as CANCELLED (default 24h threshold)"
+else
+  fail "LC-5: expected created + CANCELLED outcome for stale open job, ledger: $(cat "${JOBS_LEDGER_LJ}" 2>/dev/null | tr '\n' '|')"
+fi
+rm -f "${ARGV_FILE_LJ}" 2>/dev/null || true
+
+# ===========================================================================
 # GROUP SWEEP: stale-completion job marker (regression, live 2026-06-13)
 #
 # With a 1-minute cron, an arc's mid-arc completion is often metered by an
@@ -1407,7 +1504,7 @@ cleanup_all() {
   rm -rf "${TMP_HOME_A}" "${TMP_HOME_B}" "${TMP_HOME_C}" "${TMP_HOME_D}" "${TMP_HOME_E}" \
     "${TMP_HOME_F}" "${TMP_HOME_G}" "${TMP_HOME_H}" \
     "${TMP_HOME_I}" "${TMP_HOME_J}" "${TMP_HOME_K}" "${TMP_HOME_L}" \
-    "${TMP_HOME_M1}" "${TMP_HOME_M2}" "${TMP_HOME_SW}" 2>/dev/null || true
+    "${TMP_HOME_M1}" "${TMP_HOME_M2}" "${TMP_HOME_SW}" "${TMP_HOME_LC}" "${TMP_HOME_LJ}" 2>/dev/null || true
   cleanup
 }
 trap cleanup_all EXIT
