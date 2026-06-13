@@ -689,3 +689,40 @@ describe("finalize - extended substantive detection (2026-06-13)", () => {
     assert.ok(result.retry.instruction.includes("--close"), "close form present");
   });
 });
+
+describe("buildMeteringInjection (per-turn directive injection, 2026-06-13)", () => {
+  test("reads the skill's directive file and wraps it in <revenium-metering> tags", async () => {
+    const { buildMeteringInjection } = await import("./gate.js");
+    const home = mkdtempSync(join(tmpdir(), "inj-"));
+    const refDir = join(home, "skills", "revenium", "references");
+    const { mkdirSync: mkd } = await import("node:fs");
+    mkd(refDir, { recursive: true });
+    writeFileSync(join(refDir, "agents-metering-directives.md"),
+      "## Revenium Metering — Task Classification (Mandatory Completion Gate)\nrun write-marker.sh every turn\n");
+    const prev = process.env.OPENCLAW_HOME;
+    process.env.OPENCLAW_HOME = home;
+    try {
+      const inj = buildMeteringInjection();
+      assert.ok(inj, "expected an injection string");
+      assert.ok(inj.startsWith("<revenium-metering>"), "opening tag");
+      assert.ok(inj.endsWith("</revenium-metering>"), "closing tag");
+      assert.ok(inj.includes("write-marker.sh"), "directive content present");
+    } finally {
+      if (prev === undefined) delete process.env.OPENCLAW_HOME; else process.env.OPENCLAW_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("missing directive file → null (fail-open, no injection)", async () => {
+    const { buildMeteringInjection } = await import("./gate.js");
+    const home = mkdtempSync(join(tmpdir(), "inj-empty-"));
+    const prev = process.env.OPENCLAW_HOME;
+    process.env.OPENCLAW_HOME = home;
+    try {
+      assert.strictEqual(buildMeteringInjection(), null);
+    } finally {
+      if (prev === undefined) delete process.env.OPENCLAW_HOME; else process.env.OPENCLAW_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

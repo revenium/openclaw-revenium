@@ -1,9 +1,14 @@
 /**
  * index.ts — Revenium Marker Gate plugin entry point.
  *
- * Registers three OpenClaw hooks:
- *   before_tool_call  — observes exec/bash calls; adds runId to tracking sets
- *   before_agent_finalize — returns a revise action when exec ran but write-marker.sh did not
+ * Registers four OpenClaw hooks:
+ *   before_prompt_build — prepends the metering directives (task classification +
+ *                         job lifecycle) to EVERY turn. Added 2026-06-13: OpenClaw
+ *                         2026.6.6 refuses finalize revise actions on turns with
+ *                         side effects, so per-turn injection (the NemoClaw-proven
+ *                         mechanism) is the primary compliance driver now.
+ *   before_tool_call  — observes working tool calls; adds runId to tracking sets
+ *   before_agent_finalize — returns a revise action when a substantive turn did not classify
  *   agent_end         — cleans up tracking sets to prevent memory leaks
  *
  * The pure gate logic lives in ./gate.js (importable by node:test without tsc
@@ -17,13 +22,28 @@ import {
   safeBeforeToolCall,
   safeBeforeAgentFinalize,
   safeAgentEnd,
+  buildMeteringInjection,
 } from "./gate.js";
+
+// Loaded ONCE at plugin load — static for the gateway's lifetime (no hook-time
+// fs I/O). null (file missing/out-of-bounds) → the hook returns undefined.
+const METERING_INJECTION: string | null = buildMeteringInjection();
 
 export default definePluginEntry({
   id: "revenium-marker-gate",
   name: "Revenium Marker Gate",
   description: "Forces write-marker.sh before finalizing a substantive turn.",
-  register(api) {
+  register(api: any) {
+    // before_prompt_build: NOT a conversation hook. Prepends the metering
+    // directives to every turn (per-turn salience is what holds compliance —
+    // ambient AGENTS.md demonstrably does not on long sessions).
+    api.on("before_prompt_build", () => {
+      try {
+        return METERING_INJECTION ? { prependContext: METERING_INJECTION } : undefined;
+      } catch {
+        return undefined; // fail-open: never block the turn
+      }
+    });
     // FAIL-OPEN GUARANTEE (CR-01): every handler body is wrapped in try/catch so
     // a throw from the gate logic can NEVER reject the hook promise. The safe*
     // wrappers in gate.js contain the same containment (so the property is
@@ -31,9 +51,9 @@ export default definePluginEntry({
     // defensive second layer that also guards the ctx/event dereferences below.
 
     // before_tool_call: NOT a conversation hook — no allowConversationAccess needed.
-    api.on("before_tool_call", async (event: { toolName: string; params: Record<string, unknown> } | undefined, ctx: { runId?: string } | undefined) => {
+    api.on("before_tool_call", async (event: { toolName?: string; params?: Record<string, unknown> } | undefined, ctx: { runId?: string } | undefined) => {
       try {
-        safeBeforeToolCall(ctx?.runId, event?.toolName, event?.params);
+        safeBeforeToolCall(ctx?.runId, event?.toolName ?? "", event?.params ?? {});
       } catch { /* fail-open: observation is best-effort, never block the turn */ }
     });
 

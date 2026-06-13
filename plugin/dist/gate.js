@@ -77,6 +77,32 @@ function runStatePath(runId) {
   return join(resolveRunStateDir(), safe + ".json");
 }
 
+// ---------------------------------------------------------------------------
+// Per-turn metering directive injection (2026-06-13).
+// OpenClaw 2026.6.6 refuses before_agent_finalize revise actions on turns with
+// side effects ("requested revision after potential side effects; finalizing"),
+// which silently disabled the v1.3 revise loop for exactly the substantive
+// turns it existed to gate. The reliable surface that remains is
+// before_prompt_build — the same per-turn prependContext injection the
+// NemoClaw plugin uses, which is the configuration that demonstrably kept
+// task/job markers flowing (validated live on nemoclaw-006). The directive
+// text is read ONCE at plugin load from the installed skill (no fs I/O at
+// hook time); a missing or out-of-bounds file fails open to no injection
+// (AGENTS.md still carries the directives as the baseline).
+// ---------------------------------------------------------------------------
+export function buildMeteringInjection() {
+  try {
+    const ocHome = process.env.OPENCLAW_HOME || (process.env.HOME + "/.openclaw");
+    const p = join(ocHome, "skills", "revenium", "references", "agents-metering-directives.md");
+    if (!existsSync(p)) return null;
+    const raw = readFileSync(p, "utf8");
+    if (!raw || raw.trim().length < 40 || raw.length > 32768) return null;
+    return "<revenium-metering>\n" + raw.trim() + "\n</revenium-metering>";
+  } catch {
+    return null; // fail-open: no injection rather than a broken hook
+  }
+}
+
 // Per-run tracking state (in-process, not persisted).
 // Module-level Sets so they survive across hook calls within the same process.
 export const execRuns = new Set();       // runIds that invoked any exec/bash tool
