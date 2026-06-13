@@ -587,6 +587,103 @@ with open(jobs_out, 'a', encoding='utf-8') as f:
 PY
   fi
 
+  # ---------------------------------------------------------------------------
+  # Jobs sweep — consume job markers independent of completion timing (JLIFE-01/03).
+  # The in-loop create/outcome below only fires while processing a NEW completion
+  # whose id matches the marker's completion_id. With a 1-minute cron, an arc's
+  # mid-arc completions are routinely metered by EARLIER ticks than the arc-end
+  # job marker — the matching completion is then TX-ledger-skipped on every later
+  # tick and the job is silently never created (observed live 2026-06-13: marker
+  # written 23:53:48 pointing at a completion metered minutes earlier; no job).
+  # This sweep runs every tick BEFORE the offset early-return, so markers are
+  # consumed even when the session has gone quiet:
+  #   - create: ledger-gated, 409-as-success, root sessions only (mirrors in-loop)
+  #   - outcome: only when the marker's completion_id is empty OR already
+  #     TX-ledgered — a still-pending completion keeps D-09 order (create →
+  #     stamp → outcome) by leaving the close to the in-loop path this tick.
+  # The in-loop blocks stay: they stamp completions and share the same ledger
+  # keys, so create/outcome remain exactly-once.
+  # CRITICAL (D-12): own locals; never touches failed_count/reported_count;
+  # never returns out of process_session.
+  if [[ "${JOBS_CLI_CAPABLE}" == "true" && -s "${jobs_cache_file}" \
+     && "${root_sid}" == "${session_id}" ]]; then
+    local _sw_ts _sw_aid _sw_name _sw_type _sw_status _sw_freason _sw_cid
+    while IFS=$'\t' read -r _sw_ts _sw_aid _sw_name _sw_type _sw_status _sw_freason _sw_cid; do
+      if [[ -z "${_sw_aid}" ]]; then
+        continue
+      fi
+      # Sanitize pipe/colon (parity with the rollup resolver, WR-01/D-08)
+      _sw_aid="${_sw_aid//|/_}"
+      _sw_aid="${_sw_aid//:/_}"
+      local _sw_aid_log="${_sw_aid:0:64}"
+
+      # --- create (ledger-gated, 409-as-success) ---
+      if ! grep -q "^JOB:${_sw_aid}:created:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
+        local _sw_create_cmd=( revenium jobs create --agentic-job-id "${_sw_aid}" --quiet )
+        if [[ -n "${_sw_name}" ]]; then _sw_create_cmd+=(--name "${_sw_name}"); fi
+        if [[ -n "${_sw_type}" ]]; then _sw_create_cmd+=(--type "${_sw_type}"); fi
+        local _sw_out _sw_exit
+        _sw_out=$("${_sw_create_cmd[@]}" 2>&1) && _sw_exit=0 || _sw_exit=$?
+        local _sw_ok=false
+        if [[ "${_sw_exit}" -eq 0 ]]; then
+          _sw_ok=true
+        elif echo "${_sw_out}" | grep -qi "409\|already.exist\|conflict"; then
+          _sw_ok=true
+        fi
+        if [[ "${_sw_ok}" == "true" ]]; then
+          local _sw_now
+          _sw_now=$(python3 -c "import time; print(f'{time.time():.3f}')" 2>/dev/null || date +%s)
+          echo "JOB:${_sw_aid}:created:${_sw_now}" >> "${JOBS_LEDGER_FILE}"
+          info "Job created (sweep): agentic_job_id=${_sw_aid_log}"
+        else
+          warn "jobs create failed (sweep): id=${_sw_aid_log} exit=${_sw_exit} — metering continues"
+          continue   # no outcome without a confirmed create
+        fi
+      fi
+
+      # --- outcome (ledger-gated; stale-or-uncorrelated markers only) ---
+      # Residual edge: a marker whose completion_id never gets TX-ledgered
+      # (e.g. a usage-less message) defers here forever — accepted: the cid
+      # always references a real assistant message harvested from the session.
+      if [[ -n "${_sw_status}" ]] \
+         && ! grep -q "^JOB:${_sw_aid}:outcome:" "${JOBS_LEDGER_FILE}" 2>/dev/null; then
+        if [[ -z "${_sw_cid}" ]] || grep -q "^TX:${_sw_cid}$" "${LEDGER_FILE}" 2>/dev/null; then
+          local _sw_outcome_cmd=( revenium jobs outcome "${_sw_aid}" --result "${_sw_status}" --quiet )
+          if [[ "${_sw_status}" == "SUCCESS" ]]; then
+            _sw_outcome_cmd+=(--outcome-type CONVERTED)
+          fi
+          if [[ "${_sw_status}" == "FAILED" && -n "${_sw_freason}" ]]; then
+            local _sw_meta
+            _sw_meta=$(FR="${_sw_freason}" python3 - <<'PY' 2>/dev/null || true
+import json, os
+fr = os.environ.get('FR', '').strip()
+if fr: print(json.dumps({"failure_reason": fr}, separators=(',', ':')))
+PY
+)
+            _sw_meta="${_sw_meta%%$'\n'*}"
+            if [[ -n "${_sw_meta}" ]]; then _sw_outcome_cmd+=(--metadata "${_sw_meta}"); fi
+          fi
+          local _sw_oout _sw_oexit
+          _sw_oout=$("${_sw_outcome_cmd[@]}" 2>&1) && _sw_oexit=0 || _sw_oexit=$?
+          local _sw_ook=false
+          if [[ "${_sw_oexit}" -eq 0 ]]; then
+            _sw_ook=true
+          elif echo "${_sw_oout}" | grep -qi "409\|already.exist\|conflict"; then
+            _sw_ook=true
+          fi
+          if [[ "${_sw_ook}" == "true" ]]; then
+            local _sw_onow
+            _sw_onow=$(python3 -c "import time; print(f'{time.time():.3f}')" 2>/dev/null || date +%s)
+            echo "JOB:${_sw_aid}:outcome:${_sw_onow}:${_sw_status}" >> "${JOBS_LEDGER_FILE}"
+            info "Job closed (sweep): agentic_job_id=${_sw_aid_log} result=${_sw_status}"
+          else
+            warn "jobs outcome failed (sweep): id=${_sw_aid_log} exit=${_sw_oexit} — retry next tick"
+          fi
+        fi
+      fi
+    done < "${jobs_cache_file}"
+  fi
+
   # Get last processed line offset for this session
   local offset total_lines
   offset=$(get_offset "${session_id}")

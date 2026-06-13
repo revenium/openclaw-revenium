@@ -1322,6 +1322,83 @@ fi
 rm -f "${ARGV_FILE_M2}"
 
 # ===========================================================================
+# GROUP SWEEP: stale-completion job marker (regression, live 2026-06-13)
+#
+# With a 1-minute cron, an arc's mid-arc completion is often metered by an
+# EARLIER tick than the arc-end job marker that references it. The completion
+# is then TX-ledger-skipped on every later tick, so the in-loop create/outcome
+# (which only fire while processing that completion) never run — the job is
+# silently never created. The per-session jobs sweep must consume the marker
+# anyway: create + outcome on the next tick after the marker appears.
+# ===========================================================================
+SID_SW="5e5e5e5e-7777-7777-7777-5e5e5e5e5e5e"
+JOB_ID_SW="stale-marker-sweep-9f3b"
+
+TMP_HOME_SW=$(make_openclaw_home)
+ARGV_FILE_SW1=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-sw1.XXXXXX")
+ARGV_FILE_SW2=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-sw2.XXXXXX")
+
+SESSION_SW="${TMP_HOME_SW}/agents/main/sessions/${SID_SW}.jsonl"
+cat > "${SESSION_SW}" <<JSONL
+{"type":"session","version":3,"id":"${SID_SW}","timestamp":"2026-02-01T15:00:00.000Z","cwd":"/tmp/test"}
+{"type":"message","id":"user-SW-001","parentId":"00000000","timestamp":"2026-02-01T15:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Reconfigure the budget"}]}}
+{"type":"message","id":"comp-SW-001","parentId":"user-SW-001","timestamp":"2026-02-01T15:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Working on it"}],"usage":{"input":90,"output":45,"cacheRead":0,"cacheWrite":0,"totalTokens":135}}}
+JSONL
+
+# Tick 1: NO job marker yet — the completion gets metered + TX-ledgered and the
+# offset is fully consumed (the live pre-marker state).
+run_report "${TMP_HOME_SW}" "${ARGV_FILE_SW1}" > /dev/null 2>&1
+
+JOBS_LEDGER_SW="${TMP_HOME_SW}/revenium-jobs.ledger"
+
+create_count_sw1=$(count_grep "^create$" "${ARGV_FILE_SW1}")
+if [[ "${create_count_sw1}" -eq 0 ]]; then
+  pass "SWEEP-0: no jobs create on tick 1 (no marker yet)"
+else
+  fail "SWEEP-0: expected 0 ^create$ on tick 1, got ${create_count_sw1}"
+fi
+
+# Between ticks: the arc ends and the agent writes the job marker — referencing
+# the ALREADY-METERED completion (this is exactly the live failure shape).
+MARKER_SW="${TMP_HOME_SW}/skills/revenium/markers/${SID_SW}.jsonl"
+printf '%s\n' '{"kind":"job","ts":"2026-02-01T15:05:00Z","sid":"'"${SID_SW}"'","agentic_job_id":"'"${JOB_ID_SW}"'","job_name":"Stale marker sweep","job_type":"devops","status":"SUCCESS","completion_id":"comp-SW-001"}' > "${MARKER_SW}"
+
+# Tick 2: session has no new lines (offset consumed) — only the sweep can act.
+run_report "${TMP_HOME_SW}" "${ARGV_FILE_SW2}" > /dev/null 2>&1
+
+create_count_sw2=$(count_grep "^create$" "${ARGV_FILE_SW2}")
+if [[ "${create_count_sw2}" -ge 1 ]]; then
+  pass "SWEEP-1: jobs create fired on tick 2 for the stale-completion marker"
+else
+  fail "SWEEP-1: expected >=1 ^create$ on tick 2, got ${create_count_sw2} (sweep missing — job silently dropped)"
+fi
+
+if grep -q "^JOB:${JOB_ID_SW}:created:" "${JOBS_LEDGER_SW}" 2>/dev/null; then
+  pass "SWEEP-2: jobs ledger has JOB:${JOB_ID_SW}:created:"
+else
+  fail "SWEEP-2: no JOB:${JOB_ID_SW}:created: in jobs ledger"
+fi
+
+if grep -q "^JOB:${JOB_ID_SW}:outcome:.*:SUCCESS$" "${JOBS_LEDGER_SW}" 2>/dev/null; then
+  pass "SWEEP-3: jobs ledger has JOB:${JOB_ID_SW}:outcome:...:SUCCESS (stale cid is TX-ledgered → closeable)"
+else
+  fail "SWEEP-3: no SUCCESS outcome ledger entry for ${JOB_ID_SW}"
+fi
+
+# Tick 3: idempotency — nothing new is created or closed.
+ARGV_FILE_SW3=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-sw3.XXXXXX")
+run_report "${TMP_HOME_SW}" "${ARGV_FILE_SW3}" > /dev/null 2>&1
+create_count_sw3=$(count_grep "^create$" "${ARGV_FILE_SW3}")
+outcome_count_sw3=$(count_grep "^outcome$" "${ARGV_FILE_SW3}")
+if [[ "${create_count_sw3}" -eq 0 && "${outcome_count_sw3}" -eq 0 ]]; then
+  pass "SWEEP-4: tick 3 is a no-op (ledger-gated, exactly-once preserved)"
+else
+  fail "SWEEP-4: expected 0 create/outcome on tick 3, got create=${create_count_sw3} outcome=${outcome_count_sw3}"
+fi
+
+rm -f "${ARGV_FILE_SW1}" "${ARGV_FILE_SW2}" "${ARGV_FILE_SW3}" 2>/dev/null || true
+
+# ===========================================================================
 # GROUP A/F/G/H cleanup
 # ===========================================================================
 # (tmp homes cleaned up by EXIT trap below or manually here)
@@ -1330,7 +1407,7 @@ cleanup_all() {
   rm -rf "${TMP_HOME_A}" "${TMP_HOME_B}" "${TMP_HOME_C}" "${TMP_HOME_D}" "${TMP_HOME_E}" \
     "${TMP_HOME_F}" "${TMP_HOME_G}" "${TMP_HOME_H}" \
     "${TMP_HOME_I}" "${TMP_HOME_J}" "${TMP_HOME_K}" "${TMP_HOME_L}" \
-    "${TMP_HOME_M1}" "${TMP_HOME_M2}" 2>/dev/null || true
+    "${TMP_HOME_M1}" "${TMP_HOME_M2}" "${TMP_HOME_SW}" 2>/dev/null || true
   cleanup
 }
 trap cleanup_all EXIT
