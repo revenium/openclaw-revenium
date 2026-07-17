@@ -4,14 +4,14 @@
 ![Status: Beta](https://img.shields.io/badge/status-beta%20(best--effort)-f0a020?style=for-the-badge)
 
 > ### 🧪 This is a Revenium Labs project
-> **Revenium Labs** projects are field-developed, best-effort solutions: working,
-> beta-quality software we've built to solve real customer problems and shared in the
-> open. They are **not** part of Revenium's officially supported, productized offerings.
+> **Revenium Labs** projects are field-developed, best-effort solutions. They are working,
+> beta-quality software, built to solve real customer problems and shared in the open. They are
+> **not** part of Revenium's officially supported products.
 >
 > - It works and solves a real problem, but may need adaptation to fit your exact environment.
 > - It's provided as-is, without the versioned-release guarantees, SLAs, or formal support
 >   that back our core products.
-> - We want your issues, feedback, and PRs, and **we're happy to work with you** to make it
+> - We welcome your issues, feedback, and PRs, and **we're happy to work with you** to make it
 >   fit your use case. [Come talk to us on Discord](https://discord.gg/J2DbmjZ2nA).
 >
 > → **[What is Revenium Labs?](https://github.com/revenium/.github/blob/main/LABS.md)**
