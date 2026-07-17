@@ -1,5 +1,21 @@
 # Revenium OpenClaw Skill
 
+![Revenium Labs](https://img.shields.io/badge/Revenium-Labs-6f42c1?style=for-the-badge)
+![Status: Beta](https://img.shields.io/badge/status-beta%20(best--effort)-f0a020?style=for-the-badge)
+
+> ### 🧪 This is a Revenium Labs project
+> **Revenium Labs** projects are field-developed, best-effort solutions — working,
+> beta-quality software we've built to solve real customer problems and shared in the
+> open. They are **not** part of Revenium's officially supported, productized offerings.
+>
+> - It works and solves a real problem, but may need adaptation to fit your exact environment.
+> - It's provided as-is — without the versioned-release guarantees, SLAs, or formal support
+>   that back our core products.
+> - We want your issues, feedback, and PRs — and **we're happy to work with you** to make it
+>   fit your use case. [Come talk to us on Discord](https://discord.gg/J2DbmjZ2nA).
+>
+> → **[What is Revenium Labs?](https://github.com/revenium/.github/blob/main/LABS.md)**
+
 Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) agents using the [Revenium](https://www.revenium.ai) platform. Tracks AI spend, enforces configurable Revenium guardrail rules, and reports usage automatically — so agents never silently blow through your token budget.
 
 > **🛡️ Running OpenClaw under NemoClaw / OpenShell?** This README covers the standalone OpenClaw + Docker path. For the parallel **NemoClaw/OpenShell sandbox** install path, follow **[docs/nemoclaw-setup.md](docs/nemoclaw-setup.md)** instead.
