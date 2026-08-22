@@ -331,6 +331,10 @@ revenium guardrails budget-rules get <rule-id> --output json | grep -i shadowMod
 
 Note that `revenium guardrails budget-rules update` has **no** shadow-mode flag — you cannot flip an existing rule's enforcement after creation. To switch a rule from observe-only to enforcing, delete it and recreate it (which is what `/revenium` reconfigure does).
 
+## License
+
+[MIT](LICENSE).
+
 ## Support
 
 Questions, bugs, or feature requests? Join us on [Discord](http://discord.gg/J2DbmjZ2nA).
