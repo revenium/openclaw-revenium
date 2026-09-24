@@ -121,7 +121,7 @@ The installer also asserts this automatically (step 8 above) and aborts if the s
 The NemoClaw install path and the standalone OpenClaw + Docker path are **fully independent**:
 
 - The standalone path uses `scripts/post-install.sh`; the NemoClaw path uses `scripts/post-install-nemoclaw.sh`. The two scripts do not share install steps.
-- `scripts/install.sh` routes to the correct script based on detection (NemoClaw vs standalone vs macOS) and the `--nemoclaw` flag. The standalone `post-install.sh` is byte-stable — running the NemoClaw install path does not modify or re-run it.
+- `scripts/install.sh` routes to the correct script based on detection (NemoClaw vs standalone vs macOS) and the `--nemoclaw` flag. Running the NemoClaw install path never modifies or re-runs `post-install.sh`. Both scripts independently enforce the same runtime version floors (OpenClaw `2026.8.1`, Node `>=24.16.0 <25.0.0` or `>=26.1.0`), since each is documented as independently runnable.
 - The shared operational scripts (`cron.sh`, `report.sh`, `guardrail-check.sh`) are never modified by either install path — they are sha256-pinned.
 
 For the standalone OpenClaw + Docker path, see [README.md](../README.md).
