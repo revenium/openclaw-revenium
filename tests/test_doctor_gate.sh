@@ -90,6 +90,9 @@ run_post_install() {
   STUB_NODE_VERSION="${STUB_NODE_VERSION:-v24.21.0}" \
   STUB_OPENCLAW_DOCTOR_RC="${STUB_OPENCLAW_DOCTOR_RC:-0}" \
   STUB_OPENCLAW_DOCTOR_OUTPUT="${STUB_OPENCLAW_DOCTOR_OUTPUT:-Doctor: all checks passed.}" \
+  BOUNDED_RUN_FORCE_PORTABLE="${BOUNDED_RUN_FORCE_PORTABLE:-}" \
+  DOCTOR_TIMEOUT_SECONDS="${DOCTOR_TIMEOUT_SECONDS:-}" \
+  STUB_OPENCLAW_DOCTOR_SLEEP_SECONDS="${STUB_OPENCLAW_DOCTOR_SLEEP_SECONDS:-}" \
       bash "${POST_INSTALL_SH}" --skip-prereqs 2>&1
 }
 
@@ -247,6 +250,100 @@ else
 fi
 
 # ===========================================================================
+# GROUP DG-F: portable time-bound engaged, doctor still surfaced (18-06,
+#   18-VERIFICATION gap #2 / 18-REVIEW CR-03). Force the portable mechanism
+#   with a fast doctor stub. Assert the disclosure notice, the doctor
+#   sentinel, and ordering all still hold.
+# ===========================================================================
+echo ""
+echo "--- GROUP DG-F: portable time-bound engaged, doctor still surfaced ---"
+
+home_f="$(make_home)"
+output_f=$(BOUNDED_RUN_FORCE_PORTABLE=1 \
+    STUB_OPENCLAW_DOCTOR_OUTPUT="DOCTOR_STUB_SENTINEL_DGF" \
+    STUB_OPENCLAW_DOCTOR_RC=0 \
+    run_post_install "${home_f}") || true
+
+if echo "${output_f}" | grep -qF "portable bash time-bound"; then
+  pass "DG-F: portable time-bound disclosure notice present"
+else
+  fail "DG-F: portable time-bound disclosure notice ('portable bash time-bound') NOT found"
+fi
+
+if echo "${output_f}" | grep -qF "DOCTOR_STUB_SENTINEL_DGF"; then
+  pass "DG-F: doctor sentinel still visible with portable time-bound engaged"
+else
+  fail "DG-F: doctor sentinel NOT visible with portable time-bound engaged"
+fi
+
+if echo "${output_f}" | grep -qF "Checking prerequisites"; then
+  pass "DG-F: install still reaches 'Checking prerequisites' with portable time-bound engaged"
+else
+  fail "DG-F: install did NOT reach 'Checking prerequisites' with portable time-bound engaged"
+fi
+
+# ===========================================================================
+# GROUP DG-G: portable time-bound actually fires (18-06). A doctor stub that
+#   sleeps past a short ceiling. Assert the timeout is reported, the install
+#   still continues, and — the load-bearing assertion — the elapsed wall
+#   clock proves the 25s sleep was actually killed rather than waited out.
+# ===========================================================================
+echo ""
+echo "--- GROUP DG-G: portable time-bound actually fires ---"
+
+home_g="$(make_home)"
+_dgg_start=$SECONDS
+output_g=$(BOUNDED_RUN_FORCE_PORTABLE=1 \
+    DOCTOR_TIMEOUT_SECONDS=2 \
+    STUB_OPENCLAW_DOCTOR_SLEEP_SECONDS=25 \
+    run_post_install "${home_g}") || true
+_dgg_elapsed=$((SECONDS - _dgg_start))
+
+if echo "${output_g}" | grep -qF "timed out after"; then
+  pass "DG-G: timeout is reported ('timed out after')"
+else
+  fail "DG-G: 'timed out after' NOT found in output"
+fi
+
+if echo "${output_g}" | grep -qF "Checking prerequisites"; then
+  pass "DG-G: install still reaches 'Checking prerequisites' after a portable-path timeout"
+else
+  fail "DG-G: install did NOT reach 'Checking prerequisites' after a portable-path timeout — a timeout must not abort the install"
+fi
+
+if [[ "${_dgg_elapsed}" -lt 15 ]]; then
+  pass "DG-G: measured elapsed ${_dgg_elapsed}s is under 15s — the ceiling actually killed the 25s doctor"
+else
+  fail "DG-G: measured elapsed ${_dgg_elapsed}s is NOT under 15s — the ceiling did not actually kill the doctor (would pass against a fully unbounded call)"
+fi
+
+# ===========================================================================
+# GROUP DG-H: portable path does not delay a fast doctor (18-06). Integration
+#   guard against a watchdog holding the caller's command-substitution pipe.
+# ===========================================================================
+echo ""
+echo "--- GROUP DG-H: portable path does not delay a fast doctor ---"
+
+home_h="$(make_home)"
+_dgh_start=$SECONDS
+output_h=$(BOUNDED_RUN_FORCE_PORTABLE=1 \
+    DOCTOR_TIMEOUT_SECONDS=30 \
+    run_post_install "${home_h}") || true
+_dgh_elapsed=$((SECONDS - _dgh_start))
+
+if [[ "${_dgh_elapsed}" -lt 10 ]]; then
+  pass "DG-H: measured elapsed ${_dgh_elapsed}s is under 10s — portable path did not delay a fast doctor"
+else
+  fail "DG-H: measured elapsed ${_dgh_elapsed}s is NOT under 10s — portable path delayed a fast doctor"
+fi
+
+if echo "${output_h}" | grep -qF "openclaw doctor --fix completed (exit 0)"; then
+  pass "DG-H: doctor reported completed with exit 0, not a timeout"
+else
+  fail "DG-H: doctor did not report completed with exit 0"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
@@ -255,6 +352,10 @@ echo ""
 echo "NOTE: This test FAILS RED before plan 18-02 Task 2 adds the version gate"
 echo "      and run_openclaw_doctor to scripts/post-install.sh. Goes GREEN once"
 echo "      Task 2 lands. GROUPs DG-A..DG-E: 5 groups, 11 assertions total."
+echo "      GROUPs DG-F..DG-H (plan 18-06): 3 groups, 8 assertions — prove the"
+echo "      doctor time-bound holds with no GNU 'timeout' on PATH, that a real"
+echo "      ceiling expiry is observed (not merely reported), and that the"
+echo "      portable path does not delay a fast doctor."
 if [[ "${FAIL}" -gt 0 ]]; then
   exit 1
 fi

@@ -30,6 +30,14 @@
 #   STUB_OPENCLAW_DOCTOR_OUTPUT (default "Doctor: all checks passed.")
 #     Output echoed for the doctor subcommand.
 #
+#   STUB_OPENCLAW_DOCTOR_SLEEP_SECONDS (default "" = no sleep)
+#     When set to a non-empty value, the doctor arm sleeps this many seconds
+#     BEFORE echoing its output and exiting with STUB_OPENCLAW_DOCTOR_RC. Makes
+#     a genuine time-bound ceiling expiry observable hermetically (consumed
+#     starting in plan 18-06's GROUP DG-G) — until now the suite could only
+#     simulate a doctor that returned rc 124 directly, never one that actually
+#     outlived the bound.
+#
 # SECURITY (T-18-SC): this stub only string-COMPAREs positional args (via a
 # `case "$1" in ... esac` dispatch) and captures them with `printf '%s\n'`.
 # It NEVER `eval`s or string-interpolates captured argv into a shell command.
@@ -58,7 +66,24 @@ fi
 
 # doctor [--fix] [--non-interactive] — echoes the stubbed doctor output and
 # exits STUB_OPENCLAW_DOCTOR_RC (consumed by plan 18-02's GATE-03 step).
+# When STUB_OPENCLAW_DOCTOR_SLEEP_SECONDS is set (non-empty), sleeps first —
+# makes a real ceiling expiry observable hermetically (plan 18-06 GROUP DG-G).
 if [[ "${1:-}" == "doctor" ]]; then
+  if [[ -n "${STUB_OPENCLAW_DOCTOR_SLEEP_SECONDS:-}" ]]; then
+    # Background the sleep and `wait` on it explicitly (rather than running
+    # it as a plain foreground command) so a TERM sent to THIS script's PID
+    # is handled immediately instead of deferred until the sleep completes —
+    # a well-known bash quirk: a script blocked via wait() on a synchronous
+    # foreground child defers signal delivery until that child exits, but a
+    # trap combined with the `wait` builtin on a backgrounded child interrupts
+    # promptly. A real compiled/JS binary (the thing this stub simulates)
+    # does not have this quirk; this is stub-only plumbing so the hermetic
+    # kill-path test can observe a genuine, prompt SIGTERM response.
+    trap 'kill -TERM "${_sleep_pid}" 2>/dev/null; exit 143' TERM
+    sleep "${STUB_OPENCLAW_DOCTOR_SLEEP_SECONDS}" &
+    _sleep_pid=$!
+    wait "${_sleep_pid}"
+  fi
   echo "${STUB_OPENCLAW_DOCTOR_OUTPUT:-Doctor: all checks passed.}"
   exit "${STUB_OPENCLAW_DOCTOR_RC:-0}"
 fi
