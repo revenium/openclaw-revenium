@@ -60,7 +60,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 17-04-PLAN.md — SPIKE-01 (c): plugin-hook sidecar capture candidate, fidelity-first ranking, the SPIKE-01 determination
+- [x] 17-04-PLAN.md — SPIKE-01 (c): plugin-hook sidecar capture candidate, fidelity-first ranking, the SPIKE-01 determination
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -250,7 +250,7 @@ Full details archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.
 | 14. Host-Side Metering Loop | v1.4 | 3/3 | Complete | 2026-06-08 |
 | 15. Per-Turn Enforcement Plugin | v1.4 | 7/7 | Complete | 2026-06-10 |
 | 16. Skill Deploy & Docs | v1.4 | 3/3 | Complete | 2026-06-11 |
-| 17. Live-Host Fact-Finding Spike | v2.0 | 3/6 | In Progress|  |
+| 17. Live-Host Fact-Finding Spike | v2.0 | 4/6 | In Progress|  |
 | 18. Version Gate & Install Health | v2.0 | 0/TBD | Not started | - |
 | 19. Session Read Path & Root-Session Resolution | v2.0 | 0/TBD | Not started | - |
 | 20. Plugin 2.0 SDK Compliance | v2.0 | 0/TBD | Not started | - |
