@@ -60,6 +60,17 @@ fail()  { echo ""; echo "  ✗ $*" >&2; exit 1; }
 command_exists() { command -v "$1" &>/dev/null; }
 
 # ---------------------------------------------------------------------------
+# Shared version-floor library (GATE-01/GATE-04). Only version_ge,
+# node_version_ok, OPENCLAW_VERSION_FLOOR, and NODE_VERSION_FLOOR_TEXT are
+# used from this file — NOT the shared library's HOST-reading wrapper
+# functions (the ones that call the host openclaw/node binaries directly).
+# This NemoClaw path must inspect the IN-SANDBOX runtime instead (see
+# gate_sandbox_runtime_versions below). fail() above must already be defined
+# before this source line.
+# ---------------------------------------------------------------------------
+. "${SCRIPT_DIR}/version-gate.sh"
+
+# ---------------------------------------------------------------------------
 # nemoclaw — timeout-guarded wrapper over the real nemoclaw binary.
 # A wedged in-sandbox OpenClaw gateway makes `nemoclaw exec`/`recover` hang
 # indefinitely (observed live 2026-06-12: an `openclaw skills list` exec hung
@@ -712,6 +723,95 @@ run_meter_probe() {
 }
 
 # ---------------------------------------------------------------------------
+# gate_sandbox_runtime_versions — refuses a below-floor IN-SANDBOX OpenClaw or
+# Node before any provisioning side effect (GATE-01/GATE-04).
+#
+# The NemoClaw path provisions an OpenClaw that lives INSIDE the OpenShell
+# sandbox, versioned independently of the host binary (spike 007 measured
+# standalone 2026.9.6 vs sandbox 2026.9.1 on the SAME host) — a host-side
+# gate never inspects it. This function therefore does NOT call the shared
+# library's host-reading wrapper functions (those read the host openclaw/node
+# binaries); it execs into the sandbox via the shadowing nemoclaw() wrapper
+# instead. The host's own Node is irrelevant to the
+# sandboxed runtime, so this file adds no host-side gate of its own.
+# ---------------------------------------------------------------------------
+gate_sandbox_runtime_versions() {
+    step "Checking in-sandbox runtime versions"
+
+    local _rc=0 _raw _detected
+
+    _raw=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc "openclaw --version" 2>&1) || _rc=$?
+    _detected=$(echo "${_raw}" | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+' | head -1 || true)
+
+    if [[ -z "${_detected}" ]]; then
+        fail "Could not determine the in-sandbox OpenClaw version for sandbox '${SANDBOX_NAME}'.
+
+  This skill requires OpenClaw ${OPENCLAW_VERSION_FLOOR} or later inside the
+  sandbox, and no parseable version was returned by 'openclaw --version'.
+  Check that the sandbox is running (nemoclaw ${SANDBOX_NAME} status) and
+  recover it if wedged (nemoclaw ${SANDBOX_NAME} recover)."
+    fi
+
+    if ! version_ge "${_detected}" "${OPENCLAW_VERSION_FLOOR}"; then
+        fail "In-sandbox OpenClaw version is below the required floor.
+
+  Detected: ${_detected}
+  Required: ${OPENCLAW_VERSION_FLOOR} or later
+
+  The sandbox's OpenClaw is provisioned by NemoClaw independently of the
+  host binary, and NemoClaw's own \"latest\" can resolve below this floor.
+  Upgrade the sandbox's NemoClaw release, then re-run the install."
+    fi
+    info "In-sandbox OpenClaw version: ${_detected}"
+
+    _rc=0
+    _raw=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc "node --version" 2>&1) || _rc=$?
+
+    if [[ -z "${_raw}" ]]; then
+        warn "Could not determine the in-sandbox Node.js version, so the ${NODE_VERSION_FLOOR_TEXT} floor was NOT verified for sandbox '${SANDBOX_NAME}'. The in-sandbox OpenClaw already cleared its own version floor above."
+    elif ! node_version_ok "${_raw}"; then
+        fail "In-sandbox Node.js version is outside the supported range.
+
+  Detected: ${_raw}
+  Required: ${NODE_VERSION_FLOOR_TEXT}
+
+  Upgrade Node inside the sandbox before continuing."
+    else
+        info "In-sandbox Node.js version: ${_raw}"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# run_sandbox_openclaw_doctor — runs `openclaw doctor --fix --non-interactive`
+# INSIDE the sandbox and prints its combined output to the operator before
+# Phase 13 provisioning begins (GATE-03). Never blocks provisioning on the
+# doctor's exit code — a hung gateway (exit 124, observed live on host
+# a live test host, recorded in ~/sandbox-doctor-out.txt) warns and continues
+# instead of wedging the install indefinitely. The shadowing nemoclaw()
+# wrapper's default 120s ceiling for exec one-shots already bounds this
+# call — no second timeout mechanism is added here.
+# ---------------------------------------------------------------------------
+run_sandbox_openclaw_doctor() {
+    step "Running openclaw doctor --fix (in sandbox)"
+    info "--non-interactive suppresses prompts but still applies safe migrations, so this step writes."
+
+    local _rc=0 _out
+    _out=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc "openclaw doctor --fix --non-interactive 2>&1") || _rc=$?
+
+    echo "${_out}"
+
+    if [[ "${_rc}" -eq 124 ]]; then
+        warn "The in-sandbox health check timed out. This has been observed on a wedged gateway — the remedy is: nemoclaw ${SANDBOX_NAME} recover. Provisioning continues."
+    elif [[ "${_rc}" -ne 0 ]]; then
+        warn "openclaw doctor --fix exited ${_rc} — review the output above. Continuing install; doctor findings do not block provisioning per GATE-03."
+    else
+        info "openclaw doctor --fix completed (exit 0)"
+    fi
+
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # 1. Preflight hard gate (D-08/D-09)
 # Run probe-host-compat.sh as a subprocess — NEVER sourced (Pitfall 2).
 # Probe exit 1 (OS/Docker FAIL) → fail() here stops the install.
@@ -775,6 +875,16 @@ if [[ -z "${LEDGER_FILE}" ]]; then
     fi
 fi
 mkdir -p "$(dirname "${LEDGER_FILE}")"
+
+# ---------------------------------------------------------------------------
+# 3c. In-sandbox runtime version gate + doctor health check
+# (GATE-01/GATE-03/GATE-04). Must run after SANDBOX_NAME is resolved (there is
+# nothing to exec into before this point) and before any provisioning side
+# effect — provision_egress_policy below is the first call that mutates
+# sandbox state and writes a ledger key.
+# ---------------------------------------------------------------------------
+gate_sandbox_runtime_versions
+run_sandbox_openclaw_doctor
 
 # ---------------------------------------------------------------------------
 # 4. Phase 13 provisioning — ordered sequence (D-03, D-07)
