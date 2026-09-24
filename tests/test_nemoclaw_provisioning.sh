@@ -22,6 +22,12 @@
 #   GROUP P: GATE-01        — undetectable in-sandbox OpenClaw version
 #   GROUP Q: GATE-03        — doctor output surfaced before provisioning
 #   GROUP R: GATE-03/GATE-04 — doctor non-blocking; in-sandbox Node floor branches
+#   GROUP S-a: WR-04/CR-02 — a REAL ceiling expiry (not stub rc=124) is bounded
+#              and diagnosed correctly (native mechanism on this host)
+#   GROUP S-b: WR-04/GATE-03 — same real ceiling expiry under the portable
+#              mechanism (BOUNDED_RUN_FORCE_PORTABLE=1)
+#   GROUP S-c: CR-02/WR-03 — wrapper/watchdog diagnostics are never reported to
+#              the operator as a measured in-sandbox Node version
 #
 # EXPECTED RESULT BEFORE PLAN 02:
 #   This test runs and produces a "Results:" summary, but MOST GROUPs will
@@ -1281,6 +1287,134 @@ if echo "${output_rc}" | grep -qF "Applying revenium egress policy"; then
   pass "GROUP-R-c: provisioning still reaches 'Applying revenium egress policy' after an undetectable Node warning"
 else
   fail "GROUP-R-c: provisioning did NOT continue past an undetectable Node warning (exit ${exit_code_rc})"
+fi
+
+# ===========================================================================
+# GROUP S: WR-04/CR-02/WR-03 — a REAL bounded_run/timeout ceiling expiry
+#   (not the STUB_NEMOCLAW_DOCTOR_RC=124 shortcut used by GROUP R-a) is
+#   bounded, diagnosed correctly, and never misreported as a measured Node
+#   version. Closes the coverage blind spot 18-REVIEW WR-04 records: until
+#   STUB_NEMOCLAW_SLEEP_SECONDS existed, the suite could only make the stub
+#   binary return 124 itself, which never exercises an actual kill.
+#
+#   S-a: real ceiling expiry (native mechanism on this host) is bounded and
+#        diagnosed correctly — never as an unsupported Node runtime (CR-02
+#        regression guard: before Task 2, a real kill produced exactly that
+#        misdiagnosis).
+#   S-b: same real ceiling expiry under the portable mechanism
+#        (BOUNDED_RUN_FORCE_PORTABLE=1) — the ceiling holds without GNU
+#        `timeout`, and the mechanism swap is disclosed to the operator.
+#   S-c: wrapper/watchdog diagnostics are never reported as measured data —
+#        no `Detected:` line ever carries the wrapper's own timeout wording;
+#        the honest undetectable-Node branch fires instead.
+# ===========================================================================
+echo ""
+echo "--- GROUP S: WR-04 real ceiling expiry + CR-02/WR-03 non-corrupted diagnosis ---"
+
+echo ""
+echo "  -- S-a: a real ceiling expiry is bounded and diagnosed correctly (native mechanism) --"
+TMP_HOME_Sa=$(make_home)
+ARGV_Sa=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-sa.XXXXXX")
+TMP_HOMES+=("${ARGV_Sa}")
+
+SECONDS=0
+exit_code_sa=0
+output_sa=$(NEMOCLAW_TIMEOUT_SECONDS=2 STUB_NEMOCLAW_SLEEP_SECONDS=25 \
+            run_provision "${TMP_HOME_Sa}" "${ARGV_Sa}" 2>&1) || exit_code_sa=$?
+elapsed_sa="${SECONDS}"
+
+if [[ "${elapsed_sa}" -lt 20 ]]; then
+  pass "GROUP-S-a: real ceiling expiry bounded — elapsed ${elapsed_sa}s under 20s (25s stub sleep was actually killed, not waited out)"
+else
+  fail "GROUP-S-a: elapsed ${elapsed_sa}s NOT under 20s — the 25s stub sleep was waited out, not killed (WR-04 blind spot regression)"
+fi
+
+if echo "${output_sa}" | grep -qi "timed out"; then
+  pass "GROUP-S-a: output mentions a timeout"
+else
+  fail "GROUP-S-a: 'timed out' NOT in output on a real ceiling expiry"
+fi
+
+if echo "${output_sa}" | grep -qi "recover"; then
+  pass "GROUP-S-a: output names the recover remedy"
+else
+  fail "GROUP-S-a: 'recover' remedy NOT in output on a real ceiling expiry"
+fi
+
+if echo "${output_sa}" | grep -qF "Node.js version is outside the supported range"; then
+  fail "GROUP-S-a: CR-02 regression — a real ceiling expiry was misreported as 'Node.js version is outside the supported range'"
+else
+  pass "GROUP-S-a: no Node-version misdiagnosis on a real ceiling expiry (CR-02 regression guard)"
+fi
+
+echo ""
+echo "  -- S-b: the ceiling holds without GNU timeout (portable mechanism) --"
+TMP_HOME_Sb=$(make_home)
+ARGV_Sb=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-sb.XXXXXX")
+TMP_HOMES+=("${ARGV_Sb}")
+
+SECONDS=0
+exit_code_sb=0
+output_sb=$(NEMOCLAW_TIMEOUT_SECONDS=2 STUB_NEMOCLAW_SLEEP_SECONDS=25 BOUNDED_RUN_FORCE_PORTABLE=1 \
+            run_provision "${TMP_HOME_Sb}" "${ARGV_Sb}" 2>&1) || exit_code_sb=$?
+elapsed_sb="${SECONDS}"
+
+if [[ "${elapsed_sb}" -lt 20 ]]; then
+  pass "GROUP-S-b: portable-mechanism ceiling expiry bounded — elapsed ${elapsed_sb}s under 20s"
+else
+  fail "GROUP-S-b: elapsed ${elapsed_sb}s NOT under 20s — the portable watchdog did not kill the 25s stub sleep"
+fi
+
+if echo "${output_sb}" | grep -qi "timed out"; then
+  pass "GROUP-S-b: output mentions a timeout under the portable mechanism"
+else
+  fail "GROUP-S-b: 'timed out' NOT in output under the portable mechanism"
+fi
+
+if echo "${output_sb}" | grep -qi "recover"; then
+  pass "GROUP-S-b: output names the recover remedy under the portable mechanism"
+else
+  fail "GROUP-S-b: 'recover' remedy NOT in output under the portable mechanism"
+fi
+
+if echo "${output_sb}" | grep -qF "Node.js version is outside the supported range"; then
+  fail "GROUP-S-b: CR-02 regression under the portable mechanism — misreported as 'Node.js version is outside the supported range'"
+else
+  pass "GROUP-S-b: no Node-version misdiagnosis under the portable mechanism"
+fi
+
+if echo "${output_sb}" | grep -qF "portable bash time-bound"; then
+  pass "GROUP-S-b: mechanism swap disclosed to the operator ('portable bash time-bound')"
+else
+  fail "GROUP-S-b: mechanism swap NOT disclosed — 'portable bash time-bound' missing from output"
+fi
+
+echo ""
+echo "  -- S-c: diagnostics are never reported as measured data --"
+TMP_HOME_Sc=$(make_home)
+ARGV_Sc=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-sc.XXXXXX")
+TMP_HOMES+=("${ARGV_Sc}")
+
+exit_code_sc=0
+output_sc=$(NEMOCLAW_TIMEOUT_SECONDS=2 STUB_NEMOCLAW_SLEEP_SECONDS=25 \
+            run_provision "${TMP_HOME_Sc}" "${ARGV_Sc}" 2>&1) || exit_code_sc=$?
+
+if [[ "$(echo "${output_sc}" | grep -cE 'Detected:.*(timed out|GNU coreutils|watchdog|portable bash)')" -eq 0 ]]; then
+  pass "GROUP-S-c: no 'Detected:' line carries the wrapper's own timeout/watchdog wording"
+else
+  fail "GROUP-S-c: a 'Detected:' line carries wrapper/watchdog diagnostic text — a diagnostic was reported as measured data"
+fi
+
+if echo "${output_sc}" | grep -qF "Could not determine the in-sandbox Node.js version"; then
+  pass "GROUP-S-c: the honest undetectable-Node branch fired instead of a misdiagnosis"
+else
+  fail "GROUP-S-c: the honest undetectable-Node branch did NOT fire"
+fi
+
+if echo "${output_sc}" | grep -qF "Applying revenium egress policy"; then
+  pass "GROUP-S-c: provisioning still reaches 'Applying revenium egress policy' after the honest undetectable-Node branch"
+else
+  fail "GROUP-S-c: provisioning did NOT continue past the honest undetectable-Node branch (exit ${exit_code_sc})"
 fi
 
 # ===========================================================================
