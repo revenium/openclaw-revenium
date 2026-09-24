@@ -64,12 +64,24 @@ make_home() {
 # run_install <uname_s> <home_dir> [extra_args...]
 #   Invoke install.sh with stubbed OS and isolated HOME.
 #   Returns stdout+stderr combined.
+#
+# Phase 18: install.sh now runs a version gate (GATE-01/GATE-04) before
+# routing dispatch. Developer machines carry a real below-floor OpenClaw
+# (this repo's own dev host reports "OpenClaw 2026.5.28 (e932160)"), so
+# without passing defaults every routing GROUP below would now refuse before
+# reaching its NemoClaw-path marker assertions. The `:-` form lets an
+# individual GROUP still override either var to exercise the gate itself
+# (see GROUP G) — the gate's own pass/fail behavior is covered by
+# tests/test_version_gate.sh, not here; these defaults exist so the routing
+# GROUPs exercise ROUTING, not the version gate.
 # ---------------------------------------------------------------------------
 run_install() {
   local uname_s="$1"
   local home_dir="$2"
   shift 2
   STUB_UNAME_S="${uname_s}" \
+  STUB_OPENCLAW_VERSION_OUTPUT="${STUB_OPENCLAW_VERSION_OUTPUT:-OpenClaw 2026.9.6 (eb377ac)}" \
+  STUB_NODE_VERSION="${STUB_NODE_VERSION:-v24.21.0}" \
   HOME="${home_dir}" \
       bash "${INSTALL_SH}" "$@" 2>&1
 }
@@ -233,16 +245,78 @@ else
 fi
 
 # ===========================================================================
-# GROUP byte-stable: NCINST-01/02 — assert scripts/post-install.sh has no
-#   uncommitted changes (byte-stability constraint D-01)
+# GROUP standalone-intact: post-install.sh existing steps preserved
+#
+#   D-01's original zero-diff assertion (git diff --name-only against
+#   scripts/post-install.sh) encoded the Phase 12 byte-stability constraint.
+#   Phase 18 plan 18-02 deliberately supersedes that literal zero-diff
+#   constraint by adding the defense-in-depth version gate + doctor step to
+#   scripts/post-install.sh — so a byte-identical-file assertion would go
+#   permanently red the moment 18-02 lands, even though the constraint's
+#   real intent (the existing standalone install path is not disturbed)
+#   still holds. These assertions preserve that real intent via fixed-string
+#   checks on the pre-existing step labels, and pass both before and after
+#   18-02 lands.
 # ===========================================================================
 echo ""
-echo "--- GROUP byte-stable: post-install.sh not modified ---"
+echo "--- GROUP standalone-intact: post-install.sh existing steps preserved ---"
 
-if git -C "${REPO_ROOT}" diff --name-only HEAD -- scripts/post-install.sh 2>/dev/null | grep -q .; then
-  fail "byte-stable: scripts/post-install.sh appears modified — must be byte-stable"
+POST_INSTALL_SH="${REPO_ROOT}/scripts/post-install.sh"
+
+if grep -qF 'step "Checking prerequisites"' "${POST_INSTALL_SH}"; then
+  pass "standalone-intact: post-install.sh still has 'Checking prerequisites' step"
 else
-  pass "byte-stable: scripts/post-install.sh has no uncommitted changes"
+  fail "standalone-intact: post-install.sh missing 'Checking prerequisites' step"
+fi
+
+if grep -qF 'step "Checking skill files in ${SKILL_DIR}"' "${POST_INSTALL_SH}"; then
+  pass "standalone-intact: post-install.sh still has 'Checking skill files in \${SKILL_DIR}' step"
+else
+  fail "standalone-intact: post-install.sh missing 'Checking skill files in \${SKILL_DIR}' step"
+fi
+
+if grep -qF 'step "Configuring OpenClaw sandbox access"' "${POST_INSTALL_SH}"; then
+  pass "standalone-intact: post-install.sh still has 'Configuring OpenClaw sandbox access' step"
+else
+  fail "standalone-intact: post-install.sh missing 'Configuring OpenClaw sandbox access' step"
+fi
+
+# ===========================================================================
+# GROUP G: GATE-01 gate precedes routing dispatch
+#
+#   Invokes install.sh with a below-floor OpenClaw stub on a NemoClaw-only
+#   HOME (Linux, no macOS refusal), and asserts the refusal fires BEFORE any
+#   provisioning side effect on either routing branch — none of the
+#   NemoClaw-path markers the existing GROUPs match on ("preflight",
+#   "Phase 13", "nemoclaw path") appear in the output.
+# ===========================================================================
+echo ""
+echo "--- GROUP G: GATE-01 gate precedes routing dispatch (NemoClaw branch) ---"
+
+TMP_HOME_G=$(make_home nemoclaw)
+
+exit_code_g=0
+output_g=$(STUB_UNAME_S="Linux" \
+    STUB_OPENCLAW_VERSION_OUTPUT="OpenClaw 2026.7.1 (deadbee)" \
+    HOME="${TMP_HOME_G}" \
+    bash "${INSTALL_SH}" 2>&1) || exit_code_g=$?
+
+if [[ "${exit_code_g}" -ne 0 ]]; then
+  pass "GROUP-G: below-floor OpenClaw exits non-zero on the NemoClaw branch"
+else
+  fail "GROUP-G: below-floor OpenClaw exited 0 on the NemoClaw branch (exit=${exit_code_g})"
+fi
+
+if echo "${output_g}" | grep -qF "2026.8.1"; then
+  pass "GROUP-G: output names the required floor 2026.8.1"
+else
+  fail "GROUP-G: output does not contain required floor 2026.8.1"
+fi
+
+if echo "${output_g}" | grep -qi "preflight\|Phase 13\|nemoclaw path"; then
+  fail "GROUP-G: NemoClaw-path marker present — gate did not fire before provisioning dispatch"
+else
+  pass "GROUP-G: no NemoClaw-path marker present — gate fired before any provisioning side effect"
 fi
 
 # ===========================================================================
@@ -254,6 +328,9 @@ echo ""
 echo "NOTE: This test FAILS RED before plan 02 creates scripts/install.sh."
 echo "      Routing/refusal/idempotency groups all FAIL until install.sh exists."
 echo "      Goes GREEN when plan 02 implements the dispatcher + NemoClaw skeleton."
+echo "      GROUPs A-F, standalone-intact, G: 14 groups total (Phase 18 plan 18-01"
+echo "      added the version-gate defaults in run_install(), renamed the former"
+echo "      byte-stable GROUP to standalone-intact, and added GROUP G)."
 if [[ "${FAIL}" -gt 0 ]]; then
   exit 1
 fi
