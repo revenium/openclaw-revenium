@@ -19,6 +19,10 @@ set -euo pipefail
 SKILL_NAME="revenium"
 OPENCLAW_HOME="${HOME}/.openclaw"
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# SCRIPT_DIR is the directory THIS file lives in (scripts/). SKILL_DIR above
+# resolves one level ABOVE scripts/ (the skill root) and is the wrong base
+# for sourcing a sibling scripts/ file — do not reuse it for that purpose.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPENCLAW_CONFIG="${OPENCLAW_HOME}/openclaw.json"
 SKIP_PREREQS=false
 
@@ -37,6 +41,60 @@ step()  { echo ""; echo "▸ $*"; }
 fail()  { echo ""; echo "  ✗ $*" >&2; exit 1; }
 
 command_exists() { command -v "$1" &>/dev/null; }
+
+# version_ge, node_version_ok, require_openclaw_version, require_node_version
+. "${SCRIPT_DIR}/version-gate.sh"
+
+# ---------------------------------------------------------------------------
+# 0. Runtime version gate (GATE-01/GATE-02/GATE-04) — defense in depth
+# ---------------------------------------------------------------------------
+# install.sh gates first, but this script is documented as independently
+# runnable (bash ~/.openclaw/skills/revenium/scripts/post-install.sh), so the
+# primary gate in install.sh does not protect this path — the gate must
+# repeat here.
+step "Checking runtime versions"
+require_openclaw_version
+require_node_version
+info "OpenClaw and Node versions meet the required floors"
+
+# ---------------------------------------------------------------------------
+# 0b. OpenClaw health check (GATE-03)
+# ---------------------------------------------------------------------------
+# Self-contained in this file (not scripts/version-gate.sh) because the host
+# and in-sandbox doctor invocations differ — the shared library holds version
+# comparison only (18-RESEARCH.md).
+run_openclaw_doctor() {
+  step "Running openclaw doctor --fix"
+  info "--non-interactive suppresses prompts but still applies safe migrations — this step writes."
+
+  local _doctor_output=""
+  local _rc=0
+  # Bound the call the way post-install-nemoclaw.sh's nemoclaw() wrapper
+  # does — a hung doctor has already been observed in this project (the
+  # in-sandbox probe on a live test host returned exit 124).
+  if command_exists timeout; then
+    _doctor_output="$(timeout 120 openclaw doctor --fix --non-interactive 2>&1)" || _rc=$?
+  else
+    _doctor_output="$(openclaw doctor --fix --non-interactive 2>&1)" || _rc=$?
+  fi
+
+  # Bare echo (not info/warn) — the one place in this script where that is
+  # correct, so the operator sees doctor's result verbatim before any
+  # provisioning step runs.
+  echo "${_doctor_output}"
+
+  if [[ "${_rc}" -eq 124 ]]; then
+    warn "openclaw doctor --fix timed out after 120s — review the output above (if any). Continuing install; doctor findings do not block provisioning per GATE-03."
+  elif [[ "${_rc}" -ne 0 ]]; then
+    warn "openclaw doctor --fix exited ${_rc} — review the output above. Continuing install; doctor findings do not block provisioning per GATE-03."
+  else
+    info "openclaw doctor --fix completed (exit 0)"
+  fi
+
+  return 0
+}
+
+run_openclaw_doctor
 
 # ---------------------------------------------------------------------------
 # 1. Prerequisites
