@@ -21,7 +21,7 @@
 
 **Phase 21 removed (2026-09-24):** Phase 17's SPIKE-03 returned **NO — mechanism inapplicable to this call shape** (`.planning/spikes/010-command-dispatch-tool-verdict/README.md`) — `command-dispatch: tool` does not make marker-writing dispatch deterministic. Per the milestone's own contingency (D-06), Phase 21 (Attribution Dispatch Resolution) is deleted rather than executed; ATTR-01 moved to `REQUIREMENTS.md` → Future Requirements; the existing marker architecture ports as-is under Phase 20. Phase numbering 17–24 is preserved without renumbering — the gap at 21 is intentional, not an error.
 
-- [ ] **Phase 17: Live-Host Fact-Finding Spike** - Provision a real 2.0 host and resolve the session-read, hook-firing, and dispatch unknowns research couldn't answer
+- [x] **Phase 17: Live-Host Fact-Finding Spike** - Provision a real 2.0 host and resolve the session-read, hook-firing, and dispatch unknowns research couldn't answer (completed 2026-09-24)
 - [ ] **Phase 18: Version Gate & Install Health** - Install refuses unsupported OpenClaw/Node versions explicitly and runs `doctor --fix`
 - [ ] **Phase 19: Session Read Path & Root-Session Resolution** - Port `report.sh`/`common.sh`/`get-root-session-id.py` off JSONL onto 2.0's SQLite session store
 - [ ] **Phase 20: Plugin 2.0 SDK Compliance** - Rebuild both plugins against 2.0's SDK with the new `allowPromptInjection` gate and current hook names
@@ -69,7 +69,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 17-06-PLAN.md — Findings wrap-up: MANIFEST rows 007-011, findings-skill re-scope and routing, and SPIKE-03's verdict consequence applied
+- [x] 17-06-PLAN.md — Findings wrap-up: MANIFEST rows 007-011, findings-skill re-scope and routing, and SPIKE-03's verdict consequence applied
 
 ### Phase 18: Version Gate & Install Health
 
@@ -239,7 +239,7 @@ Full details archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.
 | 14. Host-Side Metering Loop | v1.4 | 3/3 | Complete | 2026-06-08 |
 | 15. Per-Turn Enforcement Plugin | v1.4 | 7/7 | Complete | 2026-06-10 |
 | 16. Skill Deploy & Docs | v1.4 | 3/3 | Complete | 2026-06-11 |
-| 17. Live-Host Fact-Finding Spike | v2.0 | 5/6 | In Progress|  |
+| 17. Live-Host Fact-Finding Spike | v2.0 | 6/6 | Complete    | 2026-09-24 |
 | 18. Version Gate & Install Health | v2.0 | 0/TBD | Not started | - |
 | 19. Session Read Path & Root-Session Resolution | v2.0 | 0/TBD | Not started | - |
 | 20. Plugin 2.0 SDK Compliance | v2.0 | 0/TBD | Not started | - |
