@@ -64,6 +64,24 @@
 #   STUB_NEMOCLAW_PLUGIN_CONV_ACCESS (default "true")
 #     The `allowConversationAccess:` value echoed by `openclaw plugins inspect`
 #     (Gate B). Set "false" to simulate allowConversationAccess not taking effect.
+#
+# In-sandbox version gate / doctor switches (Phase 18, GATE-01/GATE-03/GATE-04):
+#
+#   STUB_NEMOCLAW_OPENCLAW_VERSION (default "OpenClaw 2026.9.1 (ad6fe23)")
+#     Output echoed for the `openclaw --version` exec payload — the real
+#     sandbox-side value spike 007 recorded. Set to the literal "EMPTY" to
+#     simulate an undetectable in-sandbox version (no output, exit 0).
+#
+#   STUB_NEMOCLAW_NODE_VERSION (default "v24.21.0")
+#     Output echoed for the `node --version` exec payload. Set to the literal
+#     "EMPTY" to simulate an undetectable in-sandbox Node (no output, exit 0).
+#
+#   STUB_NEMOCLAW_DOCTOR_RC (default "0")
+#     Exit code for the `openclaw doctor` exec payload. Set to "124" to
+#     simulate the wedged-gateway hang observed live on a live test host.
+#
+#   STUB_NEMOCLAW_DOCTOR_OUTPUT (default "Doctor: no findings.")
+#     Output echoed for the `openclaw doctor` exec payload.
 
 # No -e: we manage exits explicitly per subcommand dispatch
 set -uo pipefail
@@ -195,6 +213,45 @@ if [[ "${2:-}" == "exec" ]]; then
       echo "${STUB_NEMOCLAW_SKILLS_LIST_OUTPUT:-✓ ready  💰 revenium}"
       exit 0
     fi
+  fi
+
+  # --- openclaw --version (in-sandbox OpenClaw version, GATE-01) ---
+  # Pattern: payload contains "openclaw --version" (single-line sh -lc idiom).
+  # Default mirrors the live sandbox value spike 007 recorded:
+  # "OpenClaw 2026.9.1 (ad6fe23)". STUB_NEMOCLAW_OPENCLAW_VERSION=EMPTY
+  # echoes nothing (exit 0) to simulate an undetectable in-sandbox version.
+  # SECURITY: string-compare only, never eval (T-16-SC).
+  if grep -qF "openclaw --version" "${_payload_file}"; then
+    rm -f "${_payload_file}"
+    if [[ "${STUB_NEMOCLAW_OPENCLAW_VERSION:-}" == "EMPTY" ]]; then
+      exit 0
+    fi
+    echo "${STUB_NEMOCLAW_OPENCLAW_VERSION:-OpenClaw 2026.9.1 (ad6fe23)}"
+    exit 0
+  fi
+
+  # --- node --version (in-sandbox Node version, GATE-04) ---
+  # Pattern: payload contains "node --version". STUB_NEMOCLAW_NODE_VERSION=EMPTY
+  # echoes nothing (exit 0) to simulate an undetectable in-sandbox Node.
+  # SECURITY: string-compare only, never eval (T-16-SC).
+  if grep -qF "node --version" "${_payload_file}"; then
+    rm -f "${_payload_file}"
+    if [[ "${STUB_NEMOCLAW_NODE_VERSION:-}" == "EMPTY" ]]; then
+      exit 0
+    fi
+    echo "${STUB_NEMOCLAW_NODE_VERSION:-v24.21.0}"
+    exit 0
+  fi
+
+  # --- openclaw doctor --fix --non-interactive (in-sandbox health check, GATE-03) ---
+  # Pattern: payload contains "openclaw doctor". STUB_NEMOCLAW_DOCTOR_RC=124
+  # simulates the wedged-gateway hang observed live on a live test host
+  # (~/sandbox-doctor-out.txt recorded EXIT=124).
+  # SECURITY: string-compare only, never eval (T-16-SC).
+  if grep -qF "openclaw doctor" "${_payload_file}"; then
+    rm -f "${_payload_file}"
+    echo "${STUB_NEMOCLAW_DOCTOR_OUTPUT:-Doctor: no findings.}"
+    exit "${STUB_NEMOCLAW_DOCTOR_RC:-0}"
   fi
 
   # --- openclaw agents list (Gate A: derive the default agent id) ---
