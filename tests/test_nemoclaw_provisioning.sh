@@ -18,6 +18,10 @@
 #   GROUP E: NCCLI-01       — cli-delivered already in ledger → skip
 #   GROUP F: NCCLI-02       — meter-probe-passed in ledger → probe skipped
 #   GROUP G: all SC         — full success run → all 5 ledger keys present
+#   GROUP O: GATE-01        — in-sandbox refusal before any provisioning side effect
+#   GROUP P: GATE-01        — undetectable in-sandbox OpenClaw version
+#   GROUP Q: GATE-03        — doctor output surfaced before provisioning
+#   GROUP R: GATE-03/GATE-04 — doctor non-blocking; in-sandbox Node floor branches
 #
 # EXPECTED RESULT BEFORE PLAN 02:
 #   This test runs and produces a "Results:" summary, but MOST GROUPs will
@@ -1078,6 +1082,205 @@ if ! grep -qE "^budget-rules-created=" "${LEDGER_Na}" 2>/dev/null; then
   pass "GROUP-N-a: budget-rules-created ledger key NOT written on skip"
 else
   fail "GROUP-N-a: budget-rules-created wrongly written when no budget configured"
+fi
+
+# ===========================================================================
+# GROUP O: GATE-01 — in-sandbox refusal before any provisioning side effect
+#   STUB_NEMOCLAW_OPENCLAW_VERSION below the 2026.8.1 floor → install refuses
+#   before "Running Phase 13 provisioning" and before any ledger key is
+#   written (no provisioning side effect ran).
+# ===========================================================================
+echo ""
+echo "--- GROUP O: GATE-01 in-sandbox refusal before any side effect ---"
+
+TMP_HOME_O=$(make_home)
+ARGV_O=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-o.XXXXXX")
+TMP_HOMES+=("${ARGV_O}")
+LEDGER_O="${TMP_HOME_O}/.nemoclaw/revenium-nemoclaw.ledger"
+
+exit_code_o=0
+output_o=$(STUB_NEMOCLAW_OPENCLAW_VERSION="OpenClaw 2026.7.1 (deadbee)" \
+           run_provision "${TMP_HOME_O}" "${ARGV_O}" 2>&1) || exit_code_o=$?
+
+if [[ "${exit_code_o}" -ne 0 ]]; then
+  pass "GROUP-O: run exits non-zero on below-floor in-sandbox OpenClaw"
+else
+  fail "GROUP-O: run exited 0 on below-floor in-sandbox OpenClaw — expected non-zero"
+fi
+
+if echo "${output_o}" | grep -qF "2026.7.1"; then
+  pass "GROUP-O: output names the detected version 2026.7.1"
+else
+  fail "GROUP-O: detected version 2026.7.1 NOT in output"
+fi
+
+if echo "${output_o}" | grep -qF "2026.8.1"; then
+  pass "GROUP-O: output names the required floor 2026.8.1"
+else
+  fail "GROUP-O: required floor 2026.8.1 NOT in output"
+fi
+
+if echo "${output_o}" | grep -qF "Running Phase 13 provisioning"; then
+  fail "GROUP-O: provisioning started despite below-floor in-sandbox OpenClaw"
+else
+  pass "GROUP-O: refusal fires before 'Running Phase 13 provisioning'"
+fi
+
+if [[ ! -f "${LEDGER_O}" ]] || ! grep -qF "revenium-policy-applied" "${LEDGER_O}" 2>/dev/null; then
+  pass "GROUP-O: no revenium-policy-applied ledger key written — no provisioning side effect ran"
+else
+  fail "GROUP-O: revenium-policy-applied ledger key present despite refusal"
+fi
+
+# ===========================================================================
+# GROUP P: GATE-01 — undetectable in-sandbox version
+#   STUB_NEMOCLAW_OPENCLAW_VERSION=EMPTY → install refuses, naming the
+#   required floor and the recovery remedy.
+# ===========================================================================
+echo ""
+echo "--- GROUP P: GATE-01 undetectable in-sandbox version ---"
+
+TMP_HOME_P=$(make_home)
+ARGV_P=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-p.XXXXXX")
+TMP_HOMES+=("${ARGV_P}")
+
+exit_code_p=0
+output_p=$(STUB_NEMOCLAW_OPENCLAW_VERSION=EMPTY \
+           run_provision "${TMP_HOME_P}" "${ARGV_P}" 2>&1) || exit_code_p=$?
+
+if [[ "${exit_code_p}" -ne 0 ]]; then
+  pass "GROUP-P: run exits non-zero on undetectable in-sandbox OpenClaw version"
+else
+  fail "GROUP-P: run exited 0 on undetectable in-sandbox OpenClaw version — expected non-zero"
+fi
+
+if echo "${output_p}" | grep -qF "2026.8.1"; then
+  pass "GROUP-P: output names the required floor 2026.8.1"
+else
+  fail "GROUP-P: required floor 2026.8.1 NOT in output"
+fi
+
+if echo "${output_p}" | grep -qi "recover"; then
+  pass "GROUP-P: output names the recover remedy"
+else
+  fail "GROUP-P: 'recover' remedy NOT in output"
+fi
+
+# ===========================================================================
+# GROUP Q: GATE-03 — doctor output surfaced before provisioning
+#   Default passing versions; STUB_NEMOCLAW_DOCTOR_OUTPUT sentinel must appear
+#   in the output, and BEFORE "Applying revenium egress policy".
+# ===========================================================================
+echo ""
+echo "--- GROUP Q: GATE-03 doctor surfaced before provisioning ---"
+
+TMP_HOME_Q=$(make_home)
+ARGV_Q=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-q.XXXXXX")
+TMP_HOMES+=("${ARGV_Q}")
+
+exit_code_q=0
+output_q=$(STUB_NEMOCLAW_DOCTOR_OUTPUT="SBX_DOCTOR_SENTINEL_OK" \
+           run_provision "${TMP_HOME_Q}" "${ARGV_Q}" 2>&1) || exit_code_q=$?
+
+if echo "${output_q}" | grep -qF "SBX_DOCTOR_SENTINEL_OK"; then
+  pass "GROUP-Q: doctor output sentinel present in operator-visible output"
+else
+  fail "GROUP-Q: doctor output sentinel NOT in output (exit ${exit_code_q})"
+fi
+
+_doctor_line=$(echo "${output_q}" | grep -nF "SBX_DOCTOR_SENTINEL_OK" | head -1 | cut -d: -f1)
+_egress_line=$(echo "${output_q}" | grep -nF "Applying revenium egress policy" | head -1 | cut -d: -f1)
+if [[ -n "${_doctor_line}" && -n "${_egress_line}" && "${_doctor_line}" -lt "${_egress_line}" ]]; then
+  pass "GROUP-Q: doctor output (line ${_doctor_line}) appears before 'Applying revenium egress policy' (line ${_egress_line})"
+else
+  fail "GROUP-Q: doctor output does not precede 'Applying revenium egress policy' (doctor line='${_doctor_line}', egress line='${_egress_line}')"
+fi
+
+# ===========================================================================
+# GROUP R: GATE-03 non-blocking doctor + GATE-04 in-sandbox Node branches
+#   R-a: doctor timeout (rc=124) warns and provisioning still continues.
+#   R-b: below-floor/excluded-major in-sandbox Node refuses.
+#   R-c: undetectable in-sandbox Node warns but does not block.
+# ===========================================================================
+echo ""
+echo "--- GROUP R: GATE-03 non-blocking doctor + GATE-04 Node branches ---"
+
+echo ""
+echo "  -- R-a: doctor timeout (rc=124) warns and provisioning continues --"
+TMP_HOME_Ra=$(make_home)
+ARGV_Ra=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ra.XXXXXX")
+TMP_HOMES+=("${ARGV_Ra}")
+
+exit_code_ra=0
+output_ra=$(STUB_NEMOCLAW_DOCTOR_RC=124 \
+            run_provision "${TMP_HOME_Ra}" "${ARGV_Ra}" 2>&1) || exit_code_ra=$?
+
+if echo "${output_ra}" | grep -qi "timed out"; then
+  pass "GROUP-R-a: output names the doctor timeout"
+else
+  fail "GROUP-R-a: 'timed out' NOT in output on doctor rc=124"
+fi
+
+if echo "${output_ra}" | grep -qi "recover"; then
+  pass "GROUP-R-a: output names the recover remedy on doctor timeout"
+else
+  fail "GROUP-R-a: 'recover' remedy NOT in output on doctor timeout"
+fi
+
+if echo "${output_ra}" | grep -qF "Applying revenium egress policy"; then
+  pass "GROUP-R-a: provisioning still reaches 'Applying revenium egress policy' after doctor timeout"
+else
+  fail "GROUP-R-a: provisioning did NOT continue past a doctor timeout (exit ${exit_code_ra})"
+fi
+
+echo ""
+echo "  -- R-b: below-floor in-sandbox Node refuses --"
+TMP_HOME_Rb=$(make_home)
+ARGV_Rb=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-rb.XXXXXX")
+TMP_HOMES+=("${ARGV_Rb}")
+
+exit_code_rb=0
+output_rb=$(STUB_NEMOCLAW_NODE_VERSION=v25.0.0 \
+            run_provision "${TMP_HOME_Rb}" "${ARGV_Rb}" 2>&1) || exit_code_rb=$?
+
+if [[ "${exit_code_rb}" -ne 0 ]]; then
+  pass "GROUP-R-b: run exits non-zero on below-floor/excluded-major in-sandbox Node"
+else
+  fail "GROUP-R-b: run exited 0 on in-sandbox Node v25.0.0 — expected non-zero"
+fi
+
+if echo "${output_rb}" | grep -qF "v25.0.0"; then
+  pass "GROUP-R-b: output names the detected Node version v25.0.0"
+else
+  fail "GROUP-R-b: detected Node version v25.0.0 NOT in output"
+fi
+
+if echo "${output_rb}" | grep -qF ">=24.16.0 <25.0.0, or >=26.1.0"; then
+  pass "GROUP-R-b: output names the required Node floor"
+else
+  fail "GROUP-R-b: required Node floor NOT in output"
+fi
+
+echo ""
+echo "  -- R-c: undetectable in-sandbox Node warns but does not block --"
+TMP_HOME_Rc=$(make_home)
+ARGV_Rc=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-rc.XXXXXX")
+TMP_HOMES+=("${ARGV_Rc}")
+
+exit_code_rc=0
+output_rc=$(STUB_NEMOCLAW_NODE_VERSION=EMPTY \
+            run_provision "${TMP_HOME_Rc}" "${ARGV_Rc}" 2>&1) || exit_code_rc=$?
+
+if echo "${output_rc}" | grep -qF ">=24.16.0 <25.0.0, or >=26.1.0"; then
+  pass "GROUP-R-c: undetectable Node warning names the required floor"
+else
+  fail "GROUP-R-c: undetectable Node warning does NOT name the required floor"
+fi
+
+if echo "${output_rc}" | grep -qF "Applying revenium egress policy"; then
+  pass "GROUP-R-c: provisioning still reaches 'Applying revenium egress policy' after an undetectable Node warning"
+else
+  fail "GROUP-R-c: provisioning did NOT continue past an undetectable Node warning (exit ${exit_code_rc})"
 fi
 
 # ===========================================================================
