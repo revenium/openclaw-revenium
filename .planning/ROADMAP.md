@@ -17,13 +17,14 @@
 
 **Milestone Goal:** Move the Revenium skill onto OpenClaw `>= 2026.8.1` ("2.0" — a CalVer nickname, not a semver major) across both install paths, restoring the metering read path that 2.0's move to SQLite session storage breaks, and establishing on a live host whether marker-writing can be made deterministic instead of model-dependent.
 
-**Sequencing note:** Phase 17 is a live-host spike and must complete before any porting work — research could not resolve the session-read mechanism from documentation alone. Phase 19 (session read path) and Phase 21 (attribution dispatch, contingent) are kept in strictly separate phase groups with a green checkpoint between them, per the project's "rewrite-under-migration" pitfall. Every phase touching install/gate scripts (18, 19, 20, 22, 23, 24) carries its own live clean-host verification step rather than deferring to one final UAT phase — generalizing the v1.4 lesson that "marked shipped" and "works on a clean host" are different things.
+**Sequencing note:** Phase 17 is a live-host spike and must complete before any porting work — research could not resolve the session-read mechanism from documentation alone. Phase 19 (session read path) was kept in a strictly separate phase group from the contingent attribution-dispatch work per the project's "rewrite-under-migration" pitfall. Every phase touching install/gate scripts (18, 19, 20, 22, 23, 24) carries its own live clean-host verification step rather than deferring to one final UAT phase — generalizing the v1.4 lesson that "marked shipped" and "works on a clean host" are different things.
+
+**Phase 21 removed (2026-09-24):** Phase 17's SPIKE-03 returned **NO — mechanism inapplicable to this call shape** (`.planning/spikes/010-command-dispatch-tool-verdict/README.md`) — `command-dispatch: tool` does not make marker-writing dispatch deterministic. Per the milestone's own contingency (D-06), Phase 21 (Attribution Dispatch Resolution) is deleted rather than executed; ATTR-01 moved to `REQUIREMENTS.md` → Future Requirements; the existing marker architecture ports as-is under Phase 20. Phase numbering 17–24 is preserved without renumbering — the gap at 21 is intentional, not an error.
 
 - [ ] **Phase 17: Live-Host Fact-Finding Spike** - Provision a real 2.0 host and resolve the session-read, hook-firing, and dispatch unknowns research couldn't answer
 - [ ] **Phase 18: Version Gate & Install Health** - Install refuses unsupported OpenClaw/Node versions explicitly and runs `doctor --fix`
 - [ ] **Phase 19: Session Read Path & Root-Session Resolution** - Port `report.sh`/`common.sh`/`get-root-session-id.py` off JSONL onto 2.0's SQLite session store
 - [ ] **Phase 20: Plugin 2.0 SDK Compliance** - Rebuild both plugins against 2.0's SDK with the new `allowPromptInjection` gate and current hook names
-- [ ] **Phase 21: Attribution Dispatch Resolution (Contingent)** - If SPIKE-03 validated it, make marker dispatch deterministic via `command-dispatch: tool`
 - [ ] **Phase 22: NemoClaw/OpenShell Path on 2.0** - Re-verify the NemoClaw install sequence and host-side metering loop on a freshly-provisioned 2.0 sandbox
 - [ ] **Phase 23: Hard HALT & Version Canary Live Validation** - Prove a real budget breach halts the agent and a broken hook is caught loudly, both live
 - [ ] **Phase 24: ClawHub Release & Post-Publish Verification** - Cut the release and verify the *published* artifact installs clean, not just the working tree
@@ -86,7 +87,7 @@ Plans:
 
 ### Phase 19: Session Read Path & Root-Session Resolution
 
-**Goal**: The skill's metering read path is ported off direct JSONL parsing onto 2.0's SQLite session store, so completions, toolCalls, and root-session resolution work end-to-end instead of silently metering nothing. This is the milestone's centerpiece and the green checkpoint that must hold before any attribution-core work (Phase 21) begins.
+**Goal**: The skill's metering read path is ported off direct JSONL parsing onto 2.0's SQLite session store, so completions, toolCalls, and root-session resolution work end-to-end instead of silently metering nothing. This was the milestone's centerpiece and the green checkpoint originally required before any attribution-core work began; that contingent work (formerly Phase 21) resolved NO and was deleted — see the milestone-heading note above.
 **Depends on**: Phase 17 (SPIKE-01/SPIKE-04 findings), Phase 18 (host passes the version gate)
 **Requirements**: READ-01, READ-02, READ-03, READ-04, PLUG-04
 **Success Criteria** (what must be TRUE):
@@ -100,7 +101,7 @@ Plans:
 
 ### Phase 20: Plugin 2.0 SDK Compliance
 
-**Goal**: Both installed plugins (standalone + NemoClaw) load cleanly on 2.0's plugin SDK, with 2.0's new permission gate and current hook names wired in — no load errors, no stale prebuilt `dist/`. This ports the existing hook contract unchanged; it does not add new dispatch behavior (that's the contingent Phase 21).
+**Goal**: Both installed plugins (standalone + NemoClaw) load cleanly on 2.0's plugin SDK, with 2.0's new permission gate and current hook names wired in — no load errors, no stale prebuilt `dist/`. This ports the existing hook contract unchanged; it does not add new dispatch behavior (the contingent attribution-dispatch work, formerly Phase 21, resolved NO on SPIKE-03 and was deleted — see the milestone-heading note above).
 **Depends on**: Phase 17 (`allowPromptInjection` requirement confirmed live)
 **Requirements**: PLUG-01, PLUG-02, PLUG-03, PLUG-05
 **Success Criteria** (what must be TRUE):
@@ -112,22 +113,10 @@ Plans:
 
 **Plans**: TBD
 
-### Phase 21: Attribution Dispatch Resolution (Contingent)
-
-**Goal**: If Phase 17's SPIKE-03 spike found that `command-dispatch: tool` makes marker-writing dispatch deterministic, implement it so classification no longer depends on model judgment. **Contingency: this phase executes only if SPIKE-03 returned yes.** If SPIKE-03 returned no, this phase is dropped entirely, ATTR-01 moves to REQUIREMENTS.md's Future Requirements section, and the existing marker architecture ports as-is (already covered by Phase 20).
-**Depends on**: Phase 19 (session read path green — the required checkpoint before any attribution-core change), Phase 20 (plugin hook contract confirmed stable on 2.0)
-**Requirements**: ATTR-01 (contingent on SPIKE-03 = yes)
-**Success Criteria** (what must be TRUE, only if this phase executes):
-
-  1. A task/job marker write dispatches deterministically via `command-dispatch: tool` rather than depending on the model choosing to comply, verified live.
-  2. Marker coverage (`verify-markers.sh`, completions-vs-markers) on the 2.0 host is at or above the reliability already achieved by the v1.3 `before_agent_finalize` gate — confirming the new dispatch mechanism doesn't regress coverage.
-
-**Plans**: TBD
-
 ### Phase 22: NemoClaw/OpenShell Path on 2.0
 
 **Goal**: The NemoClaw/OpenShell install path works end-to-end against a freshly-provisioned 2.0-generation sandbox, re-verified against NemoClaw's own concurrent lifecycle changes (0.0.127/0.0.128) rather than assumed compatible.
-**Depends on**: Phase 19 (session store read path ported), Phase 20 (NemoClaw plugin 2.0-compliant), Phase 21 (if it executed, reflected in the deployed skill)
+**Depends on**: Phase 19 (session store read path ported), Phase 20 (NemoClaw plugin 2.0-compliant)
 **Requirements**: NEMO-01, NEMO-02, NEMO-03
 **Success Criteria** (what must be TRUE):
 
@@ -153,7 +142,7 @@ Plans:
 ### Phase 24: ClawHub Release & Post-Publish Verification
 
 **Goal**: A ClawHub release ships carrying the full v1.4/v1.4.1/post-ship fix set plus 2.0 support, and the *published* artifact — not just the local working tree — is proven to install clean. Publishing is not the finish line; verifying the published artifact is.
-**Depends on**: Phase 18, Phase 19, Phase 20, Phase 21 (if it executed), Phase 22, Phase 23 — everything green
+**Depends on**: Phase 18, Phase 19, Phase 20, Phase 22, Phase 23 — everything green
 **Requirements**: REL-01, REL-02
 **Success Criteria** (what must be TRUE):
 
@@ -254,7 +243,7 @@ Full details archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.
 | 18. Version Gate & Install Health | v2.0 | 0/TBD | Not started | - |
 | 19. Session Read Path & Root-Session Resolution | v2.0 | 0/TBD | Not started | - |
 | 20. Plugin 2.0 SDK Compliance | v2.0 | 0/TBD | Not started | - |
-| 21. Attribution Dispatch Resolution (Contingent) | v2.0 | 0/TBD | Not started | - |
+| 21. Attribution Dispatch Resolution (Contingent) | v2.0 | — | Removed 2026-09-24 (SPIKE-03 = NO) | - |
 | 22. NemoClaw/OpenShell Path on 2.0 | v2.0 | 0/TBD | Not started | - |
 | 23. Hard HALT & Version Canary Live Validation | v2.0 | 0/TBD | Not started | - |
 | 24. ClawHub Release & Post-Publish Verification | v2.0 | 0/TBD | Not started | - |
