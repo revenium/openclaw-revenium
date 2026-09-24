@@ -91,6 +91,7 @@ fi
 # ---------------------------------------------------------------------------
 step "Checking runtime versions"
 require_openclaw_version
+require_node_version
 info "Runtime versions OK"
 
 # ---------------------------------------------------------------------------

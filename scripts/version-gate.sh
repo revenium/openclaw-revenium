@@ -121,3 +121,64 @@ require_openclaw_version() {
   Upgrade OpenClaw before continuing. See: https://docs.openclaw.ai/releases"
   fi
 }
+
+# ---------------------------------------------------------------------------
+# node_version_ok VERSION — true if VERSION satisfies
+# >=24.16.0 <25.0.0, or >=26.1.0 (NODE_VERSION_FLOOR_TEXT). Ported verbatim
+# from spike 007 (provision-2-0-host.sh:47-63). Major 25 is EXCLUDED
+# unconditionally via an explicit case arm — this is the shape a generic
+# semver-range parser gets wrong (25.x is numerically above 24.16.0 but is
+# not a supported major), so do not replace this with a hand-rolled range
+# parser or a generic comparator.
+# ---------------------------------------------------------------------------
+node_version_ok() {
+  local v="${1#v}"
+  local major="${v%%.*}"
+  case "$major" in
+    24) version_ge "$v" "24.16.0" ;;
+    25) return 1 ;;
+    *)
+      if [ "$major" -ge 26 ] 2>/dev/null; then
+        version_ge "$v" "26.1.0"
+      else
+        return 1
+      fi
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# require_node_version — fail()s (non-zero exit) unless the detected Node
+# version satisfies NODE_VERSION_FLOOR_TEXT. Message always names both the
+# detected and required values — never a silent no-op (GATE-04).
+# ---------------------------------------------------------------------------
+require_node_version() {
+  local _detected
+
+  # See openclaw_version_detected's NOTE above: warn() must go to stderr
+  # here too, since this function's stdout is captured as its return value.
+  if [[ -n "${STUB_NODE_VERSION:-}" ]]; then
+    warn "STUB_NODE_VERSION is set — using a test override instead of the real 'node --version' output. (T-18-03)" >&2
+  fi
+
+  _detected="${STUB_NODE_VERSION:-$(node --version 2>/dev/null)}"
+
+  if [[ -z "${_detected}" ]]; then
+    fail "Could not determine the installed Node.js version.
+
+  This skill requires Node ${NODE_VERSION_FLOOR_TEXT}, and no version was
+  returned by 'node --version'. Install Node, then re-run this installer.
+
+  See: https://nodejs.org"
+  fi
+
+  if ! node_version_ok "${_detected}"; then
+    fail "Node.js version is outside the supported range.
+
+  Detected: ${_detected}
+  Required: ${NODE_VERSION_FLOOR_TEXT}
+
+  Upgrade Node before continuing with OpenClaw — an unsupported Node version
+  risks the SQLite TEXT truncation OpenClaw's own installer warns about."
+  fi
+}

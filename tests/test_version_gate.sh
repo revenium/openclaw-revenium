@@ -188,13 +188,90 @@ else
 fi
 
 # ===========================================================================
+# GROUP VG-E: GATE-04 node_version_ok direct unit
+# ===========================================================================
+echo ""
+echo "--- GROUP VG-E: GATE-04 node_version_ok direct unit ---"
+
+if (. "${VERSION_GATE_SH}" 2>/dev/null; node_version_ok "v24.21.0"); then
+  pass "VG-E: node_version_ok v24.21.0 returns 0"
+else
+  fail "VG-E: node_version_ok v24.21.0 should return 0"
+fi
+
+if (. "${VERSION_GATE_SH}" 2>/dev/null; node_version_ok "v24.15.9"); then
+  fail "VG-E: node_version_ok v24.15.9 should return non-zero (below 24.16.0)"
+else
+  pass "VG-E: node_version_ok v24.15.9 correctly returns non-zero"
+fi
+
+if (. "${VERSION_GATE_SH}" 2>/dev/null; node_version_ok "v25.0.0"); then
+  fail "VG-E: node_version_ok v25.0.0 should return non-zero (excluded major)"
+else
+  pass "VG-E: node_version_ok v25.0.0 correctly returns non-zero"
+fi
+
+if (. "${VERSION_GATE_SH}" 2>/dev/null; node_version_ok "v26.0.9"); then
+  fail "VG-E: node_version_ok v26.0.9 should return non-zero (below 26.1.0)"
+else
+  pass "VG-E: node_version_ok v26.0.9 correctly returns non-zero"
+fi
+
+if (. "${VERSION_GATE_SH}" 2>/dev/null; node_version_ok "v26.1.0"); then
+  pass "VG-E: node_version_ok v26.1.0 returns 0"
+else
+  fail "VG-E: node_version_ok v26.1.0 should return 0"
+fi
+
+if (. "${VERSION_GATE_SH}" 2>/dev/null; node_version_ok "v23.11.0"); then
+  fail "VG-E: node_version_ok v23.11.0 should return non-zero (major below 24)"
+else
+  pass "VG-E: node_version_ok v23.11.0 correctly returns non-zero"
+fi
+
+# ===========================================================================
+# GROUP VG-F: GATE-04 end-to-end refusal — below-floor Node
+# ===========================================================================
+echo ""
+echo "--- GROUP VG-F: GATE-04 end-to-end refusal below floor Node ---"
+
+TMP_HOME_VGF=$(make_home openclaw)
+exit_code_vgf=0
+output_vgf=$(STUB_OPENCLAW_VERSION_OUTPUT="OpenClaw 2026.9.6 (eb377ac)" \
+    STUB_NODE_VERSION="v22.14.0" HOME="${TMP_HOME_VGF}" \
+    bash "${INSTALL_SH}" 2>&1) || exit_code_vgf=$?
+
+if [[ "${exit_code_vgf}" -ne 0 ]]; then
+  pass "VG-F: install.sh exits non-zero on below-floor Node"
+else
+  fail "VG-F: install.sh exited 0 on below-floor Node (exit=${exit_code_vgf})"
+fi
+
+if echo "${output_vgf}" | grep -qF "v22.14.0"; then
+  pass "VG-F: output names the detected Node version v22.14.0"
+else
+  fail "VG-F: output does not contain detected Node version v22.14.0"
+fi
+
+if echo "${output_vgf}" | grep -qF ">=24.16.0 <25.0.0, or >=26.1.0"; then
+  pass "VG-F: output names the required Node range"
+else
+  fail "VG-F: output does not contain the required Node range"
+fi
+
+if echo "${output_vgf}" | grep -qF "Routing to standalone install path"; then
+  fail "VG-F: output reached routing dispatch — Node gate did not stop install before dispatch"
+else
+  pass "VG-F: output does not reach routing dispatch (Node gate fired first)"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 echo ""
-echo "NOTE: This test FAILS RED before Task 1 creates scripts/version-gate.sh."
-echo "      GROUPs VG-E/VG-F (GATE-04, Node floor) are added by Task 2."
+echo "NOTE: expected total after Task 1+2: 19+ passed (VG-A..VG-F), 0 failed."
 if [[ "${FAIL}" -gt 0 ]]; then
   exit 1
 fi
