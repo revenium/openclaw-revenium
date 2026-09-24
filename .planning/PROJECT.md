@@ -26,33 +26,35 @@ Phase 12 (Parallel Install Scaffolding & Detection) complete (2026-06-07): a thi
 
 **Open follow-up:** Phase 9 live guardrail-halt UAT/verification on host 172.16.1.247 deferred (validated through production use; see STATE.md → Deferred Items).
 
-## Current Milestone: v1.4 NemoClaw/OpenShell Support
+## Current Milestone: v2.0 OpenClaw 2.0 Cut-Over
 
-**Goal:** Let the Revenium skill optionally run under NemoClaw inside an OpenShell sandbox — a parallel install path that leaves the existing standalone OpenClaw + Docker path untouched.
+**Goal:** Move the Revenium skill onto OpenClaw 2.0 across both install paths before a runtime upgrade silently voids another hook contract — and, where 2.0 offers real lifecycle hooks, replace the agent-written-marker workarounds with them.
 
 **Target features:**
-- Linux/NemoClaw detection + parallel install path (gate to Linux+Docker; refuse off-Linux explicitly — no silent no-op)
-- Sandbox egress policy — ship + apply a host-scoped `revenium` network-policy preset for `api.revenium.ai`
-- revenium CLI in-sandbox — prebuilt-binary delivery (not brew bottle), `SSL_CERT_FILE` → OpenShell CA bundle, `REVENIUM_*` injection
-- Host-side metering loop — host cron + `nemoclaw share mount` refreshing `guardrail-status.json` (not per-tick `exec`, not in-sandbox cron)
-- Per-turn enforcement plugin — OpenClaw `before_prompt_build` plugin delivering the mandatory guardrail directive (authored from the official scaffold)
-- Skill deploy via `nemoclaw skill install`
+- **Establish the 2.0 facts** — confirm OpenClaw 2.0 exists and what changed: plugin/hook API, skill format, CLI surface, session/config layout, and whether NemoClaw supports it
+- **Standalone path on 2.0** — `install.sh` → `post-install.sh`, enforcement plugin, cron metering loop, all green on 2.0
+- **NemoClaw/OpenShell path on 2.0** — sandbox provisioning, host-side metering loop over SSHFS, `before_prompt_build` plugin, skill deploy
+- **Attribution core** — replace agent-written markers + AGENTS.md injection with code-side classification **if and only if** 2.0's hooks support it; otherwise port as-is and say so plainly
+- **Version canaries** — a smoke check that fails loudly when a runtime upgrade voids a hook contract
+- **Hard HALT validation** — budget-breach → hard HALT proven end-to-end live (the one v1.4 behavior never proven)
+- **ClawHub release** — cut a release carrying v1.4/v1.4.1/post-ship fixes + 2.0 support; rebuild the NemoClaw plugin
 
-**Basis:** 6 spikes in `.planning/spikes/` (4 VALIDATED, 2 PARTIAL with known build paths) + the `spike-findings-openclaw-revenium` skill. Feasibility proven end-to-end on live host 34.224.27.67. macOS unsupported.
+**Support posture:** **2.0 only.** CalVer (`2026.x`) support is dropped, not dual-maintained — this is the breaking change that makes it v2.0 rather than v1.5.
+
+**Driver:** Proactive, not breakage. Nothing is known-broken on 2.0 today; this gets ahead of the drift that produced the 2026.6.6 `before_agent_finalize` revise veto and B-05.
+
+**Proof bar:** Live on a clean host — fresh clone → install → enforcement gates → metering → `guardrail-status.json` flowing, on a host actually running 2.0. A 2.0 host must be provisioned. The v1.4 lesson stands: "marked shipped" and "works on a clean host" are different things.
+
+**Open risk:** If 2.0 does not exist yet, or NemoClaw does not support it, the milestone shrinks. Research answers that before requirements are written.
 
 ### Next Milestone Goals (candidates)
 
-Carried-forward / deferred requirements that could seed the next milestone:
+Carried-forward / deferred requirements that could seed a future milestone:
 - **GRDEV-F1** — meter per-tick guardrail API-poll overhead as aggregated enforcement cost (deferred v1.2 for volume/noise)
-- **JCLASS-01** — LLM `on_session_end` classifier plugin for automatic job/task inference (gated on confirming OpenClaw session-end hook support)
+- **JCLASS-01** — LLM `on_session_end` classifier plugin for automatic job/task inference (partially subsumed by this milestone's attribution-core item if 2.0 ships the hook; otherwise still open)
 - **JGUARD-01** — per-job-type budget rules in `setup-guardrails.sh --interactive`
 - **JOUT-01** — business-outcome reporting (`--outcome-type CONVERTED`, ROI/conversion metrics)
-
-New candidates from the v1.4 post-ship session:
-- **Cut a ClawHub release** carrying all v1.4/v1.4.1/post-ship fixes (both test hosts were patched via scp/git; published installs are stale) and **rebuild the NemoClaw plugin** to bake the declare-at-start job lifecycle directive there.
-- **OpenClaw-version compatibility canaries** — a smoke check that fails loudly when a runtime upgrade silently voids a hook contract (the 2026.6.6 finalize-revise veto was found only by reading gateway logs).
-- **Budget-breach → hard HALT validation on Nemotron** end-to-end (the one v1.4 behavior never proven live).
-- **Report upstream / confirm externals:** OpenClaw finalize-revise veto; Revenium 429-on-breach metering blackout; NemoClaw gateway wedge on tool-using turns.
+- **Report upstream / confirm externals** — OpenClaw finalize-revise veto; Revenium 429-on-breach metering blackout; NemoClaw gateway wedge on tool-using turns
 
 ## Requirements
 
@@ -79,7 +81,7 @@ New candidates from the v1.4 post-ship session:
 
 ### Active
 
-No active milestone — v1.4 shipped (2026-06-11). Run `/gsd-new-milestone` to scope the next one (candidates listed under **Current State → Next Milestone Goals**).
+**v2.0 OpenClaw 2.0 Cut-Over** — started 2026-09-23. Requirements are defined in `.planning/REQUIREMENTS.md` once research establishes what 2.0 actually changed; see **Current Milestone** above for scope and proof bar.
 
 **Open UAT follow-ups carried across milestones:**
 - Phase 9 (v1.2): live guardrail-halt E2E on host 172.16.1.247 — confirm a `GUARDRAIL` transaction lands in Revenium (UAT/verification `human_needed`, deferred).
@@ -159,4 +161,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-13 — v1.4 NemoClaw/OpenShell Support milestone **archived** (Phases 12–16 complete) **+ v1.4.1 install-path hardening + post-ship jobs/enforcement session**. A live UAT pass on a clean host found v1.4 marked-shipped but broken end-to-end; ~14 fixes (all on `origin/main`, HEAD `fa7deeb`) make `install.sh --nemoclaw` exit 0 with all four enforcement gates passing live (Gate A/B v2026.5.22 probe fix, Gate D warn-not-abort, common.sh OPENCLAW_HOME normalization, host-side CLI install, consolidated `ensure_mount` SSHFS self-heal, per-sandbox-UUID ledger, env-gated install-time budget provisioning). The stale "install exits 1 at the enforcement gate" claim is corrected throughout. Not yet validated: budget-breach → hard HALT end-to-end on Nemotron. See `ROADMAP.md` § v1.4.1.*
+*Last updated: 2026-09-23 — milestone **v2.0 OpenClaw 2.0 Cut-Over** started. Moves both install paths onto OpenClaw 2.0 (CalVer `2026.x` support dropped), conditionally replaces the agent-written-marker attribution core with real 2.0 lifecycle hooks, and carries three parked items: version canaries, a ClawHub release, and live budget-breach → hard HALT validation. Proof bar is a clean host running 2.0.*

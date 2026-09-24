@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.4
-milestone_name: NemoClaw/OpenShell Support
-status: Awaiting next milestone
-last_updated: "2026-06-13T02:20:38.956Z"
-last_activity: 2026-06-13 — Milestone v1.4 completed and archived
+milestone: v2.0
+milestone_name: OpenClaw 2.0 Cut-Over
+status: planning
+last_updated: "2026-09-24T01:07:02.645Z"
+last_activity: 2026-09-23
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 18
-  completed_plans: 18
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -24,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-07 after v1.4 milestone start)
 
 ## Current Position
 
-Phase: Milestone v1.4 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-13 — Milestone v1.4 completed and archived
+Status: Defining requirements
+Last activity: 2026-09-23 — Milestone v2.0 started
 
 ## Performance Metrics
 
