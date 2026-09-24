@@ -425,8 +425,13 @@ resolved to `v0.0.124` (OpenClaw `2026.7.1`, pre-2.0) until explicitly pinned (F
 - `openclaw agent exec` is ephemeral (no persisted SQLite state); `openclaw agent --agent <id>
   --message ... --local --model provider/model --json` is the persistent, production-shaped entry
   point and is what Phase 19's read-path work must target.
-- `~/.local/bin/node` on `52.90.9.242` resolves to an unrelated Hermes-bundled Node v22.23.2 — any
-  script on this host must resolve Node explicitly, never via bare `$PATH` including that directory.
+- `~/.local/bin/node` on `52.90.9.242` resolves to an unrelated Hermes-bundled Node v22.23.2, but
+  `~/.local/bin` is also where the `nemoclaw` CLI genuinely lives (CONVENTIONS.md) — do not avoid
+  `~/.local/bin` entirely, order it: `PATH="$HOME/.npm-global/bin:$PATH:$HOME/.local/bin"`
+  (system paths first, `.local/bin` **last**) so `node`/`openclaw` resolve to the correct system
+  install ahead of the shadowing symlink, while `nemoclaw` still resolves at the tail. Verified:
+  this exact ordering resolves all four CLIs (`openclaw`, `node`, `docker`, `nemoclaw`) correctly
+  in one shell.
 - OpenClaw's official installer's npm-global bin dir is `~/.npm-global/bin` (not `~/.local/bin`,
   not nvm-style) — this is where the `openclaw` binary actually lands.
 - NemoClaw-sandbox agentId is also `main`; in-sandbox SQLite store resolves under
