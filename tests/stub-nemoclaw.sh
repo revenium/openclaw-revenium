@@ -82,6 +82,18 @@
 #
 #   STUB_NEMOCLAW_DOCTOR_OUTPUT (default "Doctor: no findings.")
 #     Output echoed for the `openclaw doctor` exec payload.
+#
+#   STUB_NEMOCLAW_SLEEP_SECONDS (default empty = no sleep)
+#     When set to a non-empty value, sleeps that many seconds before the
+#     `node --version` arm (GATE-04) and the `openclaw doctor` arm (GATE-03)
+#     produce their response — NOT the `openclaw --version` arm, which stays
+#     fast so a test can trip the node/doctor ceilings without the run dying
+#     early on the (unrelated, out-of-scope) OpenClaw-version refusal.
+#     Exercises a REAL bounded_run/timeout ceiling expiry end-to-end
+#     (18-REVIEW WR-04) — until this switch existed, the suite could only
+#     make the stub return 124 itself, which never exercises an actual kill.
+#     Evaluated AFTER the newline/CR argv rejection block, so that rejection
+#     still fires first and instantly, unaffected by this switch.
 
 # No -e: we manage exits explicitly per subcommand dispatch
 set -uo pipefail
@@ -113,6 +125,39 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+# ---------------------------------------------------------------------------
+# 1c. _stub_maybe_sleep — optional pre-response sleep (STUB_NEMOCLAW_SLEEP_SECONDS,
+#     default empty = no sleep). Called from the specific exec payload arms
+#     below that this plan's GATE-03/GATE-04 coverage needs to sleep (the
+#     `node --version` arm and the `openclaw doctor` arm) — NOT from the
+#     `openclaw --version` arm, which must stay fast so a GROUP S scenario can
+#     reach the node/doctor arms instead of dying early on the (deliberately
+#     unchanged, per Task 2) generic "Could not determine the in-sandbox
+#     OpenClaw version" refusal. This makes a genuine ceiling expiry
+#     observable end-to-end: until now the suite could only make the stub
+#     binary return 124 itself, which never exercises a real kill — exactly
+#     the blind spot 18-REVIEW WR-04 records.
+#
+#     Backgrounds the sleep and `wait`s on it explicitly (rather than running
+#     it as a plain foreground command) so a TERM sent to THIS script's PID is
+#     handled immediately instead of deferred until the sleep completes — a
+#     well-known bash quirk: a script blocked via wait() on a synchronous
+#     foreground child defers signal delivery until that child exits, but a
+#     trap combined with the `wait` builtin on a backgrounded child interrupts
+#     promptly. A real compiled/JS binary (the thing this stub simulates) does
+#     not have this quirk; this is stub-only plumbing so the hermetic kill-path
+#     test can observe a genuine, prompt SIGTERM response (same fix 18-06 made
+#     in tests/stub-openclaw.sh's doctor-sleep arm — see its SUMMARY deviation).
+# ---------------------------------------------------------------------------
+_stub_maybe_sleep() {
+  if [[ -n "${STUB_NEMOCLAW_SLEEP_SECONDS:-}" ]]; then
+    trap 'kill -TERM "${_sleep_pid}" 2>/dev/null; exit 143' TERM
+    sleep "${STUB_NEMOCLAW_SLEEP_SECONDS}" &
+    _sleep_pid=$!
+    wait "${_sleep_pid}"
+  fi
+}
 
 # ---------------------------------------------------------------------------
 # 2. Subcommand dispatch
@@ -236,6 +281,7 @@ if [[ "${2:-}" == "exec" ]]; then
   # SECURITY: string-compare only, never eval (T-16-SC).
   if grep -qF "node --version" "${_payload_file}"; then
     rm -f "${_payload_file}"
+    _stub_maybe_sleep
     if [[ "${STUB_NEMOCLAW_NODE_VERSION:-}" == "EMPTY" ]]; then
       exit 0
     fi
@@ -250,6 +296,7 @@ if [[ "${2:-}" == "exec" ]]; then
   # SECURITY: string-compare only, never eval (T-16-SC).
   if grep -qF "openclaw doctor" "${_payload_file}"; then
     rm -f "${_payload_file}"
+    _stub_maybe_sleep
     echo "${STUB_NEMOCLAW_DOCTOR_OUTPUT:-Doctor: no findings.}"
     exit "${STUB_NEMOCLAW_DOCTOR_RC:-0}"
   fi

@@ -71,6 +71,15 @@ command_exists() { command -v "$1" &>/dev/null; }
 . "${SCRIPT_DIR}/version-gate.sh"
 
 # ---------------------------------------------------------------------------
+# bounded_run library (GATE-03 gap-closure, 18-VERIFICATION gap #2 / 18-REVIEW
+# CR-03). Provides bounded_run SECONDS CMD [ARGS...], native-timeout-with-
+# portable-fallback, used below by the nemoclaw() wrapper. Must be sourced
+# before nemoclaw() is first called — it already is, at this position, after
+# warn() (line 56) which bounded_run's defensive fallback depends on.
+# ---------------------------------------------------------------------------
+. "${SCRIPT_DIR}/bounded-run.sh"
+
+# ---------------------------------------------------------------------------
 # nemoclaw — timeout-guarded wrapper over the real nemoclaw binary.
 # A wedged in-sandbox OpenClaw gateway makes `nemoclaw exec`/`recover` hang
 # indefinitely (observed live 2026-06-12: an `openclaw skills list` exec hung
@@ -80,9 +89,12 @@ command_exists() { command -v "$1" &>/dev/null; }
 #
 # Ceilings are sized per call shape (live agent turns legitimately take
 # 70-120s+); override any single call with NEMOCLAW_TIMEOUT_SECONDS=<n>.
-# `timeout` is coreutils — always present on the Linux hosts this path gates
-# on; if absent (macOS hermetic-test runs) the call passes through unguarded.
-# `timeout` execs nemoclaw via PATH, so test stubs keep working.
+# The ceiling is now enforced by bounded_run on EVERY host, regardless of
+# whether GNU coreutils `timeout` is on PATH (18-VERIFICATION.md gap #2 /
+# 18-REVIEW.md CR-03): bounded_run's native path delegates to `timeout` when
+# present (byte-identical to the prior guarded behavior), and its portable
+# path runs a bash 3.x watchdog when absent — the previous unbounded
+# unguarded-passthrough fallback for hosts without `timeout` is gone.
 # ---------------------------------------------------------------------------
 nemoclaw() {
     local _secs="${NEMOCLAW_TIMEOUT_SECONDS:-}"
@@ -95,11 +107,11 @@ nemoclaw() {
         esac
     fi
     local _rc=0
-    if command_exists timeout; then
-        timeout "${_secs}" nemoclaw "$@" || _rc=$?
-    else
-        command nemoclaw "$@" || _rc=$?
-    fi
+    # bounded_run dispatches the wrapped command via the `command` builtin,
+    # which is what makes it safe to pass the word `nemoclaw` from inside a
+    # function named `nemoclaw` — the call below does NOT recurse into this
+    # wrapper. Do not "simplify" this back into a direct `nemoclaw "$@"` call.
+    bounded_run "${_secs}" nemoclaw "$@" || _rc=$?
     if [[ "${_rc}" -eq 124 ]]; then
         warn "nemoclaw call timed out after ${_secs}s (args: ${1:-} ${2:-} ...) — the in-sandbox gateway may be wedged. Try: nemoclaw ${SANDBOX_NAME:-<name>} recover, then re-run the install."
     fi
