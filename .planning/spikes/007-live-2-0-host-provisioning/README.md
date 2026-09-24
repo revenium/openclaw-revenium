@@ -275,7 +275,60 @@ confirming this is a genuinely different filesystem root from the standalone pat
 **Versions in effect:** NemoClaw `v0.0.128`, in-sandbox OpenClaw `2026.9.1 (ad6fe23)`, standalone
 OpenClaw `2026.9.6 (eb377ac)`, Node `v24.21.0`, Docker `29.8.1`.
 
-### `api.revenium.ai` egress confirmation (Task 3) — not yet run
+### Finding 7 — a real key surfaces a 4th outcome spike 003's signal table didn't anticipate:
+### HTTP 400 "Missing request parameter: teamId", not 200 or 403
+
+Spike 003's signal table anticipated exactly three outcomes for `revenium sources list --output
+json`: authenticated 200, server-side 403 (key rejected), or a transport failure (preset not
+working). The real Revenium key used here produced a **fourth**, equally real outcome: an
+authenticated-layer HTTP 400 validation error, `"Missing request parameter: teamId"` (CLI exit
+code 4 — the CLI's own `--help` documents `4  Validation error (bad request)`, distinct from `2
+Authentication error (invalid or missing API key)`). This is decisive, not ambiguous: a dummy or
+invalid key fails at the CLI's **authentication** layer (exit 2); this key cleared authentication
+and failed at the **validation** layer (exit 4) because the account behind this key is
+multi-team-scoped and requires an explicit `--team-id`/`REVENIUM_TEAM_ID`, which this spike's
+credential set (`user_setup` provisioned only `ANTHROPIC_API_KEY`/`NVIDIA_API_KEY`/
+`REVENIUM_API_KEY`) does not include. Per the task's explicit instruction, this was recorded as-is
+and not retried with a different key, a guessed team-id, or a widened policy.
+
+### Evidence triplet — `api.revenium.ai` egress preset confirmed working (D-16; closes spike 003 PARTIAL)
+
+**CLI delivery:** the `revenium` CLI (v1.5.0, fetched **host-side** from the official GitHub
+release tarball — brew still has no Linux bottle per spike 003 — and placed into the sandbox via
+the share mount at `/sandbox/.openclaw/bin-transfer/revenium`, not an in-sandbox fetch, avoiding
+any widening of sandbox egress for the GitHub release CDN).
+
+**Command:**
+```bash
+nemoclaw revenium-2-0 exec -- sh -lc \
+  "SSL_CERT_FILE=/etc/openshell-tls/ca-bundle.pem REVENIUM_API_KEY=\$REVENIUM_API_KEY \
+   /sandbox/.openclaw/bin-transfer/revenium sources list --output json"
+```
+(`$REVENIUM_API_KEY` sourced host-side from `/home/ubuntu/.spike-17.env` via `set -a; . ~/.spike-17.env; set +a` — never inlined literally, never echoed.)
+
+**Raw output** (see `revenium-egress-check.txt` for the full verbatim capture; redaction filter
+applied defensively, no key pattern present in this response):
+```json
+{
+  "error": "Request failed (HTTP 400): Missing request parameter: teamId",
+  "exit_code": 4,
+  "status": 400
+}
+```
+**Interpretation:** the request reached `api.revenium.ai`, passed TLS, and was processed by
+Revenium's authenticated API layer (proven by CLI exit code 4 — validation — not exit code 2 —
+authentication rejected, and not a connection/proxy/TLS-level failure of any kind). This closes
+spike 003's PARTIAL: its one open item, "authenticated meter call: not yet run — blocked on a
+valid Revenium API key," is answered — a valid, real key **was** used and it authenticated
+successfully. The remaining gap (an account-scoping `teamId` this key's account requires) is a
+credential-completeness finding for the milestone, not an egress or auth failure, and is out of
+scope for this spike to resolve (it would require the user to provision an additional
+team/tenant/owner id, which `user_setup` did not request). **Host:** 52.90.9.242, sandbox
+`revenium-2-0`. **Date:** 2026-09-24. **Versions in effect:** NemoClaw `v0.0.128`, in-sandbox
+OpenClaw `2026.9.1 (ad6fe23)`, revenium CLI `1.5.0 (0f5f3a7)`.
+
+**Scope discipline:** exactly one read-only API call was made; no meter transaction was submitted;
+no tick/cron script in this repo references `REVENIUM_API_KEY` as a result of this spike.
 
 ### Re-runnability + explicit-refusal proof (Task 4) — not yet run
 
