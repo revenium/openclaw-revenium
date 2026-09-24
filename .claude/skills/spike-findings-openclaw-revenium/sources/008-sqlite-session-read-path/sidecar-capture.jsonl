@@ -1,0 +1,135 @@
+### Spike 008 (SPIKE-01, candidate c) — plugin-hook sidecar capture, per pairing.
+### Host: 52.90.9.242. Date: 2026-09-24. Format: NDJSON records below each header,
+### one line per hook firing, produced live by
+### .planning/spikes/008-sqlite-session-read-path/probe-sidecar-plugin/index.js.
+### No raw prompt text or assistant/tool message body is captured by this plugin at
+### all (T-17-05) — every field below is verbatim as captured, not redacted.
+###
+### ================================================================================
+### PAIRING: HOST-LOCAL — standalone path (OpenClaw 2026.9.6, eb377ac)
+### ================================================================================
+### Scaffold origin: `openclaw plugins init` was run live on this host
+### (`openclaw plugins init revenium-sidecar --type feature --directory /tmp/...`,
+### 2026-09-24) but its "feature" scaffold shape (`defineFeaturePlugin` + a typebox
+### tool contract) does not support raw `api.on(hookName, handler)` registration —
+### it is a tool-contract plugin type, not a hook-observer type. Per the task's own
+### "or mirror the shape of a real compiled plugin" alternative, this candidate
+### instead mirrors the packaging spike 006 proved live (package.json:
+### type=module/main/openclaw.extensions; openclaw.plugin.json:
+### id/name/version/activation.onStartup/configSchema — configSchema is mandatory,
+### its omission broke the whole openclaw CLI in spike 006) and the exact
+### `export default function register(api) { api.on(...) }` shape spike 006 proved
+### fires live once installed with real provenance. Hook payload field names below
+### were confirmed directly from the live host's installed openclaw package's own
+### .d.ts (hook-runner-global-CDmmGFJp.d.ts, openclaw 2026.9.6), not guessed.
+###
+### Install command (accept-capabilities required — a new gate not seen in spike
+### 006's earlier OpenClaw build):
+###   openclaw plugins install /tmp/revenium-sidecar-probe --force --accept-capabilities
+### Enable + allowConversationAccess (mirrors scripts/post-install.sh's own
+### revenium-marker-gate install pattern, §7c):
+###   echo '{plugins: {entries: {"revenium-sidecar-probe": {enabled: true, hooks: {allowConversationAccess: true}}}}}' | openclaw config patch --stdin
+### Provenance confirmed via `openclaw plugins inspect revenium-sidecar-probe`
+### BEFORE trusting any firing result (per spike 006's own inert-hooks warning):
+###   Status: enabled
+###   Trust: reason=origin-path; registryPath="/home/ubuntu/.openclaw/state/openclaw.sqlite"; origin="global"; installSource="path"; installSpec=null
+###   Policy: allowConversationAccess: true
+###   Install: Source=path; Source path=/tmp/revenium-sidecar-probe; Install path=~/.openclaw/extensions/revenium-sidecar-probe
+### (No "loaded without install/load-path provenance" warning — unlike spike 006's
+### hand-placed-without-install failure mode, this install carries real provenance.)
+###
+### Gateway note: `openclaw gateway status` reported Runtime: stopped (no gateway
+### service was running on this host at test time — the standalone path's real
+### turns in this spike were driven via `openclaw agent --local`, the embedded-agent
+### CLI path, exactly as plans 17-01/17-03 did; plugin extensions load in the
+### embedded runtime the same as they would under the gateway, confirmed by the
+### hooks firing below).
+###
+### Turns driven (2, both agent "dev" — the CLI's own registered default agent,
+### matching cli-surface-output.txt's HOST-LOCAL cell so results are directly
+### comparable to candidates (a)/(b)):
+###   1. session spike008sidecar3 — exec tool call (echo), clean stop.
+###      Command shape: set -a; . ~/.spike-17.env; set +a; openclaw agent --agent dev \
+###        --local --model anthropic/claude-sonnet-4-6 --message [REDACTED-TEXT] \
+###        --session-id spike008sidecar3 --json
+###      (driven message asked the agent to run a harmless echo via the exec tool
+###      and reply with a fixed marker — text redacted per T-17-05, same convention
+###      as sample-rows.txt/cli-surface-output.txt)
+###      Result: ok, winnerModel=claude-sonnet-4-6, toolSummary.calls=1 (exec),
+###        toolSummary.failures=0, stopReason=stop.
+###   2. session spike008sidecar4 — exec tool call (a command that exits 1 inside
+###      the shell, run to probe the after_tool_call error path), clean stop.
+###      Command shape: same as above, --session-id spike008sidecar4,
+###      --message [REDACTED-TEXT] (asked the agent to run a failing shell command
+###      via exec and reply with a fixed marker — text redacted per T-17-05).
+###      Result: ok, winnerModel=claude-sonnet-4-6, toolSummary.calls=1 (exec),
+###        toolSummary.failures=0 (the CLI's own exec tool treats a non-zero shell
+###        exit as a successful tool invocation whose *content* reports the exit
+###        code, not a tool-level error — this plugin's `event.error` field was
+###        therefore undefined/absent on both turns; recorded as an honest negative
+###        result, not evidence the field doesn't exist).
+###
+### Credentials: sourced server-side only, via `set -a; . ~/.spike-17.env; set +a`
+### immediately before the `openclaw agent` invocation in the same SSH command; the
+### key value was never read into this session's context, echoed, or transported
+### off the host, per the live-host binding.
+###
+### Raw capture file retrieved from ~/.openclaw/revenium-sidecar-capture.jsonl
+### (verbatim, 4 lines, 2 turns x 2 hooks each):
+{"hook":"after_tool_call","capturedAt":"2026-09-24T14:39:04.678Z","runId":"0b163999-9cac-4562-8afa-cae58a72f5ba","toolCallId":"toolu_019Pnq2JvtNSNC4nemR7nWrY","toolName":"exec","sessionKey":"agent:dev:explicit:spike008sidecar3","agentId":"dev","hasResult":true,"durationMs":4556}
+{"hook":"llm_output","capturedAt":"2026-09-24T14:39:07.401Z","runId":"0b163999-9cac-4562-8afa-cae58a72f5ba","sessionId":"spike008sidecar3","sessionKey":"agent:dev:explicit:spike008sidecar3","agentId":"dev","provider":"anthropic","model":"claude-sonnet-4-6","resolvedRef":"anthropic/claude-sonnet-4-6","usage":{"input":151,"output":188,"cacheRead":15291,"cacheWrite":15440,"total":31070,"cost":{"total":0}},"contextTokenBudget":1000000}
+{"hook":"after_tool_call","capturedAt":"2026-09-24T14:40:55.079Z","runId":"e046c710-89ab-4497-bc45-e56388b80546","toolCallId":"toolu_01CGVArrYwHt5oUH2VzB1nar","toolName":"exec","sessionKey":"agent:dev:explicit:spike008sidecar4","agentId":"dev","hasResult":true,"durationMs":3357}
+{"hook":"llm_output","capturedAt":"2026-09-24T14:40:57.473Z","runId":"e046c710-89ab-4497-bc45-e56388b80546","sessionId":"spike008sidecar4","sessionKey":"agent:dev:explicit:spike008sidecar4","agentId":"dev","provider":"anthropic","model":"claude-sonnet-4-6","resolvedRef":"anthropic/claude-sonnet-4-6","usage":{"input":151,"output":183,"cacheRead":29230,"cacheWrite":1503,"total":31067,"cost":{"total":0}},"contextTokenBudget":1000000}
+### FIDELITY VERDICT vs D-02 fields, this pairing:
+###   - per-completion token usage: RECOVERABLE, full fidelity. llm_output.usage
+###     carries input/output/cacheRead/cacheWrite/total/cost — matches candidate
+###     (a)'s transcript_events.event_json usage object field-for-field.
+###   - model id: RECOVERABLE. llm_output.provider + .model + .resolvedRef, all
+###     verbatim ("anthropic" / "claude-sonnet-4-6" / "anthropic/claude-sonnet-4-6").
+###   - toolCalls: RECOVERABLE for name/id/duration/result-presence/error-flag.
+###     after_tool_call captured toolName=exec, toolCallId, hasResult=true,
+###     durationMs on both turns; event.error was undefined on both (no tool-level
+###     error occurred on either turn — a real negative result, not a gap). Argument
+###     values and result content were deliberately NEVER captured by this plugin
+###     (T-17-05) — present in candidate (a)'s raw DB row and candidate (b)'s
+###     export-trajectory bundle, but out of scope for this sidecar by design.
+###   - session parentage: NOT CAPTURED. Neither the llm_output event/ctx nor the
+###     after_tool_call event/ctx carries a parent-session-key/spawned-by field —
+###     confirmed against the live .d.ts (PluginHookLlmOutputEvent,
+###     PluginHookAgentContext, PluginHookAfterToolCallEvent, PluginHookToolContext
+###     — none of the four types has a parent/spawned-by property). This is a real,
+###     load-bearing fidelity gap for candidate (c) AS SCOPED by this task (exactly
+###     `llm_output` + `after_tool_call`, no other hook): a sidecar answering
+###     session parentage would additionally need `subagent_spawned`/
+###     `subagent_ended` (out of this task's registered-hook scope; see acceptance
+###     criteria "registers no other hook"). Recorded as an honest gap, not
+###     inferred or worked around.
+###   - B-05 check (does after_tool_call fire for the exec-routing path that
+###     historically bypassed before_tool_call on Nemotron): NOT APPLICABLE to this
+###     pairing — B-05 is Nemotron-specific (`tool_search_code` routing); this
+###     pairing runs Claude, whose `exec` tool call fires `after_tool_call` cleanly
+###     as shown above (2/2 turns). The Nemotron cell below answers B-05 itself.
+###
+### ================================================================================
+### PAIRING: SANDBOX (revenium-2-0) — NemoClaw/OpenShell path
+### ================================================================================
+### NOT RUN — sandbox unavailable. `nemoclaw revenium-2-0 status` returns exit 1
+### with Phase: Error (confirmed live, 2026-09-24, immediately before this task's
+### work began: "Sandbox 'revenium-2-0' is stuck in 'Error' phase... Run
+### `nemoclaw revenium-2-0 start` to restart the crashed container"). Per
+### 17-SANDBOX-BLOCKER.md, this is a pre-existing, operator-owned recovery item —
+### not attempted, not routed around via `docker exec`, per the binding's explicit
+### prohibitions. Recorded as an open question, not a PARTIAL or a FAIL:
+###   - Sidecar built, installed, and provenance-confirmed on this pairing: NOT RUN
+###   - per-completion token usage on this pairing: NOT RUN
+###   - model id on this pairing: NOT RUN
+###   - toolCalls on this pairing: NOT RUN
+###   - session parentage on this pairing: NOT RUN
+###   - B-05 check (after_tool_call firing for Nemotron's tool_search_code-routed
+###     exec calls): NOT RUN — this is the single most consequential unrun cell in
+###     this file, since B-05 is a known, already-tracked limitation and this
+###     sidecar was the first candidate positioned to test it directly.
+### The plan's must_have "installed via `openclaw plugins install` on both
+### pairings and `openclaw plugins inspect` reports provenance on each" is
+### therefore UNMET. See fidelity-matrix.md and README.md for the explicit
+### unmet-bar statement — this file does not weaken or paper over that gap.
