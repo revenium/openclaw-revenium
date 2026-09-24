@@ -1,0 +1,266 @@
+Spike 008 (SPIKE-01, candidate (b)) — CLI surface output, per cell.
+Host: 52.90.9.242. Date: 2026-09-24.
+Versions in effect: HOST-LOCAL standalone OpenClaw 2026.9.6 (eb377ac); SANDBOX NemoClaw
+v0.0.128-managed OpenClaw 2026.9.1 (ad6fe23). Source:
+.planning/spikes/007-live-2-0-host-provisioning/versions-resolved.txt.
+
+Prompt text and assistant/tool message bodies below are redacted ([REDACTED-TEXT]) per
+D-12/T-17-05 wherever a surface's raw output contained them verbatim; every other field
+(structural keys, counts, model ids, tool names, status/exit codes, byte sizes, timings,
+schema field names) is verbatim, trimmed where noted.
+
+================================================================================
+CELL HOST-LOCAL — standalone path (OpenClaw 2026.9.6)
+Agent under test: "dev" (the CLI's own registered default agent — see the load-bearing
+CLI-agent-registry finding below). Session key agent:dev:main, sessionId
+c50833a3-3b91-4111-8a79-9dbcd8d294d3, one real turn with one `exec` tool call.
+================================================================================
+
+--- LOAD-BEARING FINDING: candidate (b)'s CLI surfaces are agent-registry-scoped, not
+filesystem-scoped ---
+Command: openclaw sessions list --json   (no --agent flag)
+Raw output:
+  {"path":"/home/ubuntu/.openclaw/agents/dev/agent/openclaw-agent.sqlite","count":0,
+   "totalCount":0,"limitApplied":100,"hasMore":false,"activeMinutes":null,"sessions":[]}
+Command: openclaw sessions list --agent main --json
+Raw output:
+  {"ok":false,"error":{"type":"cli_error","message":"Unknown agent id \"main\". Run
+   openclaw agents list to see configured agents."}}
+Command: openclaw sessions list --store $HOME/.openclaw/agents/main/agent/openclaw-agent.sqlite --json
+Raw output:
+  {"ok":false,"error":{"type":"cli_error","message":"SQLite session store path belongs
+   to agent main; requested agent dev."}}
+Command: openclaw agents list
+Raw output: "Agents:\n- dev (default)\n  Identity: [REDACTED-TEXT]\n  Workspace:
+  ~/.openclaw/workspace-dev\n  Agent dir: ~/.openclaw/agents/dev/agent\n  Routing
+  rules: 0\n  Routing: default (no explicit rules)"
+INTERPRETATION: this CLI installation only has "dev" registered as a queryable agent
+  (its own default). The "main" agent's SQLite store — the one candidate (a) reads
+  directly and the one spike 007's tracer turn used — is on disk, is correctly
+  identified by the CLI as belonging to agent "main" when pointed at with --store, but
+  is UNREACHABLE via `sessions list`/`sessions tail`/`export-trajectory` because those
+  commands require --agent to name a REGISTERED agent id, and "main" (created ad hoc via
+  `openclaw agent --agent main --local ...`, never through `openclaw agents add`) is not
+  one. This is a genuine fidelity gap unique to candidate (b): candidate (a)'s direct
+  SQLite read has no such registry dependency — it reads whatever store file exists on
+  disk regardless of CLI agent-registry state. To exercise candidate (b) against real
+  data, this probe drove a fresh turn against "dev" (the CLI's actually-registered
+  default agent) instead, documented below.
+
+--- SURFACE 1: sessions list --json ---
+Command: openclaw sessions list --agent dev --json
+Raw output:
+  {
+    "path": "/home/ubuntu/.openclaw/agents/dev/agent/openclaw-agent.sqlite",
+    "count": 1, "totalCount": 1, "limitApplied": 100, "hasMore": false,
+    "activeMinutes": null,
+    "sessions": [{
+      "key": "agent:dev:main", "updatedAt": 1790230393079, "ageMs": 90956,
+      "sessionId": "c50833a3-3b91-4111-8a79-9dbcd8d294d3",
+      "sessionStartedAt": 1790230335400, "lastInteractionAt": 1790230393076,
+      "visibility": "shared", "abortedLastRun": false,
+      "inputTokens": 151, "outputTokens": 186, "totalTokens": 15834,
+      "totalTokensFresh": true, "totalTokensVersion": 1,
+      "model": "claude-sonnet-4-6", "modelProvider": "anthropic",
+      "contextTokens": 1000000, "agentId": "dev", "acpRuntime": false,
+      "agentRuntime": {"id": "openclaw", "source": "session"}, "kind": "direct"
+    }]
+  }
+FIDELITY VERDICT vs D-02 fields:
+  - token usage: SESSION-LEVEL AGGREGATE ONLY (inputTokens/outputTokens/totalTokens summed
+    across the whole session, confirmed live) — matches RESEARCH.md's doc-derived claim
+    exactly. NOT per-completion. Fails the zero-loss bar on its own.
+  - model id: present (model, modelProvider — session-level, not per-completion).
+  - toolCalls: ABSENT. No toolCall name/arguments/result/error/duration field anywhere in
+    this surface's output.
+  - session parentage: ABSENT from this payload (no parent/spawned-by field on the
+    session object itself, confirming RESEARCH.md's doc-derived claim).
+
+--- SURFACE 2: sessions tail ---
+Command: openclaw sessions tail --agent dev --session-key agent:dev:main --tail 20
+Raw output (verbatim, this surface's own designed redaction — not this probe's redaction):
+  06:12:53 session.started  agent:dev:main                 session started
+  06:12:53 trace.metadata   agent:dev:main
+  06:12:54 context.compiled agent:dev:main                 context compiled (61 tools)
+  06:12:54 prompt.submitted agent:dev:main                 prompt submitted
+  06:13:00 tool.call        agent:dev:main                 exec {...redacted...}
+  06:13:08 tool.result      agent:dev:main                 exec ok
+  06:13:11 model.completed  agent:dev:main                 anthropic/claude-sonnet-4-6 done
+  06:13:11 trace.artifacts  agent:dev:main
+  06:13:13 session.ended    agent:dev:main                 success
+FIDELITY VERDICT: CONFIRMED LIVE — matches RESEARCH.md's documented redaction claim
+  verbatim. The tool-call line shows the literal placeholder `{...redacted...}` in place
+  of arguments; the tool-result line shows only `exec ok` (no output content, no
+  exitCode/duration). No token usage numbers, no model-level detail beyond the bare
+  model name on the `model.completed` line, no toolCall arguments/result. This surface
+  FAILS the D-02 zero-loss bar by design, confirmed live, exactly as documented.
+
+--- SURFACE 3: sessions export-trajectory (unattended, non-TTY) ---
+Command: timeout 30 openclaw sessions export-trajectory --agent dev --session-key agent:dev:main --json < /dev/null
+Raw output:
+  {
+    "outputDir": "/home/ubuntu/.openclaw/trajectory-exports/openclaw-trajectory-c50833a3-2026-09-24T06-15-36",
+    "displayPath": ".openclaw/trajectory-exports/openclaw-trajectory-c50833a3-2026-09-24T06-15-36",
+    "sessionId": "c50833a3-3b91-4111-8a79-9dbcd8d294d3",
+    "eventCount": 19, "runtimeEventCount": 9, "transcriptEventCount": 10,
+    "files": ["manifest.json","events.jsonl","session-branch.json","tools.json",
+              "metadata.json","artifacts.json","prompts.json"]
+  }
+  EXIT=0
+APPROVAL-GATE FINDING (RESEARCH.md Open Question 4, decisive): SUCCEEDED. Invoked with
+  stdin redirected from /dev/null, under an explicit `timeout 30`, no TTY attached,
+  never through the `/export-trajectory` slash command. Completed in well under the 30s
+  window with exit code 0 and zero prompts. The docs' "after the owner approves the exec
+  request" language describes the `/export-trajectory` slash-command UI flow, NOT a
+  gate on the underlying CLI command invoked directly — a direct, unattended,
+  non-interactive CLI invocation is NOT gated on owner approval on this build.
+FIDELITY of the exported bundle (inspected, then deleted after this probe per hygiene —
+  the export writes full plaintext conversation content to
+  ~/.openclaw/trajectory-exports/, mode 700 dir):
+  - events.jsonl (19 events: session.model_change, session.thinking_level_change,
+    session.started, trace.metadata, session.custom, context.compiled, prompt.submitted,
+    user.message, assistant.message x2, tool.call x2, tool.result x2, session.custom x2,
+    model.completed, trace.artifacts, session.ended) carries FULL, UNREDACTED per-message
+    `usage` objects (input/output/cacheRead/cacheWrite/totalTokens/cost/contextUsage) on
+    every assistant.message and on model.completed (both per-call `usage` and an
+    aggregate run-level `usage`), FULL model/provider/responseModel fields, FULL toolCall
+    arguments (the `tool.call` event's `arguments`/`args` object, not a placeholder), and
+    FULL tool.result content/details (status, exitCode, exitSignal, exitReason,
+    durationMs, aggregated output text, cwd) — joinable by toolCallId across tool.call
+    and tool.result exactly as in candidate (a)'s transcript_events rows. Prompt text and
+    assistant text ARE present verbatim in this export (model.completed even carries a
+    full `messagesSnapshot` array) — this probe redacts those values in this write-up per
+    T-17-05, but they are NOT redacted in the export itself.
+  - metadata.json/tools.json carry harness/model/config/tool-schema detail, with the
+    CLI's own `[Truncated]`/`trajectory-depth-limit` truncation applied to deeply-nested
+    config values (plugin credentials, browser-tool enum lists) — a size/depth guard, not
+    a privacy redaction; nothing user-conversation-related is truncated.
+FIDELITY VERDICT vs D-02 fields: RECOVERABLE, full fidelity, matching candidate (a)
+  exactly — per-completion token usage (both per-call and aggregate), model id
+  (provider+model+responseModel), toolCalls (name, arguments, result, error via isError/
+  exitCode, duration via durationMs) all present and joinable. This is the single
+  strongest candidate-(b) surface on the D-02 fidelity bar; its earlier documented
+  approval-gate risk did not materialize on this build for direct CLI invocation.
+
+--- SURFACE 4: doctor --session-sqlite inspect --session-sqlite-all-agents --json ---
+Command: openclaw doctor --session-sqlite inspect --session-sqlite-all-agents --json
+Raw output (trimmed to structure, full per-agent block shown for one representative agent):
+  {
+    "mode": "inspect",
+    "targets": [
+      {"agentId":"dev","sqlitePath":".../agents/dev/agent/openclaw-agent.sqlite",
+       "sqliteEntries":1,"issues":[],
+       "dbStats":{"dbSizeBytes":712704,"integrityCheck":"ok",
+         "largestSessions":[{"events":10,"rowBytes":5563,
+           "sessionId":"c50833a3-3b91-4111-8a79-9dbcd8d294d3"}],
+         "totalTranscriptRowBytes":5563,"walSizeBytes":0}},
+      {"agentId":"main","sqlitePath":".../agents/main/agent/openclaw-agent.sqlite",
+       "sqliteEntries":1,"issues":[],
+       "dbStats":{"dbSizeBytes":1085440,"integrityCheck":"ok",
+         "largestSessions":[{"events":45,"rowBytes":50031,
+           "sessionId":"73f57495-1725-4ae7-8ef7-bb4608a501e9"}],
+         "totalTranscriptRowBytes":50031,"walSizeBytes":0}}
+    ],
+    "totals":{"sqliteEntries":2,"targets":2,"issues":0}
+  }
+NOTABLE: unlike sessions list/tail/export-trajectory, this surface DISCOVERS BOTH "dev"
+  AND "main" on disk — it is filesystem-scoped, not CLI-agent-registry-scoped, matching
+  candidate (a)'s reach and NOT sharing the registry gap documented above.
+FIDELITY VERDICT vs D-02 fields: NOT RECOVERABLE for per-completion detail — this surface
+  is aggregate/structural diagnostics only (event counts, byte sizes, integrity check,
+  the single largest session's id+size). No per-message token usage, no model id, no
+  toolCalls, no session-parentage field anywhere in the output. Confirms RESEARCH.md's
+  characterization: "a migration-diagnostics surface, not an ongoing telemetry feed."
+
+================================================================================
+CELL SANDBOX (revenium-2-0) — NemoClaw/OpenShell path (OpenClaw 2026.9.1)
+Agent under test: "main" (the SANDBOX's own registered default agent — unlike
+HOST-LOCAL, "main" IS the CLI-registered default here; a real cross-cell config
+difference, not a bug). Session key agent:main:main, sessionId
+92d5ab49-f175-494a-ba5a-f4a595bca303 — one of the three FAILED session shells from
+Task 1's AUTH_PROFILE_MIGRATION_REQUIRED finding (no real completion exists in this
+cell — carried forward from probe-sqlite-direct.sh's SSHFS-cell finding, not
+rediscovered here).
+================================================================================
+
+--- SURFACE 1: sessions list --json ---
+Command: nemoclaw revenium-2-0 exec --timeout 60 -- sh -lc "openclaw sessions list --agent main --json"
+Raw output:
+  {
+    "path": "/sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite",
+    "count": 1, "totalCount": 1, "limitApplied": 100, "hasMore": false,
+    "activeMinutes": null,
+    "sessions": [{
+      "key": "agent:main:main", "updatedAt": 1790229671148, "ageMs": 1074553,
+      "sessionId": "92d5ab49-f175-494a-ba5a-f4a595bca303",
+      "sessionStartedAt": 1790229670512, "lastInteractionAt": 1790229670512,
+      "status": "failed", "visibility": "shared",
+      "participants": [{"identity":{"type":"observation","pluginId":null,
+        "accountId":null,"senderKind":"unknown","id":"cli"}}],
+      "participantCount": 1, "abortedLastRun": false,
+      "totalTokens": null, "totalTokensFresh": false,
+      "model": "nvidia/nemotron-3-super-120b-a12b", "modelProvider": "inference",
+      "contextTokens": 131072, "agentId": "main", "acpRuntime": false,
+      "agentRuntime": {"id":"auto","source":"implicit"}, "kind": "direct"
+    }]
+  }
+SUCCEEDED (fast). Confirms Task 1's finding directly through the CLI surface: `status:
+  "failed"`, `totalTokens: null` — this session never completed a turn.
+FIDELITY VERDICT: NOT APPLICABLE this run (no completed session to grade) — the surface
+  itself is reachable and functioning over the sandbox's SQLite store; there is simply
+  nothing behind it yet.
+
+--- SURFACE 2: sessions tail ---
+Command: nemoclaw revenium-2-0 exec --timeout 60 -- sh -lc "openclaw sessions tail --agent main --session-key agent:main:main --tail 20"
+Raw output: (empty — zero lines printed)
+SUCCEEDED (fast, exit clean), but trivially — zero trajectory events exist for a session
+  that never produced a model call. Not evidence the surface itself is broken; consistent
+  with `status: "failed"` / zero transcript_events (Task 1).
+
+--- SURFACE 3: sessions export-trajectory (unattended, non-TTY) ---
+Command: nemoclaw revenium-2-0 exec --timeout 40 -- sh -lc "timeout 30 openclaw sessions export-trajectory --agent main --session-key agent:main:main --json < /dev/null; echo EXIT=\$?"
+Raw output: (no stdout/JSON at all — only the exec wrapper's own
+  "[sqlite/transaction] slow SQLite transaction hold" log line)
+  EXIT=124 (the inner `timeout 30` fired — the command did not return within 30s)
+APPROVAL-GATE FINDING for this cell: INCONCLUSIVE, NOT "hang-on-approval" — this hit the
+  SAME systemic contention this sandbox exhibits for every fresh CLI process opening the
+  live-gateway-owned SQLite store (see Task 1's AUTH_PROFILE_MIGRATION_REQUIRED finding
+  and the "another OpenClaw process owns gateway-lifecycle" StateDatabaseCoordinatorContentionError
+  from the doctor --fix attempt). This is NOT evidence of an owner-approval gate on
+  export-trajectory specifically — HOST-LOCAL's export-trajectory (cell above) proved the
+  mechanism itself has no approval gate when run against a healthy store. Recorded as-is,
+  not generalized to "export-trajectory hangs" — that claim is refuted by the HOST-LOCAL
+  cell's own clean, fast, exit-0 result on the same command.
+
+--- SURFACE 4: doctor --session-sqlite inspect --session-sqlite-all-agents --json ---
+Command: nemoclaw revenium-2-0 exec --timeout 50 -- sh -lc "timeout 40 openclaw doctor --session-sqlite inspect --session-sqlite-all-agents --json < /dev/null; echo EXIT=\$?"
+Raw output: (no stdout/JSON — only the exec wrapper's own proxy-routing log line)
+  EXIT=124 (the inner `timeout 40` fired)
+Same systemic-contention caveat as Surface 3 above — this sandbox's live gateway process
+  appears to hold a lock/lifecycle ownership that blocks maintenance-adjacent CLI reads
+  (`doctor --session-sqlite inspect`, `export-trajectory`) from a second, freshly-spawned
+  CLI process, while lighter reads (`sessions list`, `sessions tail`) succeed quickly.
+  This distinction — some surfaces fast, others hanging, on the identical sandbox — is
+  itself the load-bearing finding for this cell, and is flagged for Phase 22's NemoClaw-
+  path work as a real operational characteristic of this sandbox generation
+  (NemoClaw v0.0.128 / OpenClaw 2026.9.1), independent of SPIKE-01's read-path ranking.
+
+================================================================================
+Per-surface summary — which of the four D-02 fields can/cannot each surface deliver
+================================================================================
+sessions list --json:            usage(session-aggregate only) + model id. NOT toolCalls,
+                                  NOT session parentage. Requires the queried agent id to
+                                  be CLI-registered (HOST-LOCAL-only gap; not seen in
+                                  SANDBOX where "main" is the registered default).
+sessions tail:                   NONE of the four fields at useful fidelity — redacts
+                                  tool arguments/results by design, no usage numbers.
+                                  Confirmed live, matches docs exactly.
+export-trajectory:                ALL FOUR fields, full fidelity, confirmed live —
+                                  succeeded unattended/non-TTY with no approval gate on a
+                                  healthy store (HOST-LOCAL); inconclusive on the
+                                  contended SANDBOX store this run.
+doctor session-sqlite inspect:    NONE of the four fields — aggregate diagnostics only
+                                  (event/row counts, integrity, byte sizes). Filesystem-
+                                  scoped (sees both "dev" and "main" on HOST-LOCAL,
+                                  unlike the other three surfaces); hung on the
+                                  contended SANDBOX store this run.
