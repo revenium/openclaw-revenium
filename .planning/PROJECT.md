@@ -28,24 +28,34 @@ Phase 12 (Parallel Install Scaffolding & Detection) complete (2026-06-07): a thi
 
 ## Current Milestone: v2.0 OpenClaw 2.0 Cut-Over
 
-**Goal:** Move the Revenium skill onto OpenClaw 2.0 across both install paths before a runtime upgrade silently voids another hook contract — and, where 2.0 offers real lifecycle hooks, replace the agent-written-marker workarounds with them.
+**Goal:** Move the Revenium skill onto OpenClaw 2.0 (CalVer `2026.8.1`+) across both install paths, restoring the metering read path that 2.0's move to SQLite session storage breaks — and establish, on a live host, whether marker-writing can be made deterministic instead of model-dependent.
 
 **Target features:**
-- **Establish the 2.0 facts** — confirm OpenClaw 2.0 exists and what changed: plugin/hook API, skill format, CLI surface, session/config layout, and whether NemoClaw supports it
-- **Standalone path on 2.0** — `install.sh` → `post-install.sh`, enforcement plugin, cron metering loop, all green on 2.0
-- **NemoClaw/OpenShell path on 2.0** — sandbox provisioning, host-side metering loop over SSHFS, `before_prompt_build` plugin, skill deploy
-- **Attribution core** — replace agent-written markers + AGENTS.md injection with code-side classification **if and only if** 2.0's hooks support it; otherwise port as-is and say so plainly
+- **Live-host fact-finding spike (must be first)** — on a real 2.0 host: establish the actual session read mechanism and whether it sustains per-minute cron polling; probe live hook-firing per model; return a written yes/no on the `command-dispatch: tool` lead
+- **SQLite session read path** — port `report.sh`, `common.sh`, and `get-root-session-id.py` off direct JSONL parsing onto 2.0's per-agent SQLite store. The milestone's centerpiece; nearly everything else depends on it
+- **Standalone path on 2.0** — `install.sh` → `post-install.sh`, enforcement plugin, cron metering loop, all green
+- **NemoClaw/OpenShell path on 2.0** — sandbox provisioning, host-side metering loop, `before_prompt_build` plugin, skill deploy
+- **Plugin 2.0 compliance** — set the new `allowPromptInjection` permission in both install scripts; rebuild and diff the committed `dist/` against 2.0's SDK. (The mandatory `openclaw.plugin.json` manifest is **already present** in `plugin/` and `plugin-nemoclaw/` — verified 2026-09-23 against the repo, resolving a STACK.md/ARCHITECTURE.md disagreement in ARCHITECTURE.md's favour. No manifest work needed.)
+- **Version floor + refusal** — hard-refuse OpenClaw below `2026.8.1`, matching the existing explicit-refusal convention (never a silent no-op)
 - **Version canaries** — a smoke check that fails loudly when a runtime upgrade voids a hook contract
 - **Hard HALT validation** — budget-breach → hard HALT proven end-to-end live (the one v1.4 behavior never proven)
-- **ClawHub release** — cut a release carrying v1.4/v1.4.1/post-ship fixes + 2.0 support; rebuild the NemoClaw plugin
+- **ClawHub release** — cut a release carrying v1.4/v1.4.1/post-ship fixes + 2.0 support; rebuild the NemoClaw plugin. Last phase, with post-publish clean-install verification as its own exit criterion
 
-**Support posture:** **2.0 only.** CalVer (`2026.x`) support is dropped, not dual-maintained — this is the breaking change that makes it v2.0 rather than v1.5.
+**Support posture:** Hard floor **`>= 2026.8.1`**. Corrected post-research: "OpenClaw 2.0" is a marketing nickname for CalVer release `2026.8.1` (2026-08-30), **not** a semver major — CalVer continues past it (`2026.9.6` current). The original "drop CalVer" framing was wrong; there is no scheme change to cut over from, and a `"2."`-prefix version check would be a bug. Gate on the numeric CalVer.
 
-**Driver:** Proactive, not breakage. Nothing is known-broken on 2.0 today; this gets ahead of the drift that produced the 2026.6.6 `before_agent_finalize` revise veto and B-05.
+**Driver:** Proactive, not breakage. Gets ahead of the drift that produced the 2026.6.6 `before_agent_finalize` revise veto and B-05.
 
-**Proof bar:** Live on a clean host — fresh clone → install → enforcement gates → metering → `guardrail-status.json` flowing, on a host actually running 2.0. A 2.0 host must be provisioned. The v1.4 lesson stands: "marked shipped" and "works on a clean host" are different things.
+**Proof bar:** Live on a clean host running 2.0 — fresh clone → install → enforcement gates → metering → `guardrail-status.json` flowing. Per research, *every* phase touching install/gate scripts carries its own live clean-host verification rather than deferring to one final UAT phase. The v1.4 lesson generalized: "marked shipped" and "works on a clean host" are different things.
 
-**Open risk:** If 2.0 does not exist yet, or NemoClaw does not support it, the milestone shrinks. Research answers that before requirements are written.
+**Attribution core — decision (revised post-research):** 2.0's lifecycle hooks are **observe-only** and cannot derive semantic task-type/job classification, so the original "replace the marker architecture with real hooks" plan does **not** apply. Default is port-as-is. However, research surfaced a new unproven lead — the `command-dispatch: tool` SKILL.md frontmatter field — which could make marker-writing *deterministic* rather than model-judgment-dependent, attacking B-05 from a different angle. **Timeboxed spike in the fact-finding phase; scope the change in only if it validates.** The runtime port and any attribution change stay in strictly separate phase groups with a green checkpoint between them (rewrite-under-migration is a named pitfall).
+
+**Key risks:**
+- **SQLite session-store break (highest impact).** 2.0 moved sessions from per-agent JSONL to per-agent SQLite (`openclaw-agent.sqlite`); OpenClaw no longer writes `.jsonl` under `~/.openclaw/agents/`. The skill's entire metering read path parses JSONL directly. This fails **open** — it would silently meter nothing rather than crash. The replacement read mechanism is **not yet established**: upstream bug #155696 shows `session_end` hook payloads carry no messages and point at nonexistent JSONL, and a plausible-sounding `openclaw sessions export` command was researched and found **not to exist**. Resolving this is the fact-finding phase's first job.
+- **NemoClaw support is fresh, not proven.** v0.0.128 (2026-09-22) is the first confirmed build provisioning a 2.0-generation OpenClaw — days old. Its concurrent lifecycle-ownership changes (0.0.127/0.0.128) mean `post-install-nemoclaw.sh`'s `nemoclaw exec -- openclaw ...` sequence needs re-verification. (The earlier risk that NemoClaw might not support 2.0 at all is **retired**.)
+- **The 2026.6.6 finalize-revise veto is NOT confirmed fixed** — related issue #128314 is open, fix PR #147611 unmerged. Keep the `before_prompt_build` per-turn injection mitigation; do not plan to retire it.
+- **Environment traps:** Node floor raised to 24.16+/26.1+ (NemoClaw base-image risk); the `extended-stable` npm dist-tag is still pre-2.0 at `2026.7.35`; the npm package named `nemoclaw` is an unrelated squat (NVIDIA ships a shell installer).
+
+**Research basis:** `.planning/research/` — STACK, FEATURES, ARCHITECTURE, PITFALLS, SUMMARY (2026-09-23). All four researchers independently converged on the SQLite break and on live-host-spike-first sequencing.
 
 ### Next Milestone Goals (candidates)
 
@@ -161,4 +171,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-23 — milestone **v2.0 OpenClaw 2.0 Cut-Over** started. Moves both install paths onto OpenClaw 2.0 (CalVer `2026.x` support dropped), conditionally replaces the agent-written-marker attribution core with real 2.0 lifecycle hooks, and carries three parked items: version canaries, a ClawHub release, and live budget-breach → hard HALT validation. Proof bar is a clean host running 2.0.*
+*Last updated: 2026-09-23 — milestone **v2.0 OpenClaw 2.0 Cut-Over** started, then **revised after research**. Three approved premises were overturned: "2.0" is a CalVer nickname for `2026.8.1` (not a semver major, so the posture is a hard floor `>= 2026.8.1`, not "drop CalVer"); 2.0 hooks are observe-only and cannot replace the marker architecture (port as-is, with a timeboxed `command-dispatch: tool` spike); and NemoClaw does support 2.0 (that risk retired). Research also surfaced the milestone centerpiece nobody asked for: 2.0 moved session storage from JSONL to SQLite, breaking the metering read path fail-open.*

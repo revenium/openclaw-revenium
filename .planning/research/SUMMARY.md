@@ -16,7 +16,7 @@ Recommended approach (convergent across all four researchers): spike first, port
 ## Key Findings
 
 ### Recommended Stack
-Target `openclaw >= 2026.8.1` (not the `extended-stable` dist-tag, still at `2026.7.35`). Node floor raises to `>=24.16.0 <25` or `>=26.1.0`. `openclaw.plugin.json` manifest is now mandatory per-plugin (STACK.md and ARCHITECTURE.md disagree on whether it already exists in this repo — resolve via direct repo check at Phase 1). `openclaw/plugin-sdk/plugin-entry` import remains valid. NemoClaw CLI `>=v0.0.128` (2026-09-22) is the first confirmed 2.0-generation-qualified build — very recent, treat as freshly-qualified not battle-tested.
+Target `openclaw >= 2026.8.1` (not the `extended-stable` dist-tag, still at `2026.7.35`). Node floor raises to `>=24.16.0 <25` or `>=26.1.0`. `openclaw.plugin.json` manifest is now mandatory per-plugin. **RESOLVED 2026-09-23 by direct repo check (orchestrator):** both `plugin/openclaw.plugin.json` and `plugin-nemoclaw/openclaw.plugin.json` already exist — ARCHITECTURE.md was correct, STACK.md's "missing, hard load failure" claim was wrong. No manifest work is required; do not carry this as a Phase 1 open question. `openclaw/plugin-sdk/plugin-entry` import remains valid. NemoClaw CLI `>=v0.0.128` (2026-09-22) is the first confirmed 2.0-generation-qualified build — very recent, treat as freshly-qualified not battle-tested.
 
 ### Expected Features
 **Must have:** session read path ported off JSONL; version target corrected to `>=2026.8.1` with numeric-floor refusal; `openclaw doctor --fix` added to install/upgrade; hook re-registration re-verified (incl. new `allowPromptInjection` gate); NemoClaw 2.0-line support confirmed; live-host version canary (not hermetic).
