@@ -204,3 +204,7 @@ None beyond what the plan's `user_setup` already specified (the operator-provisi
 *Phase: 17-live-host-fact-finding-spike*
 *Plan: 01*
 *Completed: 2026-09-24*
+
+## Self-Check: PASSED
+
+All 7 files created (provision-2-0-host.sh, README.md, provision-run.log, versions-resolved.txt, tracer-turn-readback.txt, revenium-egress-check.txt, 17-01-SUMMARY.md) verified present on disk. All 6 commits (85c7b09, 5962241, b99244e, 665fc25, 70b1e65, 1dec3bf) verified present in git log.
