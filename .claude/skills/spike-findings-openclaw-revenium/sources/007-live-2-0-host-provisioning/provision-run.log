@@ -1,0 +1,120 @@
+==================================================
+ Spike 007 — Live 2.0 host provisioning (standalone path)
+==================================================
+
+Host: Linux ip-172-31-40-178 7.0.0-1006-aws #6-Ubuntu SMP PREEMPT Tue May 26 12:04:34 UTC 2026 x86_64 GNU/Linux
+--------------------------------------------------
+Swap                               ✓ already present (8G)
+sshfs                              ✓ already installed (fusermount3 version: 3.18.2)
+OpenClaw                           ✓ already installed
+OpenClaw                           ✓ OpenClaw 2026.9.6 (eb377ac) (>= 2026.8.1)
+Node.js                            ✓ v24.21.0 (satisfies >=24.16.0 <25 || >=26.1.0)
+SQLite store                       ✓ readable read-only (mode=ro, busy_timeout=5000) at /home/ubuntu/.openclaw/agents/main/agent/openclaw-agent.sqlite
+Docker                             ✓ installed and daemon reachable (29.8.1)
+--------------------------------------------------
+Summary: 7 pass, 0 warn, 0 fail
+
+VERDICT: COMPATIBLE — standalone path provisioned successfully.
+
+==================================================
+ Task 2 run — NemoClaw/OpenShell path added (2026-09-24)
+==================================================
+==================================================
+ Spike 007 — Live 2.0 host provisioning (standalone path)
+==================================================
+
+Host: Linux ip-172-31-40-178 7.0.0-1006-aws #6-Ubuntu SMP PREEMPT Tue May 26 12:04:34 UTC 2026 x86_64 GNU/Linux
+--------------------------------------------------
+Swap                               ✓ already present (8G)
+sshfs                              ✓ already installed (fusermount3 version: 3.18.2)
+OpenClaw                           ✓ already installed
+OpenClaw                           ✓ OpenClaw 2026.9.6 (eb377ac) (>= 2026.8.1)
+Node.js                            ✓ v24.21.0 (satisfies >=24.16.0 <25 || >=26.1.0)
+SQLite store                       ✓ readable read-only (mode=ro, busy_timeout=5000) at /home/ubuntu/.openclaw/agents/main/agent/openclaw-agent.sqlite
+Docker                             ✓ installed and daemon reachable (29.8.1)
+NemoClaw                           ✓ already installed (v0.0.128 >= v0.0.128)
+NemoClaw                           ✓ nemoclaw v0.0.128 (>= v0.0.128)
+NemoClaw sandbox                   ✓ revenium-2-0 is up
+NemoClaw sandbox OpenClaw          ✓ OpenClaw 2026.9.1 (ad6fe23)
+Egress preset                      ✓ revenium already applied
+Share mount                        ✓ already mounted and readable at /home/ubuntu/nemoclaw-revenium-2-0-mount
+In-sandbox SQLite store            ✓ found at /home/ubuntu/nemoclaw-revenium-2-0-mount/agents/main/agent/openclaw-agent.sqlite
+--------------------------------------------------
+Summary: 14 pass, 0 warn, 0 fail
+
+VERDICT: COMPATIBLE — standalone + NemoClaw paths provisioned successfully.
+
+==================================================
+ Task 2 fix-up run — in-sandbox path corrected to /sandbox/.openclaw/... (2026-09-24)
+==================================================
+==================================================
+ Spike 007 — Live 2.0 host provisioning (standalone path)
+==================================================
+
+Host: Linux ip-172-31-40-178 7.0.0-1006-aws #6-Ubuntu SMP PREEMPT Tue May 26 12:04:34 UTC 2026 x86_64 GNU/Linux
+--------------------------------------------------
+Swap                               ✓ already present (8G)
+sshfs                              ✓ already installed (fusermount3 version: 3.18.2)
+OpenClaw                           ✓ already installed
+OpenClaw                           ✓ OpenClaw 2026.9.6 (eb377ac) (>= 2026.8.1)
+Node.js                            ✓ v24.21.0 (satisfies >=24.16.0 <25 || >=26.1.0)
+SQLite store                       ✓ readable read-only (mode=ro, busy_timeout=5000) at /home/ubuntu/.openclaw/agents/main/agent/openclaw-agent.sqlite
+Docker                             ✓ installed and daemon reachable (29.8.1)
+NemoClaw                           ✓ already installed (v0.0.128 >= v0.0.128)
+NemoClaw                           ✓ nemoclaw v0.0.128 (>= v0.0.128)
+NemoClaw sandbox                   ✓ revenium-2-0 is up
+NemoClaw sandbox OpenClaw          ✓ OpenClaw 2026.9.1 (ad6fe23)
+Egress preset                      ✓ revenium already applied
+Share mount                        ✓ already mounted and readable at /home/ubuntu/nemoclaw-revenium-2-0-mount
+In-sandbox SQLite store            ✓ found at /sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite (host mount: /home/ubuntu/nemoclaw-revenium-2-0-mount/agents/main/agent/openclaw-agent.sqlite)
+--------------------------------------------------
+Summary: 14 pass, 0 warn, 0 fail
+
+VERDICT: COMPATIBLE — standalone + NemoClaw paths provisioned successfully.
+
+==================================================
+ Task 4 — official re-runnability proof (second full run, 2026-09-24)
+==================================================
+EXIT=0
+FAILLINES=0
+==================================================
+ Spike 007 — Live 2.0 host provisioning (standalone path)
+==================================================
+
+Host: Linux ip-172-31-40-178 7.0.0-1006-aws #6-Ubuntu SMP PREEMPT Tue May 26 12:04:34 UTC 2026 x86_64 GNU/Linux
+--------------------------------------------------
+Swap                               ✓ already present (8G)
+sshfs                              ✓ already installed (fusermount3 version: 3.18.2)
+OpenClaw                           ✓ already installed
+OpenClaw                           ✓ OpenClaw 2026.9.6 (eb377ac) (>= 2026.8.1)
+Node.js                            ✓ v24.21.0 (satisfies >=24.16.0 <25 || >=26.1.0)
+SQLite store                       ✓ readable read-only (mode=ro, busy_timeout=5000) at /home/ubuntu/.openclaw/agents/main/agent/openclaw-agent.sqlite
+Docker                             ✓ installed and daemon reachable (29.8.1)
+NemoClaw                           ✓ already installed (v0.0.128 >= v0.0.128)
+NemoClaw                           ✓ nemoclaw v0.0.128 (>= v0.0.128)
+NemoClaw sandbox                   ✓ revenium-2-0 is up
+NemoClaw sandbox OpenClaw          ✓ OpenClaw 2026.9.1 (ad6fe23)
+Egress preset                      ✓ revenium already applied
+Share mount                        ✓ already mounted and readable at /home/ubuntu/nemoclaw-revenium-2-0-mount
+In-sandbox SQLite store            ✓ found at /sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite (host mount: /home/ubuntu/nemoclaw-revenium-2-0-mount/agents/main/agent/openclaw-agent.sqlite)
+--------------------------------------------------
+Summary: 14 pass, 0 warn, 0 fail
+
+VERDICT: COMPATIBLE — standalone + NemoClaw paths provisioned successfully.
+
+==================================================
+ Task 4 — explicit-refusal / version-comparison helper probes (2026-09-24)
+==================================================
+$ bash provision-2-0-host.sh --version-check 2026.8.0 2026.8.1
+✗ version 2026.8.0 is below required 2026.8.1
+EXIT=1
+
+$ bash provision-2-0-host.sh --version-check 2026.8.9 2026.8.10
+✗ version 2026.8.9 is below required 2026.8.10
+EXIT=1
+(Naive lexical/prefix comparison would incorrectly accept this: "2026.8.9" > "2026.8.10" as
+strings, since '9' > '1' char-wise. sort -C -V based numeric comparison correctly rejects it.)
+
+$ bash provision-2-0-host.sh --version-check 2026.9.6 2026.8.1
+✓ 2026.9.6 >= 2026.8.1
+EXIT=0

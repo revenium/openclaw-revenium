@@ -83,10 +83,10 @@ Progress: [░░░░░░░░░░] 0%
 | 18 | Version Gate & Install Health | GATE-01..04 | Phase 17 |
 | 19 | Session Read Path & Root-Session Resolution | READ-01..04, PLUG-04 | Phases 17, 18 |
 | 20 | Plugin 2.0 SDK Compliance | PLUG-01, PLUG-02, PLUG-03, PLUG-05 | Phase 17 |
-| 21 | Attribution Dispatch Resolution (Contingent) | ATTR-01 (contingent on SPIKE-03 = yes) | Phases 19, 20 |
-| 22 | NemoClaw/OpenShell Path on 2.0 | NEMO-01..03 | Phases 19, 20, 21 |
+| 21 | ~~Attribution Dispatch Resolution~~ — REMOVED 2026-09-24 (SPIKE-03 = NO) | ATTR-01 moved to REQUIREMENTS.md Future Requirements | n/a |
+| 22 | NemoClaw/OpenShell Path on 2.0 | NEMO-01..03 | Phases 19, 20 |
 | 23 | Hard HALT & Version Canary Live Validation | HALT-01, CNRY-01..02 | Phases 19, 20, 22 |
-| 24 | ClawHub Release & Post-Publish Verification | REL-01..02 | Phases 18, 19, 20, 21, 22, 23 |
+| 24 | ClawHub Release & Post-Publish Verification | REL-01..02 | Phases 18, 19, 20, 22, 23 |
 
 ## v1.4 Phase Map
 
@@ -116,6 +116,7 @@ Recent decisions affecting current work:
 
 - [v2.0]: Roadmap created 2026-09-23 — 8 phases (17–24), 27 requirements mapped (26 committed + 1 contingent), 100% coverage. Phase 17 (live-host spike) blocks everything else. Phase 19 (session read path) and Phase 21 (attribution dispatch, contingent on SPIKE-03) are kept in strictly separate phase groups with a green checkpoint between them — avoids the "rewrite-under-migration" pitfall. PLUG-04 (root-session resolution hooks) bundled into Phase 19 since it overlaps the code READ-03 rewrites, not into the attribution phase.
 - [v2.0]: Target host for Phase 17: `52.90.9.242` (bare Ubuntu 26.04). The four AWS hosts used through v1.4 are dead and must not be planned against.
+- [v2.0]: SPIKE-03 verdict (2026-09-24, `.planning/spikes/010-command-dispatch-tool-verdict/README.md`): **NO — mechanism inapplicable to this call shape**. `command-dispatch: tool` does not achieve deterministic, model-free marker dispatch on OpenClaw 2026.9.6 for either a human-typed or agent-initiated trigger, on the standalone/Claude pairing (the only pairing fully tested). Consequence per D-06: ATTR-01 moved to REQUIREMENTS.md Future Requirements, Phase 21 removed from ROADMAP.md (no renumbering — 22/23/24 keep their numbers), and the existing agent-written-marker architecture ports as-is under Phase 20.
 - [v1.4]: Parallel install path only — NemoClaw path gates on Linux+Docker, explicitly refuses macOS; existing standalone path untouched
 - [v1.4]: Metering runs host-side over `nemoclaw share mount` — per-tick `exec` rejected (synchronous, hang-prone, accumulated process leaks)
 - [v1.4]: Per-turn guardrail directive delivered via OpenClaw `before_prompt_build` plugin — `skill install` + AGENTS.md do not deliver it in-sandbox (spike 005 confirmed)

@@ -69,9 +69,7 @@ The milestone centerpiece. 2.0 moved sessions from per-agent JSONL to per-agent 
 
 ### Contingent
 
-- [ ] **ATTR-01** *(contingent on SPIKE-03 returning yes)*: Marker-writing dispatches deterministically via `command-dispatch: tool` rather than depending on model judgment
-
-If SPIKE-03 returns no, ATTR-01 moves to Future Requirements and the marker architecture ports as-is. This requirement is deliberately sequenced **after** the session-read-path checkpoint so a rewrite never lands on top of an unproven migration.
+*(None active.)* The sole contingent requirement, ATTR-01, resolved 2026-09-24: SPIKE-03 returned **NO — mechanism inapplicable to this call shape** (`.planning/spikes/010-command-dispatch-tool-verdict/README.md`). Per its own stated contingency, ATTR-01 has moved to `## Future Requirements` → `### Attribution`, and the existing marker architecture ports as-is under Phase 20.
 
 ## Future Requirements
 
@@ -80,7 +78,7 @@ Deferred. Tracked but not in this roadmap.
 ### Attribution
 
 - **JCLASS-01**: LLM `on_session_end` classifier plugin for automatic job/task inference
-- **ATTR-01**: (moves here if SPIKE-03 returns no)
+- **ATTR-01**: Marker-writing dispatches deterministically via `command-dispatch: tool` rather than depending on model judgment. **Moved here 2026-09-24** — SPIKE-03 returned **NO — mechanism inapplicable to this call shape**: `command-dispatch: tool` does not achieve deterministic, model-free dispatch on OpenClaw 2026.9.6, for either a human-typed or an agent-initiated trigger, on the standalone/Claude pairing (the only pairing fully tested). Source: `.planning/spikes/010-command-dispatch-tool-verdict/README.md`. The existing agent-written-marker architecture ports as-is under Phase 20.
 
 ### Metering Depth
 
@@ -128,7 +126,7 @@ Deferred. Tracked but not in this roadmap.
 | PLUG-02 | Phase 20 | Pending |
 | PLUG-03 | Phase 20 | Pending |
 | PLUG-05 | Phase 20 | Pending |
-| ATTR-01 | Phase 21 | Pending (contingent on SPIKE-03 = yes) |
+| ATTR-01 | — (moved to Future Requirements) | Deferred — SPIKE-03 = NO, 2026-09-24, see `010-command-dispatch-tool-verdict/README.md` |
 | NEMO-01 | Phase 22 | Pending |
 | NEMO-02 | Phase 22 | Pending |
 | NEMO-03 | Phase 22 | Pending |
@@ -139,11 +137,11 @@ Deferred. Tracked but not in this roadmap.
 | REL-02 | Phase 24 | Pending |
 
 **Coverage:**
-- v1 requirements: 27 total (26 committed + 1 contingent) — corrected from the initial 26/25 count during roadmap creation, which undercounted by one
-- Mapped to phases: 27/27 ✓
+- v1 requirements: 26 total, all committed — reduced from 27 (26 committed + 1 contingent) on 2026-09-24 when SPIKE-03 returned NO and ATTR-01 moved to Future Requirements (see `### Contingent` above)
+- Mapped to phases: 26/26 ✓
 - Unmapped: 0 ✓
-- Phases: 8 (Phases 17–24, continuing from v1.4's Phase 16)
+- Phases: 7 (Phases 17–20, 22–24, continuing from v1.4's Phase 16; Phase 21 removed 2026-09-24 per SPIKE-03's NO verdict)
 
 ---
 *Requirements defined: 2026-09-23*
-*Last updated: 2026-09-23 — traceability populated during roadmap creation (Phases 17–24), coverage corrected to 27/27*
+*Last updated: 2026-09-24 — SPIKE-03 returned NO (see `.planning/spikes/010-command-dispatch-tool-verdict/README.md`): ATTR-01 moved from Contingent to Future Requirements, coverage reduced to 26/26*
