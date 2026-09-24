@@ -173,3 +173,19 @@ None. Credentials continue to be sourced from the host-side `/home/ubuntu/.spike
 *Phase: 17-live-host-fact-finding-spike*
 *Plan: 03*
 *Completed: 2026-09-24*
+
+## Self-Check: PASSED
+
+All 7 spike artifacts (probe-sqlite-direct.sh, schema-capture.sql.txt, sample-rows.txt,
+probe-cli-surfaces.sh, cli-surface-output.txt, probe-session-id-resolution.sh,
+session-id-resolution.txt) plus this SUMMARY.md verified present on disk. All 4 commits
+(2533e1c, c8855e3, 3ce1441, bbf0a8b) verified present in `git log`. Plan-level
+`<verification>` re-run: all three probe scripts pass `bash -n`; `schema-capture.sql.txt`
+contains 112 `CREATE TABLE` statements labelled per cell; `sample-rows.txt` carries both
+`CELL HOST-LOCAL` and `CELL SSHFS` blocks; `cli-surface-output.txt` matches all four
+required surface patterns 31 times across both cells; `session-id-resolution.txt` matches
+5 of the required `CANDIDATE [1-4]|RECOMMENDATION:` markers; a repository-wide grep for
+the synthetic marker strings and driven prompt text used during live probing
+(`SPIKE008_DEVTOOLCHECK`, `SPIKE008_TOOLCHECK`, `SPIKE007_OK`, "Use your shell/exec tool",
+"Reply with exactly", "The user wants me to run", "The user hasn't sent") returned no
+matches under `.planning/spikes/008-sqlite-session-read-path/`.
