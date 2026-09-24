@@ -316,18 +316,24 @@ else
 fi
 
 # ===========================================================================
-# GROUP G: GATE-01 gate precedes routing dispatch
+# GROUP G: GATE-01 gate precedes routing dispatch (STANDALONE branch)
 #
-#   Invokes install.sh with a below-floor OpenClaw stub on a NemoClaw-only
-#   HOME (Linux, no macOS refusal), and asserts the refusal fires BEFORE any
-#   provisioning side effect on either routing branch — none of the
-#   NemoClaw-path markers the existing GROUPs match on ("preflight",
-#   "Phase 13", "nemoclaw path") appear in the output.
+#   RESTATED (18-05) onto the standalone branch. This group originally
+#   invoked install.sh with a below-floor OpenClaw stub on a NemoClaw-only
+#   HOME and asserted the refusal fired on the NemoClaw branch — which
+#   encoded the defect recorded as 18-VERIFICATION.md gap #1 / 18-REVIEW.md
+#   CR-01 (the host gate must NOT fire on the NemoClaw branch; the NemoClaw
+#   arm's OpenClaw/Node run inside the OpenShell sandbox and are
+#   independently versioned). The group's real intent — the gate fires
+#   before any provisioning dispatch on the branch that actually reads the
+#   host binaries — is preserved, not dropped: it is restated here onto the
+#   standalone branch, the only branch that still consults
+#   require_openclaw_version/require_node_version after 18-05.
 # ===========================================================================
 echo ""
-echo "--- GROUP G: GATE-01 gate precedes routing dispatch (NemoClaw branch) ---"
+echo "--- GROUP G: GATE-01 gate precedes routing dispatch (standalone branch) ---"
 
-TMP_HOME_G=$(make_home nemoclaw)
+TMP_HOME_G=$(make_home openclaw)
 
 exit_code_g=0
 output_g=$(STUB_UNAME_S="Linux" \
@@ -336,9 +342,9 @@ output_g=$(STUB_UNAME_S="Linux" \
     bash "${INSTALL_SH}" 2>&1) || exit_code_g=$?
 
 if [[ "${exit_code_g}" -ne 0 ]]; then
-  pass "GROUP-G: below-floor OpenClaw exits non-zero on the NemoClaw branch"
+  pass "GROUP-G: below-floor OpenClaw exits non-zero on the standalone branch"
 else
-  fail "GROUP-G: below-floor OpenClaw exited 0 on the NemoClaw branch (exit=${exit_code_g})"
+  fail "GROUP-G: below-floor OpenClaw exited 0 on the standalone branch (exit=${exit_code_g})"
 fi
 
 if echo "${output_g}" | grep -qF "2026.8.1"; then
@@ -347,10 +353,85 @@ else
   fail "GROUP-G: output does not contain required floor 2026.8.1"
 fi
 
-if echo "${output_g}" | grep -qi "preflight\|Phase 13\|nemoclaw path"; then
-  fail "GROUP-G: NemoClaw-path marker present — gate did not fire before provisioning dispatch"
+if echo "${output_g}" | grep -qF "Routing to standalone install path"; then
+  fail "GROUP-G: 'Routing to standalone install path' present — gate did not fire before provisioning dispatch"
 else
-  pass "GROUP-G: no NemoClaw-path marker present — gate fired before any provisioning side effect"
+  pass "GROUP-G: standalone routing marker correctly absent — gate fired before any provisioning side effect"
+fi
+
+# ===========================================================================
+# GROUP G-2: below-floor HOST OpenClaw no longer blocks the NemoClaw branch
+#
+#   Counterpart to restated GROUP G, pinning the new contract: a below-floor
+#   HOST OpenClaw must not refuse a NemoClaw-routed install, because that
+#   branch's runtime floor is enforced in-sandbox by
+#   gate_sandbox_runtime_versions (scripts/post-install-nemoclaw.sh), not by
+#   the host-level gate this plan scoped away from this branch.
+# ===========================================================================
+echo ""
+echo "--- GROUP G-2: below-floor host OpenClaw no longer blocks the NemoClaw branch ---"
+
+TMP_HOME_G2=$(make_home nemoclaw)
+
+exit_code_g2=0
+output_g2=$(STUB_UNAME_S="Linux" \
+    STUB_OPENCLAW_VERSION_OUTPUT="OpenClaw 2026.7.1 (deadbee)" \
+    HOME="${TMP_HOME_G2}" \
+    bash "${INSTALL_SH}" --nemoclaw 2>&1) || exit_code_g2=$?
+
+if echo "${output_g2}" | grep -qi "preflight\|Phase 13\|nemoclaw path"; then
+  pass "GROUP-G-2: NemoClaw-path marker found despite below-floor host OpenClaw"
+else
+  fail "GROUP-G-2: NemoClaw-path marker NOT found — a below-floor host OpenClaw is still blocking the NemoClaw branch"
+fi
+
+if echo "${output_g2}" | grep -qF "Checking runtime versions"; then
+  fail "GROUP-G-2: 'Checking runtime versions' present — host version gate fired on the NemoClaw branch"
+else
+  pass "GROUP-G-2: 'Checking runtime versions' correctly absent on the NemoClaw branch"
+fi
+
+# ===========================================================================
+# GROUP I: standalone counterpart to GROUP H — an absent (not just
+#   below-floor) host OpenClaw/Node must still refuse on the standalone
+#   branch. Proves scoping the gate did not delete it: the same
+#   host-binary-absent configuration that must PASS through to NemoClaw
+#   routing (GROUP H) must still REFUSE on the standalone branch.
+# ===========================================================================
+echo ""
+echo "--- GROUP I: no host openclaw at all -- standalone branch still refuses ---"
+
+TMP_HOME_I=$(make_home openclaw)
+TMP_BIN_I=$(mktemp -d "${TMPDIR:-/tmp}/test-inst-bin.XXXXXX")
+TMP_HOMES+=("${TMP_BIN_I}")
+
+exit_code_i=0
+output_i=$(RUN_INSTALL_NO_VERSION_STUBS=1 \
+    RUN_INSTALL_PATH="${TMP_BIN_I}:/usr/bin:/bin" \
+    run_install "Linux" "${TMP_HOME_I}") || exit_code_i=$?
+
+if [[ "${exit_code_i}" -ne 0 ]]; then
+  pass "GROUP-I: no host openclaw/node exits non-zero on the standalone branch"
+else
+  fail "GROUP-I: no host openclaw/node exited 0 on the standalone branch (exit=${exit_code_i})"
+fi
+
+if echo "${output_i}" | grep -qF "Checking runtime versions"; then
+  pass "GROUP-I: 'Checking runtime versions' present on the standalone branch"
+else
+  fail "GROUP-I: 'Checking runtime versions' NOT found — gate did not run on the standalone branch"
+fi
+
+if echo "${output_i}" | grep -qF "2026.8.1"; then
+  pass "GROUP-I: output names the required floor 2026.8.1"
+else
+  fail "GROUP-I: output does not contain required floor 2026.8.1"
+fi
+
+if echo "${output_i}" | grep -qF "Routing to standalone install path"; then
+  fail "GROUP-I: 'Routing to standalone install path' present — gate did not fire before provisioning dispatch"
+else
+  pass "GROUP-I: standalone routing marker correctly absent — gate fired before any provisioning side effect"
 fi
 
 # ===========================================================================
@@ -407,9 +488,19 @@ echo ""
 echo "NOTE: This test FAILS RED before plan 02 creates scripts/install.sh."
 echo "      Routing/refusal/idempotency groups all FAIL until install.sh exists."
 echo "      Goes GREEN when plan 02 implements the dispatcher + NemoClaw skeleton."
-echo "      GROUPs A-F, standalone-intact, G: 14 groups total (Phase 18 plan 18-01"
-echo "      added the version-gate defaults in run_install(), renamed the former"
-echo "      byte-stable GROUP to standalone-intact, and added GROUP G)."
+echo "      GROUPs A-F, standalone-intact, G, G-2, I, H (Phase 18 plan 18-01 added"
+echo "      the version-gate defaults in run_install() and GROUP G; plan 18-05"
+echo "      scoped the host version gate to the standalone branch only, closing"
+echo "      18-VERIFICATION.md gap #1 / 18-REVIEW.md CR-01. GROUP G was RESTATED"
+echo "      onto the standalone branch (it previously encoded the defect); GROUP"
+echo "      G-2 pins that a below-floor host OpenClaw no longer blocks the"
+echo "      NemoClaw branch; GROUPs H and I are the branch-scoped"
+echo "      host-binary-ABSENT pair — H proves NemoClaw routing is reached with"
+echo "      no host openclaw/node at all, I proves the standalone branch still"
+echo "      refuses that same configuration. Version-gate assertions"
+echo "      (G/G-2/H/I) are branch-scoped as of this gap-closure pass; the"
+echo "      gate's own pass/fail comparison logic is covered by"
+echo "      tests/test_version_gate.sh, not here."
 if [[ "${FAIL}" -gt 0 ]]; then
   exit 1
 fi
