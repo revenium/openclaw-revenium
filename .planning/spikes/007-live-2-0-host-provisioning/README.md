@@ -2,8 +2,8 @@
 spike: 007
 name: live-2-0-host-provisioning
 type: standard
-validates: "Given a live OpenClaw 2.0 host, when the standalone install path is provisioned by an idempotent script and one real agent turn is run, then the turn's completion is readable back out of the 2.0 SQLite session store"
-verdict: PARTIAL
+validates: "Given a live OpenClaw 2.0 host, when both production install paths are provisioned by an idempotent script, one real agent turn is run, and the api.revenium.ai egress preset is exercised with a real key, then the turn's completion is readable back out of the 2.0 SQLite session store, both paths coexist, the script is provably re-runnable and refuses below-floor versions, and the egress preset is confirmed working"
+verdict: VALIDATED
 related: [001, 004]
 tags: [infra, install, openclaw-2-0, sqlite, provisioning]
 host: "52.90.9.242 (bare Ubuntu 26.04 LTS, x86_64, no GPU)"
@@ -13,13 +13,15 @@ host: "52.90.9.242 (bare Ubuntu 26.04 LTS, x86_64, no GPU)"
 
 ## What This Validates
 
-Given a live, reproducibly-provisioned OpenClaw 2.0 host, when the standalone OpenClaw + Docker
-install path is brought up by `provision-2-0-host.sh` and one real agent turn is completed with a
-real Anthropic key, then that turn's completion is readable back out of the 2.0 SQLite session
-store — the end-to-end proof that the apparatus every downstream v2.0 phase depends on actually
-works. This determination currently covers **Task 1 (standalone path + tracer turn) only**; the
-NemoClaw/OpenShell path (Task 2), the `api.revenium.ai` egress confirmation (Task 3), and the
-re-runnability + explicit-refusal proof (Task 4) are tracked below as **not yet run**.
+Given a live, reproducibly-provisioned OpenClaw 2.0 host, when both production install paths
+(standalone OpenClaw + Docker, and NemoClaw/OpenShell) are brought up by `provision-2-0-host.sh`,
+one real agent turn is completed with a real Anthropic key, the `api.revenium.ai` egress preset is
+exercised with a real Revenium key, and the script is re-run against the already-provisioned host,
+then: the turn's completion is readable back out of the 2.0 SQLite session store, both paths
+coexist on one host with their versions recorded separately, the egress preset is confirmed
+working, and the second run exits 0 with zero install actions while the version-comparison helper
+correctly refuses below-floor versions. All four tasks are complete — see `## Results` below for
+the full evidence set.
 
 ## Research
 
@@ -330,7 +332,90 @@ OpenClaw `2026.9.1 (ad6fe23)`, revenium CLI `1.5.0 (0f5f3a7)`.
 **Scope discipline:** exactly one read-only API call was made; no meter transaction was submitted;
 no tick/cron script in this repo references `REVENIUM_API_KEY` as a result of this spike.
 
-### Re-runnability + explicit-refusal proof (Task 4) — not yet run
+### Evidence triplet — re-runnability (D-14) and explicit-refusal proof
+
+**Command:**
+```bash
+ssh -i ~/.ssh/hermes-sandbox.pem ubuntu@52.90.9.242 'bash ~/provision-2-0-host.sh'
+```
+**Raw output** (full second run against the already-fully-provisioned host; see `provision-run.log`
+"Task 4 — official re-runnability proof" section):
+```
+Swap                               ✓ already present (8G)
+sshfs                              ✓ already installed (fusermount3 version: 3.18.2)
+OpenClaw                           ✓ already installed
+OpenClaw                           ✓ OpenClaw 2026.9.6 (eb377ac) (>= 2026.8.1)
+Node.js                            ✓ v24.21.0 (satisfies >=24.16.0 <25 || >=26.1.0)
+SQLite store                       ✓ readable read-only (mode=ro, busy_timeout=5000) at /home/ubuntu/.openclaw/agents/main/agent/openclaw-agent.sqlite
+Docker                             ✓ installed and daemon reachable (29.8.1)
+NemoClaw                           ✓ already installed (v0.0.128 >= v0.0.128)
+NemoClaw                           ✓ nemoclaw v0.0.128 (>= v0.0.128)
+NemoClaw sandbox                   ✓ revenium-2-0 is up
+NemoClaw sandbox OpenClaw          ✓ OpenClaw 2026.9.1 (ad6fe23)
+Egress preset                      ✓ revenium already applied
+Share mount                        ✓ already mounted and readable at /home/ubuntu/nemoclaw-revenium-2-0-mount
+In-sandbox SQLite store            ✓ found at /sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite (host mount: ...)
+--------------------------------------------------
+Summary: 14 pass, 0 warn, 0 fail
+
+VERDICT: COMPATIBLE — standalone + NemoClaw paths provisioned successfully.
+```
+**Interpretation:** every one of the 9 floors/steps this script covers (swap, sshfs, standalone
+OpenClaw, Node, SQLite-store readability, Docker, NemoClaw, sandbox status, egress preset, share
+mount — 14 pass lines across those checks) printed a detection-gated `✓ already ...` line and
+performed **zero install actions** — D-14's re-runnability bar. Exit code 0, zero `✗` fail lines.
+
+**Command (explicit-refusal probe):**
+```bash
+bash provision-2-0-host.sh --version-check 2026.8.0 2026.8.1   # below-floor
+bash provision-2-0-host.sh --version-check 2026.8.9 2026.8.10  # naive-comparison trap
+bash provision-2-0-host.sh --version-check 2026.9.6 2026.8.1   # passing case
+```
+**Raw output:**
+```
+✗ version 2026.8.0 is below required 2026.8.1
+EXIT=1
+
+✗ version 2026.8.9 is below required 2026.8.10
+EXIT=1
+
+✓ 2026.9.6 >= 2026.8.1
+EXIT=0
+```
+**Interpretation:** the version-comparison helper (`version_ge`, built on `sort -C -V`) correctly
+refuses a below-floor version, naming both the detected and required version, and — the harder
+case — correctly rejects `2026.8.9` against a `2026.8.10` floor even though a naive
+lexical/string-prefix comparison would get this backwards (`"2026.8.9" > "2026.8.10"` as ASCII
+strings, since `'9' > '1'` character-wise). This is the explicit-refusal, numeric-CalVer-based
+convention D-14 requires, proven against the exact edge case that breaks naive implementations.
+**Host:** 52.90.9.242. **Date:** 2026-09-24.
+
+### The three explicit provisioning findings (Task 4)
+
+1. **RAM/swap gap.** The host has 7.7 GiB RAM and 0 swap at first boot — below NemoClaw's
+   documented ~8 GB floor. `provision-2-0-host.sh` adds an 8 GB `/swapfile` as its first,
+   detection-gated step (`swapon --show` gates re-runs). Without this remedy the NemoClaw sandbox
+   build would run with insufficient memory headroom.
+2. **No GPU.** `nvidia-smi` is absent on this host; both pairings route inference to the cloud —
+   standalone path to the Anthropic API, NemoClaw/OpenShell path to NVIDIA's cloud endpoint
+   (`nvidia/nemotron-3-super-120b-a12b` via `inference.local` → NVIDIA cloud, confirmed in the
+   `nemoclaw revenium-2-0 status` output's `Inference: healthy` line). Neither production pairing
+   this project supports requires local GPU hardware.
+3. **The two paths resolved to different OpenClaw versions (D-15), as expected.** Standalone:
+   `2026.9.6 (eb377ac)` (the officially "latest" resolution of `openclaw.ai/install.sh`).
+   NemoClaw-managed: `2026.9.1 (ad6fe23)` (bundled by NemoClaw `v0.0.128`). These are NOT
+   normalized to match — Phase 18's gate and Phase 22's NemoClaw work both inherit two,
+   independently-versioned OpenClaw runtimes on the same host.
+
+### RESEARCH.md's A1 assumption — corrected, not confirmed, by the live host
+
+RESEARCH.md's Assumption A1 stated NemoClaw `v0.0.128` "bundles managed images with OpenClaw
+`2026.9.1`" and flagged it `[ASSUMED — websearch synthesis, not independently confirmed]`. The
+live host **confirms the bundling claim exactly** (`v0.0.128` → in-sandbox OpenClaw `2026.9.1`) —
+but only once `v0.0.128` was explicitly installed via `NEMOCLAW_INSTALL_TAG`. The live host
+**corrects** an implicit premise A1 did not call out: that the documented non-interactive
+installer's plain "latest" resolution would land on `v0.0.128` by default. It does not — it
+resolved to `v0.0.124` (OpenClaw `2026.7.1`, pre-2.0) until explicitly pinned (Finding 4).
 
 ## Reusable Facts Captured So Far
 
@@ -359,3 +444,25 @@ no tick/cron script in this repo references `REVENIUM_API_KEY` as a result of th
   (written against v0.0.55) are no longer recognized (Finding 5).
 - A share mount surviving in `mount` output does not mean it is live after a sandbox rebuild —
   verify with a real filesystem access, not just mount-table presence (Finding 6).
+
+## Reusable Facts For Phases 18-24 (scannable closing block)
+
+| Fact | Standalone path | NemoClaw/OpenShell path |
+|---|---|---|
+| Resolved OpenClaw version | `2026.9.6 (eb377ac)` | `2026.9.1 (ad6fe23)` (via NemoClaw `v0.0.128`) |
+| Session-store path | `~/.openclaw/agents/main/agent/openclaw-agent.sqlite` | `/sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite` |
+| agentId | `main` | `main` |
+| Node version | `v24.21.0` | n/a (sandbox-internal) |
+| Docker version | `29.8.1` | managed by NemoClaw's own installer |
+
+- **Sandbox name:** `revenium-2-0`
+- **Host-side share mount point:** `~/nemoclaw-revenium-2-0-mount` → in-sandbox `/sandbox/.openclaw`
+- **Mode-600 credential file:** `/home/ubuntu/.spike-17.env` (spike-scoped; delete at teardown;
+  future phases should provision their own and pass it via `CREDENTIAL_ENV_FILE`)
+- **NemoClaw pin required:** `NEMOCLAW_INSTALL_TAG=v0.0.128` (documented installer default resolves
+  below this floor as of 2026-09-24 — re-check whether NVIDIA has since promoted a newer
+  maintained-lkg release before assuming this override is still necessary)
+- **`api.revenium.ai` egress preset:** confirmed working (authenticates through Revenium's
+  validation layer); the account behind the spike's real key needs an explicit
+  `--team-id`/`REVENIUM_TEAM_ID` not provisioned by this spike's `user_setup` — Phase 19+ work that
+  needs a full 200 response should provision one
