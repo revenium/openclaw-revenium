@@ -2,9 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: OpenClaw 2.0 Cut-Over
+current_phase: 17
+current_phase_name: Live-Host Fact-Finding Spike
 status: planning
-last_updated: "2026-09-23T23:59:00.000Z"
+stopped_at: Phase 17 context gathered
+last_updated: "2026-09-24T02:54:17.306Z"
 last_activity: 2026-09-23
+last_activity_desc: ROADMAP.md created for v2.0 OpenClaw 2.0 Cut-Over (Phases 17–24, 27/27 requirements mapped)
+state_head: 44c16995130bfd41db1ae6903d91e4bfbe791eaa
 progress:
   total_phases: 8
   completed_phases: 0
@@ -186,9 +191,9 @@ Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 ## Session Continuity
 
-Last session: 2026-09-23T23:59:00.000Z
-Stopped at: v2.0 ROADMAP.md + STATE.md written; awaiting roadmap approval
-Resume file: None
+Last session: 2026-09-24T02:54:17.292Z
+Stopped at: Phase 17 context gathered
+Resume file: .planning/phases/17-live-host-fact-finding-spike/17-CONTEXT.md
 
 ## Operator Next Steps
 
