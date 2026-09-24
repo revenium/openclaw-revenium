@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: OpenClaw 2.0 Cut-Over
 status: planning
-last_updated: "2026-09-24T01:07:02.645Z"
+last_updated: "2026-09-23T23:59:00.000Z"
 last_activity: 2026-09-23
 progress:
-  total_phases: 0
+  total_phases: 8
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,17 +17,19 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-07 after v1.4 milestone start)
+See: .planning/PROJECT.md (updated 2026-09-23 — v2.0 milestone started, revised after research)
 
 **Core value:** Agents never silently blow through token budgets — every turn is guardrail-checked and the user keeps control past a threshold — and **every cost-incurring activity** (agent completions, guardrail enforcement events, and tool invocations) is metered and attributed by root session, task type, and agentic job, so spend is fully observable in Revenium with no blind spots.
-**Current focus:** Milestone complete
+**Current focus:** Phase 17 — Live-Host Fact-Finding Spike
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-09-23 — Milestone v2.0 started
+Phase: 17 of 24 (Live-Host Fact-Finding Spike)
+Plan: — (not yet planned)
+Status: Roadmap created, ready to plan
+Last activity: 2026-09-23 — ROADMAP.md created for v2.0 OpenClaw 2.0 Cut-Over (Phases 17–24, 27/27 requirements mapped)
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
@@ -68,6 +70,19 @@ Last activity: 2026-09-23 — Milestone v2.0 started
 | Phase 16 P02 | 3 | 2 tasks | 2 files |
 | Phase 16 P03 | 120 | 2 tasks | 3 files |
 
+## v2.0 Phase Map
+
+| Phase | Name | Requirements | Depends on |
+|-------|------|--------------|------------|
+| 17 | Live-Host Fact-Finding Spike | SPIKE-00..04 | Nothing (first phase; continues from Phase 16) |
+| 18 | Version Gate & Install Health | GATE-01..04 | Phase 17 |
+| 19 | Session Read Path & Root-Session Resolution | READ-01..04, PLUG-04 | Phases 17, 18 |
+| 20 | Plugin 2.0 SDK Compliance | PLUG-01, PLUG-02, PLUG-03, PLUG-05 | Phase 17 |
+| 21 | Attribution Dispatch Resolution (Contingent) | ATTR-01 (contingent on SPIKE-03 = yes) | Phases 19, 20 |
+| 22 | NemoClaw/OpenShell Path on 2.0 | NEMO-01..03 | Phases 19, 20, 21 |
+| 23 | Hard HALT & Version Canary Live Validation | HALT-01, CNRY-01..02 | Phases 19, 20, 22 |
+| 24 | ClawHub Release & Post-Publish Verification | REL-01..02 | Phases 18, 19, 20, 21, 22, 23 |
+
 ## v1.4 Phase Map
 
 | Phase | Name | Requirements | Depends on |
@@ -94,6 +109,8 @@ Last activity: 2026-09-23 — Milestone v2.0 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [v2.0]: Roadmap created 2026-09-23 — 8 phases (17–24), 27 requirements mapped (26 committed + 1 contingent), 100% coverage. Phase 17 (live-host spike) blocks everything else. Phase 19 (session read path) and Phase 21 (attribution dispatch, contingent on SPIKE-03) are kept in strictly separate phase groups with a green checkpoint between them — avoids the "rewrite-under-migration" pitfall. PLUG-04 (root-session resolution hooks) bundled into Phase 19 since it overlaps the code READ-03 rewrites, not into the attribution phase.
+- [v2.0]: Target host for Phase 17: `52.90.9.242` (bare Ubuntu 26.04). The four AWS hosts used through v1.4 are dead and must not be planned against.
 - [v1.4]: Parallel install path only — NemoClaw path gates on Linux+Docker, explicitly refuses macOS; existing standalone path untouched
 - [v1.4]: Metering runs host-side over `nemoclaw share mount` — per-tick `exec` rejected (synchronous, hang-prone, accumulated process leaks)
 - [v1.4]: Per-turn guardrail directive delivered via OpenClaw `before_prompt_build` plugin — `skill install` + AGENTS.md do not deliver it in-sandbox (spike 005 confirmed)
@@ -110,6 +127,7 @@ Recent decisions affecting current work:
 
 ### Roadmap Evolution
 
+- Phases 17–24 added (2026-09-23): v2.0 OpenClaw 2.0 Cut-Over roadmap created. 8 phases consuming all 27 v2.0 requirements (26 committed + 1 contingent). Build basis: four independent researchers converged on spike-first, port-second, rewrite-third sequencing (`.planning/research/SUMMARY.md`). Phase 17 flagged as gating every other phase (live-host spike — session read mechanism, per-model hook matrix, command-dispatch:tool verdict). Phase 21 is explicitly contingent on Phase 17's SPIKE-03 finding.
 - Phases 12–16 added (2026-06-07): v1.4 NemoClaw/OpenShell Support roadmap created. 5 phases consuming all 10 v1.4 requirements. Build basis: 6 spikes proven on live host 34.224.27.67 (sandbox `revenium-spike`). Phase 15 flagged highest-risk (NCENF-01 `before_prompt_build` plugin — mechanism proven but hand-stub hung the turn).
 - Phase 11 added (2026-06-05): Structural Marker Enforcement via before_agent_finalize plugin — starts milestone v1.3 Reliable Attribution. Origin: live diagnosis on ClawHub host 98.82.34.123 showed the agent drops the end-of-turn marker gate even with AGENTS.md directives present. Research seed: `.planning/research/marker-enforcement-before-agent-finalize.md`.
 
@@ -127,9 +145,9 @@ Recent decisions affecting current work:
 
 ### Blockers/Concerns
 
-Phase 15 risk: NCENF-01 (`before_prompt_build` guardrail-directive plugin) is the highest-risk requirement. Spike 006 is PARTIAL — mechanism proven viable (nemoclaw plugin reaches every turn), but a hand-stubbed plugin hung the agent turn. Must author from `openclaw plugins init` official scaffold and validate on the live sandbox before merging. Plan this phase carefully.
+Phase 17 is the milestone's critical gate: SPIKE-01 (session read mechanism) is unresolved from documentation alone — an obvious hook fallback (`session_end`) is itself confirmed broken upstream (#155696), and a plausible-sounding `openclaw sessions export` command was researched and found not to exist. No Phase 19+ work should begin before Phase 17 returns written answers.
 
-Standing follow-up carried forward: Phase 9 live guardrail-halt E2E on host 172.16.1.247 (see Deferred Items) — needs a forced halt on the real host to confirm a GUARDRAIL transaction lands in Revenium.
+Standing follow-up carried forward: Phase 9 live guardrail-halt E2E on host 172.16.1.247 (see Deferred Items) — needs a forced halt on the real host to confirm a GUARDRAIL transaction lands in Revenium. (Superseded in intent by v2.0 Phase 23's HALT-01, which re-proves hard HALT on the new 2.0 host.)
 
 ## Deferred Items
 
@@ -168,10 +186,10 @@ Items acknowledged and deferred at v1.0 milestone close on 2026-06-03:
 
 ## Session Continuity
 
-Last session: 2026-06-11T19:11:44.213Z
-Stopped at: context exhaustion at 75% (2026-06-11)
+Last session: 2026-09-23T23:59:00.000Z
+Stopped at: v2.0 ROADMAP.md + STATE.md written; awaiting roadmap approval
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Review the v2.0 roadmap (Phases 17–24). Once approved: `/gsd-plan-phase 17` (Live-Host Fact-Finding Spike).

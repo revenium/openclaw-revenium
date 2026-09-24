@@ -7,10 +7,111 @@
 - ✅ **v1.2 Metering Completeness** — Phases 9–10 (shipped 2026-06-04)
 - ✅ **v1.3 Reliable Attribution** — Phase 11 (shipped 2026-06-05)
 - ✅ **v1.4 NemoClaw/OpenShell Support** — Phases 12–16 (shipped 2026-06-11, hardened through 2026-06-13)
-
-**No active milestone.** Run `/gsd-new-milestone` to scope the next one. Candidates: ClawHub release + NemoClaw plugin rebuild to adopt the job lifecycle, OpenClaw-version compatibility canaries, budget-breach → HALT validation on Nemotron, JCLASS-01 code-side classifier, GRDEV-F1, per-job-type budget rules. (See PROJECT.md → Next Milestone Goals.)
+- 🚧 **v2.0 OpenClaw 2.0 Cut-Over** — Phases 17–24 (in progress, started 2026-09-23)
 
 ## Phases
+
+**Phase Numbering:** Continuous across milestones (never restarts). Phase 17 is this milestone's first phase, continuing from v1.4's Phase 16.
+
+### 🚧 v2.0 OpenClaw 2.0 Cut-Over (In Progress)
+
+**Milestone Goal:** Move the Revenium skill onto OpenClaw `>= 2026.8.1` ("2.0" — a CalVer nickname, not a semver major) across both install paths, restoring the metering read path that 2.0's move to SQLite session storage breaks, and establishing on a live host whether marker-writing can be made deterministic instead of model-dependent.
+
+**Sequencing note:** Phase 17 is a live-host spike and must complete before any porting work — research could not resolve the session-read mechanism from documentation alone. Phase 19 (session read path) and Phase 21 (attribution dispatch, contingent) are kept in strictly separate phase groups with a green checkpoint between them, per the project's "rewrite-under-migration" pitfall. Every phase touching install/gate scripts (18, 19, 20, 22, 23, 24) carries its own live clean-host verification step rather than deferring to one final UAT phase — generalizing the v1.4 lesson that "marked shipped" and "works on a clean host" are different things.
+
+- [ ] **Phase 17: Live-Host Fact-Finding Spike** - Provision a real 2.0 host and resolve the session-read, hook-firing, and dispatch unknowns research couldn't answer
+- [ ] **Phase 18: Version Gate & Install Health** - Install refuses unsupported OpenClaw/Node versions explicitly and runs `doctor --fix`
+- [ ] **Phase 19: Session Read Path & Root-Session Resolution** - Port `report.sh`/`common.sh`/`get-root-session-id.py` off JSONL onto 2.0's SQLite session store
+- [ ] **Phase 20: Plugin 2.0 SDK Compliance** - Rebuild both plugins against 2.0's SDK with the new `allowPromptInjection` gate and current hook names
+- [ ] **Phase 21: Attribution Dispatch Resolution (Contingent)** - If SPIKE-03 validated it, make marker dispatch deterministic via `command-dispatch: tool`
+- [ ] **Phase 22: NemoClaw/OpenShell Path on 2.0** - Re-verify the NemoClaw install sequence and host-side metering loop on a freshly-provisioned 2.0 sandbox
+- [ ] **Phase 23: Hard HALT & Version Canary Live Validation** - Prove a real budget breach halts the agent and a broken hook is caught loudly, both live
+- [ ] **Phase 24: ClawHub Release & Post-Publish Verification** - Cut the release and verify the *published* artifact installs clean, not just the working tree
+
+## Phase Details
+
+### Phase 17: Live-Host Fact-Finding Spike
+**Goal**: Before any 2.0 porting work begins, establish ground truth on a live, reproducibly-provisioned 2.0 host — the actual session read mechanism, per-model hook behavior, and whether deterministic marker dispatch is viable — since documentation research could not resolve these. This phase is the milestone's true first task and gates every other requirement.
+**Depends on**: Nothing (first phase of this milestone; continues from Phase 16). Target host: `52.90.9.242` (bare Ubuntu 26.04, no openclaw/nemoclaw/docker — the four AWS hosts used through v1.4 are all dead and must not be planned against).
+**Requirements**: SPIKE-00, SPIKE-01, SPIKE-02, SPIKE-03, SPIKE-04
+**Success Criteria** (what must be TRUE):
+  1. A Linux host is provisioned and reproducible (OpenClaw `>=2026.8.1`, Node `>=24.16`, Docker, NemoClaw `>=v0.0.128`), with the provisioning steps recorded so the same state can be reached again.
+  2. Operator can read a written, evidence-backed determination of how the skill should read completions and toolCalls from the 2.0 SQLite session store.
+  3. Operator can read a per-model hook-firing matrix captured live, showing where model-dependent gaps (the B-05 class) exist before any porting begins.
+  4. Operator can read a yes/no verdict, with supporting evidence, on whether `command-dispatch: tool` makes marker-writing dispatch deterministic.
+  5. Operator can read a confirmation of whether the chosen SQLite read mechanism sustains per-minute cron polling without degrading the host.
+**Plans**: TBD
+
+### Phase 18: Version Gate & Install Health
+**Goal**: Installs on an unsupported runtime fail loudly and explicitly — matching the project's existing explicit-refusal convention (never a silent no-op) — before any provisioning proceeds.
+**Depends on**: Phase 17 (confirms the numeric CalVer floor and Node floor to gate on)
+**Requirements**: GATE-01, GATE-02, GATE-03, GATE-04
+**Success Criteria** (what must be TRUE):
+  1. Running install against an OpenClaw below `2026.8.1` stops with a message naming both the detected and required version, verified live on the Phase 17 host.
+  2. Running install against a Node runtime below 2.0's floor (`>=24.16 <25` or `>=26.1`) stops with an explicit refusal, verified live.
+  3. Version comparison is numeric-CalVer based, not a version-string prefix check — verified against a version string crafted to fool a naive prefix comparison.
+  4. Install runs `openclaw doctor --fix` and the operator sees its result before provisioning continues, verified live.
+**Plans**: TBD
+
+### Phase 19: Session Read Path & Root-Session Resolution
+**Goal**: The skill's metering read path is ported off direct JSONL parsing onto 2.0's SQLite session store, so completions, toolCalls, and root-session resolution work end-to-end instead of silently metering nothing. This is the milestone's centerpiece and the green checkpoint that must hold before any attribution-core work (Phase 21) begins.
+**Depends on**: Phase 17 (SPIKE-01/SPIKE-04 findings), Phase 18 (host passes the version gate)
+**Requirements**: READ-01, READ-02, READ-03, READ-04, PLUG-04
+**Success Criteria** (what must be TRUE):
+  1. A completion produced on the 2.0 host appears as a metered transaction in Revenium, verified live.
+  2. A tool call produced on the 2.0 host appears as a tool-event in Revenium, verified live.
+  3. Root-session resolution correctly attributes a subagent's activity to its root session on the 2.0 store, using `subagent_spawned`/`subagent_ended` hooks rather than cross-session marker-file resolution.
+  4. Pointing the skill at a session store it cannot read produces a visible, operator-facing failure rather than silent zero-metering.
+**Plans**: TBD
+
+### Phase 20: Plugin 2.0 SDK Compliance
+**Goal**: Both installed plugins (standalone + NemoClaw) load cleanly on 2.0's plugin SDK, with 2.0's new permission gate and current hook names wired in — no load errors, no stale prebuilt `dist/`. This ports the existing hook contract unchanged; it does not add new dispatch behavior (that's the contingent Phase 21).
+**Depends on**: Phase 17 (`allowPromptInjection` requirement confirmed live)
+**Requirements**: PLUG-01, PLUG-02, PLUG-03, PLUG-05
+**Success Criteria** (what must be TRUE):
+  1. Both plugins load on a 2.0 runtime without error, built from a rebuilt `dist/` diffed against 2.0's SDK output rather than the reused pre-2.0 build.
+  2. `allowPromptInjection` is set alongside `allowConversationAccess` in both install scripts' config patches, verified live via `plugins inspect`.
+  3. Operator can confirm, live on 2.0, that the per-turn guardrail directive is injected into every turn via `before_prompt_build` (the `before_prompt_build` mitigation itself is not being retired — the 2026.6.6 finalize-revise veto is not confirmed fixed).
+  4. Exec observation fires via `after_tool_call` on 2.0, confirmed live rather than assumed from docs.
+**Plans**: TBD
+
+### Phase 21: Attribution Dispatch Resolution (Contingent)
+**Goal**: If Phase 17's SPIKE-03 spike found that `command-dispatch: tool` makes marker-writing dispatch deterministic, implement it so classification no longer depends on model judgment. **Contingency: this phase executes only if SPIKE-03 returned yes.** If SPIKE-03 returned no, this phase is dropped entirely, ATTR-01 moves to REQUIREMENTS.md's Future Requirements section, and the existing marker architecture ports as-is (already covered by Phase 20).
+**Depends on**: Phase 19 (session read path green — the required checkpoint before any attribution-core change), Phase 20 (plugin hook contract confirmed stable on 2.0)
+**Requirements**: ATTR-01 (contingent on SPIKE-03 = yes)
+**Success Criteria** (what must be TRUE, only if this phase executes):
+  1. A task/job marker write dispatches deterministically via `command-dispatch: tool` rather than depending on the model choosing to comply, verified live.
+  2. Marker coverage (`verify-markers.sh`, completions-vs-markers) on the 2.0 host is at or above the reliability already achieved by the v1.3 `before_agent_finalize` gate — confirming the new dispatch mechanism doesn't regress coverage.
+**Plans**: TBD
+
+### Phase 22: NemoClaw/OpenShell Path on 2.0
+**Goal**: The NemoClaw/OpenShell install path works end-to-end against a freshly-provisioned 2.0-generation sandbox, re-verified against NemoClaw's own concurrent lifecycle changes (0.0.127/0.0.128) rather than assumed compatible.
+**Depends on**: Phase 19 (session store read path ported), Phase 20 (NemoClaw plugin 2.0-compliant), Phase 21 (if it executed, reflected in the deployed skill)
+**Requirements**: NEMO-01, NEMO-02, NEMO-03
+**Success Criteria** (what must be TRUE):
+  1. Installing against NemoClaw below `v0.0.128` is refused explicitly; installing against `v0.0.128+` provisions a 2.0-generation OpenClaw successfully, verified on a freshly-provisioned sandbox (not the reused `revenium-spike` host).
+  2. The `nemoclaw exec -- openclaw ...` call sequence in `post-install-nemoclaw.sh` completes successfully against 0.0.128's lifecycle-ownership model, verified live.
+  3. The host-side metering loop reads the 2.0 session store over the `nemoclaw share mount` SSHFS mount, and a completion produced in the sandbox appears in Revenium.
+**Plans**: TBD
+
+### Phase 23: Hard HALT & Version Canary Live Validation
+**Goal**: The two safety guarantees the project has never fully proven on a live host are demonstrated end-to-end: a real budget breach halts the agent, and drift in a depended-on hook is caught loudly rather than silently (the 2026.6.6-veto-class failure mode this milestone is proactively defending against).
+**Depends on**: Phase 19, Phase 20, Phase 22 (both install paths and all hook wiring must be live before validating halt/canary behavior against them)
+**Requirements**: HALT-01, CNRY-01, CNRY-02
+**Success Criteria** (what must be TRUE):
+  1. A real budget breach on a 2.0 host produces a hard HALT end-to-end, confirmed live — the one v1.4 behavior never proven.
+  2. Deliberately breaking a hook the skill depends on causes the version canary to fail loudly, verified on the live host.
+  3. The canary runs against the live 2.0 runtime (not mocks), and its failure reaches the operator rather than only a log line.
+**Plans**: TBD
+
+### Phase 24: ClawHub Release & Post-Publish Verification
+**Goal**: A ClawHub release ships carrying the full v1.4/v1.4.1/post-ship fix set plus 2.0 support, and the *published* artifact — not just the local working tree — is proven to install clean. Publishing is not the finish line; verifying the published artifact is.
+**Depends on**: Phase 18, Phase 19, Phase 20, Phase 21 (if it executed), Phase 22, Phase 23 — everything green
+**Requirements**: REL-01, REL-02
+**Success Criteria** (what must be TRUE):
+  1. A ClawHub release is published carrying all v1.4/v1.4.1/post-ship fixes plus 2.0 support, with the NemoClaw plugin rebuilt.
+  2. A clean install performed from the *published* release (not the local working tree) succeeds end-to-end on a fresh host, verified after publish.
+**Plans**: TBD
 
 <details>
 <summary>✅ v1.4 NemoClaw/OpenShell Support (Phases 12–16) — SHIPPED 2026-06-11 (+ v1.4.1 hardening + post-ship jobs/enforcement)</summary>
@@ -100,5 +201,13 @@ Full details archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.
 | 14. Host-Side Metering Loop | v1.4 | 3/3 | Complete | 2026-06-08 |
 | 15. Per-Turn Enforcement Plugin | v1.4 | 7/7 | Complete | 2026-06-10 |
 | 16. Skill Deploy & Docs | v1.4 | 3/3 | Complete | 2026-06-11 |
+| 17. Live-Host Fact-Finding Spike | v2.0 | 0/TBD | Not started | - |
+| 18. Version Gate & Install Health | v2.0 | 0/TBD | Not started | - |
+| 19. Session Read Path & Root-Session Resolution | v2.0 | 0/TBD | Not started | - |
+| 20. Plugin 2.0 SDK Compliance | v2.0 | 0/TBD | Not started | - |
+| 21. Attribution Dispatch Resolution (Contingent) | v2.0 | 0/TBD | Not started | - |
+| 22. NemoClaw/OpenShell Path on 2.0 | v2.0 | 0/TBD | Not started | - |
+| 23. Hard HALT & Version Canary Live Validation | v2.0 | 0/TBD | Not started | - |
+| 24. ClawHub Release & Post-Publish Verification | v2.0 | 0/TBD | Not started | - |
 
 _Full v1.4 phase details (goals, success criteria, plan breakdowns) archived in [`milestones/v1.4-ROADMAP.md`](milestones/v1.4-ROADMAP.md)._

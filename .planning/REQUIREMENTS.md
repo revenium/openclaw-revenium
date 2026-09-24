@@ -108,25 +108,42 @@ Deferred. Tracked but not in this roadmap.
 
 ## Traceability
 
-Populated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SPIKE-00..04 | TBD | Pending |
-| READ-01..04 | TBD | Pending |
-| GATE-01..04 | TBD | Pending |
-| PLUG-01..05 | TBD | Pending |
-| NEMO-01..03 | TBD | Pending |
-| CNRY-01..02 | TBD | Pending |
-| HALT-01 | TBD | Pending |
-| REL-01..02 | TBD | Pending |
-| ATTR-01 | TBD | Pending (contingent) |
+| SPIKE-00 | Phase 17 | Pending |
+| SPIKE-01 | Phase 17 | Pending |
+| SPIKE-02 | Phase 17 | Pending |
+| SPIKE-03 | Phase 17 | Pending |
+| SPIKE-04 | Phase 17 | Pending |
+| GATE-01 | Phase 18 | Pending |
+| GATE-02 | Phase 18 | Pending |
+| GATE-03 | Phase 18 | Pending |
+| GATE-04 | Phase 18 | Pending |
+| READ-01 | Phase 19 | Pending |
+| READ-02 | Phase 19 | Pending |
+| READ-03 | Phase 19 | Pending |
+| READ-04 | Phase 19 | Pending |
+| PLUG-04 | Phase 19 | Pending |
+| PLUG-01 | Phase 20 | Pending |
+| PLUG-02 | Phase 20 | Pending |
+| PLUG-03 | Phase 20 | Pending |
+| PLUG-05 | Phase 20 | Pending |
+| ATTR-01 | Phase 21 | Pending (contingent on SPIKE-03 = yes) |
+| NEMO-01 | Phase 22 | Pending |
+| NEMO-02 | Phase 22 | Pending |
+| NEMO-03 | Phase 22 | Pending |
+| HALT-01 | Phase 23 | Pending |
+| CNRY-01 | Phase 23 | Pending |
+| CNRY-02 | Phase 23 | Pending |
+| REL-01 | Phase 24 | Pending |
+| REL-02 | Phase 24 | Pending |
 
 **Coverage:**
-- v1 requirements: 26 total (25 committed + 1 contingent)
-- Mapped to phases: 0
-- Unmapped: 26 ⚠️
+- v1 requirements: 27 total (26 committed + 1 contingent) — corrected from the initial 26/25 count during roadmap creation, which undercounted by one
+- Mapped to phases: 27/27 ✓
+- Unmapped: 0 ✓
+- Phases: 8 (Phases 17–24, continuing from v1.4's Phase 16)
 
 ---
 *Requirements defined: 2026-09-23*
-*Last updated: 2026-09-23 after research-driven milestone revision*
+*Last updated: 2026-09-23 — traceability populated during roadmap creation (Phases 17–24), coverage corrected to 27/27*
