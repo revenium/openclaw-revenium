@@ -113,7 +113,12 @@ nemoclaw() {
     # wrapper. Do not "simplify" this back into a direct `nemoclaw "$@"` call.
     bounded_run "${_secs}" nemoclaw "$@" || _rc=$?
     if [[ "${_rc}" -eq 124 ]]; then
-        warn "nemoclaw call timed out after ${_secs}s (args: ${1:-} ${2:-} ...) — the in-sandbox gateway may be wedged. Try: nemoclaw ${SANDBOX_NAME:-<name>} recover, then re-run the install."
+        # CR-02: redirected to stderr — this function's stdout IS its return
+        # value at nearly every call site in this file (captured via command
+        # substitution), so this diagnostic on stdout would silently corrupt
+        # it. Mirrors scripts/version-gate.sh's openclaw_version_detected /
+        # require_node_version precedent for a stdout-captured function.
+        warn "nemoclaw call timed out after ${_secs}s (args: ${1:-} ${2:-} ...) — the in-sandbox gateway may be wedged. Try: nemoclaw ${SANDBOX_NAME:-<name>} recover, then re-run the install." >&2
     fi
     return "${_rc}"
 }
@@ -750,7 +755,7 @@ run_meter_probe() {
 gate_sandbox_runtime_versions() {
     step "Checking in-sandbox runtime versions"
 
-    local _rc=0 _raw _detected
+    local _rc=0 _raw _detected _node_detected
 
     _raw=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc "openclaw --version" 2>&1) || _rc=$?
     _detected=$(echo "${_raw}" | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+' | head -1 || true)
@@ -779,17 +784,31 @@ gate_sandbox_runtime_versions() {
     _rc=0
     _raw=$(nemoclaw "${SANDBOX_NAME}" exec -- sh -lc "node --version" 2>&1) || _rc=$?
 
-    if [[ -z "${_raw}" ]]; then
+    # CR-02/WR-03: extract a version pattern from _raw before comparing —
+    # load-bearing, not cosmetic. Both capture sites in this function wrap the
+    # nemoclaw call in `2>&1`, which applies to the shell FUNCTION and merges
+    # its stderr back into the captured value, so the stderr redirect on
+    # nemoclaw()'s warn calls above does NOT protect this site: bounded_run's
+    # own portable-mechanism disclosure (also emitted on stderr, also merged
+    # by this same `2>&1`) would otherwise land in `_raw` on any host without
+    # GNU `timeout` on PATH. Without this extraction, a wrapper diagnostic, a
+    # login-shell banner, or a sandbox MOTD could be handed to node_version_ok
+    # as if it were a version. Mirrors the OpenClaw check's own extraction
+    # three lines above, with the same `|| true` guard so a no-match cannot
+    # trip the caller's `set -e`.
+    _node_detected=$(echo "${_raw}" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+
+    if [[ -z "${_node_detected}" ]]; then
         warn "Could not determine the in-sandbox Node.js version, so the ${NODE_VERSION_FLOOR_TEXT} floor was NOT verified for sandbox '${SANDBOX_NAME}'. The in-sandbox OpenClaw already cleared its own version floor above."
-    elif ! node_version_ok "${_raw}"; then
+    elif ! node_version_ok "${_node_detected}"; then
         fail "In-sandbox Node.js version is outside the supported range.
 
-  Detected: ${_raw}
+  Detected: ${_node_detected}
   Required: ${NODE_VERSION_FLOOR_TEXT}
 
   Upgrade Node inside the sandbox before continuing."
     else
-        info "In-sandbox Node.js version: ${_raw}"
+        info "In-sandbox Node.js version: ${_node_detected}"
     fi
 }
 
