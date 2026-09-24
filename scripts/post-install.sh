@@ -44,6 +44,14 @@ command_exists() { command -v "$1" &>/dev/null; }
 
 # version_ge, node_version_ok, require_openclaw_version, require_node_version
 . "${SCRIPT_DIR}/version-gate.sh"
+# bounded_run — portable time-bound wrapper, holds even with no GNU `timeout`
+# on PATH (18-VERIFICATION gap #2 / 18-REVIEW CR-03). Must come after warn()
+# is defined above.
+. "${SCRIPT_DIR}/bounded-run.sh"
+
+# The doctor ceiling, in seconds. Overridable so the hermetic suite can
+# exercise a real ceiling expiry in seconds instead of two minutes.
+DOCTOR_TIMEOUT_SECONDS="${DOCTOR_TIMEOUT_SECONDS:-120}"
 
 # ---------------------------------------------------------------------------
 # 0. Runtime version gate (GATE-01/GATE-02/GATE-04) — defense in depth
@@ -69,14 +77,11 @@ run_openclaw_doctor() {
 
   local _doctor_output=""
   local _rc=0
-  # Bound the call the way post-install-nemoclaw.sh's nemoclaw() wrapper
-  # does — a hung doctor has already been observed in this project (the
-  # in-sandbox probe on a live test host returned exit 124).
-  if command_exists timeout; then
-    _doctor_output="$(timeout 120 openclaw doctor --fix --non-interactive 2>&1)" || _rc=$?
-  else
-    _doctor_output="$(openclaw doctor --fix --non-interactive 2>&1)" || _rc=$?
-  fi
+  # Bound the call via bounded_run — holds on EVERY supported platform, not
+  # only where GNU coreutils `timeout` happens to be installed (18-VERIFICATION
+  # gap #2 / 18-REVIEW CR-03; a hung doctor has already been observed in this
+  # project — the in-sandbox probe on a live test host returned exit 124).
+  _doctor_output="$(bounded_run "${DOCTOR_TIMEOUT_SECONDS}" openclaw doctor --fix --non-interactive 2>&1)" || _rc=$?
 
   # Bare echo (not info/warn) — the one place in this script where that is
   # correct, so the operator sees doctor's result verbatim before any
@@ -84,7 +89,7 @@ run_openclaw_doctor() {
   echo "${_doctor_output}"
 
   if [[ "${_rc}" -eq 124 ]]; then
-    warn "openclaw doctor --fix timed out after 120s — review the output above (if any). Continuing install; doctor findings do not block provisioning per GATE-03."
+    warn "openclaw doctor --fix timed out after ${DOCTOR_TIMEOUT_SECONDS}s — review the output above (if any). Continuing install; doctor findings do not block provisioning per GATE-03."
   elif [[ "${_rc}" -ne 0 ]]; then
     warn "openclaw doctor --fix exited ${_rc} — review the output above. Continuing install; doctor findings do not block provisioning per GATE-03."
   else
