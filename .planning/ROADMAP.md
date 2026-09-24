@@ -40,7 +40,15 @@
   3. Operator can read a per-model hook-firing matrix captured live, showing where model-dependent gaps (the B-05 class) exist before any porting begins.
   4. Operator can read a yes/no verdict, with supporting evidence, on whether `command-dispatch: tool` makes marker-writing dispatch deterministic.
   5. Operator can read a confirmation of whether the chosen SQLite read mechanism sustains per-minute cron polling without degrading the host.
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+- [ ] 17-01-PLAN.md — Tracer: provision 52.90.9.242 with both install paths, complete one real turn, read it back from the 2.0 SQLite store, write the SPIKE-00 determination
+- [ ] 17-02-PLAN.md — SPIKE-03: `command-dispatch: tool` scope probe first, conditional cross-model determinism run, binary verdict
+- [ ] 17-03-PLAN.md — SPIKE-01 (a)+(b): direct read-only SQLite read with verbatim schema capture, the four `openclaw sessions`/`doctor` CLI surfaces, and D-03 current-session-id resolution
+- [ ] 17-04-PLAN.md — SPIKE-01 (c): plugin-hook sidecar capture candidate, fidelity-first ranking, the SPIKE-01 determination
+- [ ] 17-05-PLAN.md — SPIKE-02 + SPIKE-04: six-hook matrix across both pairings and the per-minute concurrency soak, run against one shared live-traffic window
+- [ ] 17-06-PLAN.md — Findings wrap-up: MANIFEST rows 007-011, findings-skill re-scope and routing, and SPIKE-03's verdict consequence applied
 
 ### Phase 18: Version Gate & Install Health
 **Goal**: Installs on an unsupported runtime fail loudly and explicitly — matching the project's existing explicit-refusal convention (never a silent no-op) — before any provisioning proceeds.
