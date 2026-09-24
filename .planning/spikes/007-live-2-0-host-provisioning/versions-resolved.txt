@@ -1,0 +1,4 @@
+standalone: openclaw=OpenClaw 2026.9.6 (eb377ac)
+standalone: node=v24.21.0
+standalone: sqlite-store-path=/home/ubuntu/.openclaw/agents/main/agent/openclaw-agent.sqlite
+standalone: docker=29.8.1

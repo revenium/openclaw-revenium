@@ -1,0 +1,17 @@
+==================================================
+ Spike 007 — Live 2.0 host provisioning (standalone path)
+==================================================
+
+Host: Linux ip-172-31-40-178 7.0.0-1006-aws #6-Ubuntu SMP PREEMPT Tue May 26 12:04:34 UTC 2026 x86_64 GNU/Linux
+--------------------------------------------------
+Swap                               ✓ already present (8G)
+sshfs                              ✓ already installed (fusermount3 version: 3.18.2)
+OpenClaw                           ✓ already installed
+OpenClaw                           ✓ OpenClaw 2026.9.6 (eb377ac) (>= 2026.8.1)
+Node.js                            ✓ v24.21.0 (satisfies >=24.16.0 <25 || >=26.1.0)
+SQLite store                       ✓ readable read-only (mode=ro, busy_timeout=5000) at /home/ubuntu/.openclaw/agents/main/agent/openclaw-agent.sqlite
+Docker                             ✓ installed and daemon reachable (29.8.1)
+--------------------------------------------------
+Summary: 7 pass, 0 warn, 0 fail
+
+VERDICT: COMPATIBLE — standalone path provisioned successfully.
