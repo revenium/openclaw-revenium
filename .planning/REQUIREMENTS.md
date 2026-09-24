@@ -17,10 +17,10 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 Must complete before any porting work. Research could not resolve these from documentation; all four researchers independently recommended a live-host spike first.
 
-- [ ] **SPIKE-00**: Operator has a provisioned Linux host running OpenClaw `>= 2026.8.1`, Node `>= 24.16`, Docker, and NemoClaw `>= v0.0.128`, with the provisioning steps recorded so it is reproducible
-- [ ] **SPIKE-01**: Operator can read an evidence-backed written determination of how the skill reads completions and toolCalls from a 2.0 SQLite session store, produced against a live 2.0 host
+- [x] **SPIKE-00**: Operator has a provisioned Linux host running OpenClaw `>= 2026.8.1`, Node `>= 24.16`, Docker, and NemoClaw `>= v0.0.128`, with the provisioning steps recorded so it is reproducible
+- [x] **SPIKE-01**: Operator can read an evidence-backed written determination of how the skill reads completions and toolCalls from a 2.0 SQLite session store, produced against a live 2.0 host
 - [ ] **SPIKE-02**: Operator can read a per-model hook-firing matrix recorded from a live 2.0 host, so model-dependent gaps (the B-05 class) are known before porting rather than discovered in production
-- [ ] **SPIKE-03**: Operator can read a yes/no verdict on whether the `command-dispatch: tool` SKILL.md frontmatter field makes marker-writing deterministic, with the evidence behind it
+- [x] **SPIKE-03**: Operator can read a yes/no verdict on whether the `command-dispatch: tool` SKILL.md frontmatter field makes marker-writing deterministic, with the evidence behind it
 - [ ] **SPIKE-04**: Operator can read a confirmation that the chosen SQLite read mechanism sustains per-minute cron polling without degrading the host
 
 ### Session Read Path
@@ -108,11 +108,11 @@ Deferred. Tracked but not in this roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SPIKE-00 | Phase 17 | Pending |
-| SPIKE-01 | Phase 17 | Pending |
-| SPIKE-02 | Phase 17 | Pending |
-| SPIKE-03 | Phase 17 | Pending |
-| SPIKE-04 | Phase 17 | Pending |
+| SPIKE-00 | Phase 17 | Complete — VALIDATED, `007-live-2-0-host-provisioning/README.md` |
+| SPIKE-01 | Phase 17 | Complete — candidate (a) direct SQLite read selected, `008-sqlite-session-read-path/README.md` |
+| SPIKE-02 | Phase 17 | Partial — standalone/Claude matrix complete; NemoClaw/Nemotron half and the B-05 question UNRUN (sandbox lost mid-phase, see `phases/17-live-host-fact-finding-spike/17-SANDBOX-BLOCKER.md`). The cross-model dimension this requirement exists for is not yet answered. |
+| SPIKE-03 | Phase 17 | Complete — verdict NO, mechanism inapplicable, `010-command-dispatch-tool-verdict/README.md` |
+| SPIKE-04 | Phase 17 | Partial — HOST-LOCAL cell confirmed (62/62 ticks, zero lock errors); SSHFS cell UNRUN, so NEMO-03 remains unanswered. Completions-vs-ground-truth granularity mismatch open for Phase 19. |
 | GATE-01 | Phase 18 | Pending |
 | GATE-02 | Phase 18 | Pending |
 | GATE-03 | Phase 18 | Pending |
