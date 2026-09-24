@@ -65,25 +65,59 @@ make_home() {
 #   Invoke install.sh with stubbed OS and isolated HOME.
 #   Returns stdout+stderr combined.
 #
-# Phase 18: install.sh now runs a version gate (GATE-01/GATE-04) before
-# routing dispatch. Developer machines carry a real below-floor OpenClaw
-# (this repo's own dev host reports "OpenClaw 2026.5.28 (e932160)"), so
-# without passing defaults every routing GROUP below would now refuse before
-# reaching its NemoClaw-path marker assertions. The `:-` form lets an
+# Phase 18: install.sh runs a version gate (GATE-01/GATE-04), now SCOPED to
+# the standalone dispatch branch only (18-05, closing 18-VERIFICATION.md gap
+# #1 / 18-REVIEW.md CR-01). Developer machines carry a real below-floor
+# OpenClaw (this repo's own dev host reports "OpenClaw 2026.5.28 (e932160)"),
+# so without passing defaults every GROUP that reaches the standalone branch
+# would now refuse before reaching its assertions. The `:-` form lets an
 # individual GROUP still override either var to exercise the gate itself
-# (see GROUP G) — the gate's own pass/fail behavior is covered by
+# (see GROUP G/I) — the gate's own pass/fail behavior is covered by
 # tests/test_version_gate.sh, not here; these defaults exist so the routing
 # GROUPs exercise ROUTING, not the version gate.
+#
+# RUN_INSTALL_NO_VERSION_STUBS / RUN_INSTALL_PATH (18-05): the unconditional
+# defaults above are exactly what structurally masked 18-VERIFICATION.md gap
+# #1 — a GROUP that inherits STUB_OPENCLAW_VERSION_OUTPUT/STUB_NODE_VERSION
+# can never observe a host with no `openclaw` binary at all, because the
+# stub always answers the gate with a passing version before the real
+# `openclaw`/`node` binaries (or their absence) are ever consulted. Any
+# GROUP exercising host-binary ABSENCE (not just a below-floor stub) MUST
+# set RUN_INSTALL_NO_VERSION_STUBS so neither var reaches install.sh, and
+# SHOULD set RUN_INSTALL_PATH to a PATH with no real openclaw/node on it —
+# see GROUP H and GROUP I.
+#   - RUN_INSTALL_NO_VERSION_STUBS: non-empty -> invoke install.sh from a
+#     subshell that unsets both STUB_OPENCLAW_VERSION_OUTPUT and
+#     STUB_NODE_VERSION before running it, so no override reaches the
+#     script at all. Empty/unset -> today's `${VAR:-default}` injection,
+#     unchanged.
+#   - RUN_INSTALL_PATH: non-empty -> exported as PATH for this one
+#     invocation. Empty/unset -> PATH is left untouched.
 # ---------------------------------------------------------------------------
 run_install() {
   local uname_s="$1"
   local home_dir="$2"
   shift 2
-  STUB_UNAME_S="${uname_s}" \
-  STUB_OPENCLAW_VERSION_OUTPUT="${STUB_OPENCLAW_VERSION_OUTPUT:-OpenClaw 2026.9.6 (eb377ac)}" \
-  STUB_NODE_VERSION="${STUB_NODE_VERSION:-v24.21.0}" \
-  HOME="${home_dir}" \
-      bash "${INSTALL_SH}" "$@" 2>&1
+  if [[ -n "${RUN_INSTALL_NO_VERSION_STUBS:-}" ]]; then
+    STUB_UNAME_S="${uname_s}" \
+    HOME="${home_dir}" \
+    RUN_INSTALL_PATH="${RUN_INSTALL_PATH:-}" \
+    INSTALL_SH="${INSTALL_SH}" \
+        bash -c '
+          unset STUB_OPENCLAW_VERSION_OUTPUT STUB_NODE_VERSION
+          if [[ -n "${RUN_INSTALL_PATH}" ]]; then
+            export PATH="${RUN_INSTALL_PATH}"
+          fi
+          exec bash "${INSTALL_SH}" "$@"
+        ' -- "$@" 2>&1
+  else
+    STUB_UNAME_S="${uname_s}" \
+    STUB_OPENCLAW_VERSION_OUTPUT="${STUB_OPENCLAW_VERSION_OUTPUT:-OpenClaw 2026.9.6 (eb377ac)}" \
+    STUB_NODE_VERSION="${STUB_NODE_VERSION:-v24.21.0}" \
+    HOME="${home_dir}" \
+    PATH="${RUN_INSTALL_PATH:-${PATH}}" \
+        bash "${INSTALL_SH}" "$@" 2>&1
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -317,6 +351,51 @@ if echo "${output_g}" | grep -qi "preflight\|Phase 13\|nemoclaw path"; then
   fail "GROUP-G: NemoClaw-path marker present — gate did not fire before provisioning dispatch"
 else
   pass "GROUP-G: no NemoClaw-path marker present — gate fired before any provisioning side effect"
+fi
+
+# ===========================================================================
+# GROUP H: 18-VERIFICATION.md gap #1 / 18-REVIEW.md CR-01 — a real
+#   NemoClaw-routed run with NO host-level `openclaw`/`node` binary on PATH
+#   at all (not just a below-floor stub) must reach NemoClaw routing, never
+#   the host version gate. This is the exact configuration
+#   docs/nemoclaw-setup.md's Prerequisites section documents as supported
+#   (Linux + Docker + nemoclaw CLI; no host OpenClaw/Node), and the exact
+#   configuration that was falsely refused before 18-05. Uses
+#   RUN_INSTALL_NO_VERSION_STUBS so neither STUB_OPENCLAW_VERSION_OUTPUT nor
+#   STUB_NODE_VERSION reaches install.sh, and RUN_INSTALL_PATH to point at
+#   an empty bin dir so no real openclaw/node binary is reachable either.
+#   No exit-code assertion here: post-install-nemoclaw.sh legitimately exits
+#   non-zero further down this host (macOS host-compat preflight, or the
+#   unset REVENIUM_SANDBOX_NAME refusal on Linux) — this group measures the
+#   ROUTING decision only.
+# ===========================================================================
+echo ""
+echo "--- GROUP H: no host openclaw at all -- NemoClaw branch still routes (gap #1/CR-01) ---"
+
+TMP_HOME_H=$(make_home nemoclaw)
+TMP_BIN_H=$(mktemp -d "${TMPDIR:-/tmp}/test-inst-bin.XXXXXX")
+TMP_HOMES+=("${TMP_BIN_H}")
+
+output_h=$(RUN_INSTALL_NO_VERSION_STUBS=1 \
+    RUN_INSTALL_PATH="${TMP_BIN_H}:/usr/bin:/bin" \
+    run_install "Linux" "${TMP_HOME_H}" --nemoclaw) || true
+
+if echo "${output_h}" | grep -qF "Routing to NemoClaw install path"; then
+  pass "GROUP-H: NemoClaw routing reached with no host openclaw on PATH"
+else
+  fail "GROUP-H: 'Routing to NemoClaw install path' NOT found — host gate is still blocking the NemoClaw branch"
+fi
+
+if echo "${output_h}" | grep -qF "Checking runtime versions"; then
+  fail "GROUP-H: 'Checking runtime versions' present — host version gate fired on the NemoClaw branch"
+else
+  pass "GROUP-H: 'Checking runtime versions' correctly absent on the NemoClaw branch"
+fi
+
+if echo "${output_h}" | grep -qF "Could not determine the installed OpenClaw version"; then
+  fail "GROUP-H: undetectable-version refusal fired on the NemoClaw branch — regression of gap #1/CR-01"
+else
+  pass "GROUP-H: undetectable-version refusal correctly did NOT fire on the NemoClaw branch"
 fi
 
 # ===========================================================================

@@ -87,14 +87,6 @@ if [[ "${TARGET}" == "nemoclaw" ]] && [[ "${_os}" == "Darwin" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 2b. Runtime version gate (GATE-01/GATE-02)
-# ---------------------------------------------------------------------------
-step "Checking runtime versions"
-require_openclaw_version
-require_node_version
-info "Runtime versions OK"
-
-# ---------------------------------------------------------------------------
 # Script-existence guards
 # ---------------------------------------------------------------------------
 [[ -f "${SCRIPT_DIR}/post-install-nemoclaw.sh" ]] \
@@ -110,6 +102,26 @@ if [[ "${TARGET}" == "nemoclaw" ]]; then
     bash "${SCRIPT_DIR}/post-install-nemoclaw.sh" \
         "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
 else
+    # -------------------------------------------------------------------
+    # 2b. Runtime version gate (GATE-01/GATE-02) — SCOPED TO THE
+    # STANDALONE BRANCH ONLY. Do not hoist this above the TARGET dispatch.
+    #
+    # The NemoClaw branch's OpenClaw/Node run INSIDE the OpenShell sandbox
+    # and are independently versioned from whatever (if anything) is on
+    # the host PATH — spike 007 recorded standalone 2026.9.6 alongside
+    # in-sandbox 2026.9.1 on the same live host. A gate here that also ran
+    # on the NemoClaw branch falsely refused a real NemoClaw-only host
+    # that never installs a host-level OpenClaw/Node at all (the exact
+    # configuration docs/nemoclaw-setup.md's Prerequisites section
+    # documents), before scripts/post-install-nemoclaw.sh's own correct
+    # in-sandbox gate (gate_sandbox_runtime_versions) was ever reached.
+    # See 18-VERIFICATION.md gap #1 and 18-REVIEW.md CR-01.
+    # -------------------------------------------------------------------
+    step "Checking runtime versions"
+    require_openclaw_version
+    require_node_version
+    info "Runtime versions OK"
+
     step "Routing to standalone install path"
     bash "${SCRIPT_DIR}/post-install.sh" \
         "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
