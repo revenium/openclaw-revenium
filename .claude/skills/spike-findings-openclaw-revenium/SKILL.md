@@ -20,8 +20,15 @@ dispatch deterministic.
 Spike session (v1.4, NemoClaw/OpenShell): wrapped 2026-06-07. Validated live on Ubuntu host
 34.224.27.67 (sandbox `revenium-spike`).
 
-Spike session (v2.0, live-host 2.0 facts): wrapped 2026-09-24. Validated live on Ubuntu host
-52.90.9.242 (standalone OpenClaw 2026.9.6 + Docker, and NemoClaw v0.0.128 sandbox `revenium-2-0`).
+Spike session (v2.0, live-host 2.0 facts): wrapped 2026-09-24 on Ubuntu host 52.90.9.242.
+**Read the pairing coverage before relying on any v2.0 fact below.** Only spike 007
+(provisioning) reached BOTH production pairings. Spikes 008, 009, 010 and 011 — four of the
+five determinations — were captured on the **standalone OpenClaw 2026.9.6 + Docker + Claude
+pairing ONLY**: the NemoClaw v0.0.128 sandbox `revenium-2-0` was `Phase: Error` and unreachable
+for their entire window, so every hook-firing, dispatch-determinism, session-store and soak
+fact here is UNVERIFIED on NemoClaw/Nemotron. Cross-pairing parity was NOT established. The
+B-05 question, the SSHFS soak cell and NEMO-03 remain entirely unrun. See `## Constraints` in
+`references/live-host-2-0-facts.md` and the per-spike reasons in the findings index below.
 </context>
 
 <requirements>

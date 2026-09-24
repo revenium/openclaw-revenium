@@ -7,6 +7,7 @@ verdict: PARTIAL
 related: [006, 008]
 tags: [plugin, hook, matrix, cross-model, nemotron, claude]
 host: "52.90.9.242 (bare Ubuntu 26.04; sandbox revenium-2-0)"
+versions: "standalone pairing (the only pairing these results were captured on): OpenClaw 2026.9.6 (eb377ac), Node v24.21.0, Docker 29.8.1. Sandbox pairing, unreached this spike: NemoClaw v0.0.128 / OpenClaw 2026.9.1 (ad6fe23). Source: 007-live-2-0-host-provisioning/versions-resolved.txt"
 ---
 
 # Spike 009: Hook-Firing Matrix 2.0 (SPIKE-02)

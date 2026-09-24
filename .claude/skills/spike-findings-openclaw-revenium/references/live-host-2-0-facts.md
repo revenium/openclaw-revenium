@@ -43,6 +43,11 @@
 
 ## What to Avoid
 
+- **Substring/`LIKE` matching to correlate a `runId` to its completion row.** Spike 011 hit one
+  untraceable `runId` (`c70e70fc-…`) where a `LIKE`-based trace matched only coincidentally — a
+  user message's `idempotencyKey`, not the actual completion row. A from-scratch Phase 19
+  implementation MUST join on a structurally-correct key, never a substring scan, and should
+  re-verify this specific edge case. Source: `sources/011-read-path-concurrency-soak/README.md`.
 - **`sessions tail`** — redacts message content by design (`{...redacted...}`), confirmed live.
 - **`sessions list`/`export-trajectory` as a blanket content-read substitute** — both are
   CLI-agent-registry-scoped: an ad-hoc agent's store is invisible to them even though the file
