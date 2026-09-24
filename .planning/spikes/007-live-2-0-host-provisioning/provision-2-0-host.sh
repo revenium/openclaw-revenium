@@ -234,6 +234,166 @@ else
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# 5. NemoClaw/OpenShell path (D-13: same host, both paths). NemoClaw's own
+#    installer owns Docker — it is NOT reinstalled here (already present from
+#    step 4 above; the installer detects and reuses it).
+#
+#    Credential file is spike-scoped and deliberately NOT hardcoded to a
+#    single spike's filename — override via CREDENTIAL_ENV_FILE for reuse in
+#    Phase 22/24. Presence-checked only; the value is sourced straight into
+#    the installer's environment and never echoed or logged (T-17-01).
+# ---------------------------------------------------------------------------
+CREDENTIAL_ENV_FILE="${CREDENTIAL_ENV_FILE:-$HOME/.spike-17.env}"
+NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-revenium-2-0}"
+NEMOCLAW_FLOOR="0.0.128"
+
+# Finding (2026-09-24, live host): the installer's default non-pinned "latest"
+# resolution is NOT the newest published tag — it walks git tags to find a
+# "maintained last-known-good" release, which on this host resolved to
+# v0.0.124 even though v0.0.128/v0.0.129 already existed as real, non-prerelease
+# tags. D-15's "provision at latest" therefore does not by itself clear this
+# project's stated floor; the installer's own error output documents the
+# escape hatch (`NEMOCLAW_INSTALL_TAG=v<X>`), which is used here to explicitly
+# pin to the floor rather than silently accepting a below-floor "latest".
+# Override via NEMOCLAW_INSTALL_TAG for a future phase that wants true latest.
+NEMOCLAW_INSTALL_TAG="${NEMOCLAW_INSTALL_TAG:-v${NEMOCLAW_FLOOR}}"
+
+_nemoclaw_current_version() {
+  command -v nemoclaw >/dev/null 2>&1 || return 1
+  nemoclaw --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+_NC_CURRENT="$(_nemoclaw_current_version || true)"
+if [ -n "$_NC_CURRENT" ] && version_ge "$_NC_CURRENT" "$NEMOCLAW_FLOOR"; then
+  ok "NemoClaw" "already installed (v${_NC_CURRENT} >= v${NEMOCLAW_FLOOR})"
+else
+  if [ ! -f "$CREDENTIAL_ENV_FILE" ]; then
+    no "NemoClaw" "credential file ${CREDENTIAL_ENV_FILE} not found — cannot install without NVIDIA_API_KEY"
+  else
+    echo "Installing/upgrading NemoClaw to ${NEMOCLAW_INSTALL_TAG} (non-interactive)..."
+    (
+      set -a
+      # shellcheck disable=SC1090
+      . "$CREDENTIAL_ENV_FILE"
+      set +a
+      export NEMOCLAW_NON_INTERACTIVE=1
+      export NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
+      export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
+      export NEMOCLAW_PROVIDER=build
+      export NEMOCLAW_SANDBOX_NAME="$NEMOCLAW_SANDBOX_NAME"
+      export NEMOCLAW_POLICY_MODE=suggested
+      export NEMOCLAW_INSTALL_TAG="$NEMOCLAW_INSTALL_TAG"
+      curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    )
+    export PATH="$HOME/.local/bin:$PATH"
+    hash -r 2>/dev/null || true
+  fi
+fi
+
+NEMOCLAW_VERSION=""
+for _attempt in 1 2 3 4 5; do
+  hash -r 2>/dev/null || true
+  if command -v nemoclaw >/dev/null 2>&1; then
+    NEMOCLAW_VERSION="$(nemoclaw --version 2>/dev/null | head -1)"
+    [ -n "$NEMOCLAW_VERSION" ] && break
+  fi
+  sleep 2
+done
+if [ -z "$NEMOCLAW_VERSION" ]; then
+  no "NemoClaw" "not found on PATH after install attempt"
+else
+  record_version "nemoclaw-sandbox" "nemoclaw-cli" "$NEMOCLAW_VERSION"
+  NC_NUM="$(printf '%s' "$NEMOCLAW_VERSION" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  if [ -n "$NC_NUM" ] && version_ge "$NC_NUM" "$NEMOCLAW_FLOOR"; then
+    ok "NemoClaw" "${NEMOCLAW_VERSION} (>= v${NEMOCLAW_FLOOR})"
+  else
+    no "NemoClaw" "${NEMOCLAW_VERSION} is below required v${NEMOCLAW_FLOOR}"
+  fi
+fi
+
+# Sandbox status + in-sandbox OpenClaw version (D-15: recorded separately,
+# never normalized against the standalone path's version).
+if command -v nemoclaw >/dev/null 2>&1 && nemoclaw "$NEMOCLAW_SANDBOX_NAME" status >/dev/null 2>&1; then
+  ok "NemoClaw sandbox" "${NEMOCLAW_SANDBOX_NAME} is up"
+  # Single-line exec — NemoClaw's gRPC argv rejects newlines.
+  SANDBOX_OPENCLAW_VERSION="$(nemoclaw "$NEMOCLAW_SANDBOX_NAME" exec -- openclaw --version 2>/dev/null | head -1)"
+  if [ -n "$SANDBOX_OPENCLAW_VERSION" ]; then
+    record_version "nemoclaw-sandbox" "openclaw" "$SANDBOX_OPENCLAW_VERSION"
+    ok "NemoClaw sandbox OpenClaw" "$SANDBOX_OPENCLAW_VERSION"
+  else
+    wn "NemoClaw sandbox OpenClaw" "could not resolve in-sandbox OpenClaw version"
+  fi
+else
+  no "NemoClaw sandbox" "${NEMOCLAW_SANDBOX_NAME} status check failed"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Egress preset — api.revenium.ai (D-16). Hot-reloads; safe to re-apply.
+#    Gated on the preset already being present in `policy list`.
+#    NOTE: NemoClaw v0.0.128's CLI renamed `policy-add`/`policy-list`
+#    (hyphenated, per CONVENTIONS.md from the older v0.0.55-era spikes) to
+#    `policy add`/`policy list` (space-separated subcommands) — a live
+#    CLI-surface drift finding, recorded here so it isn't silently rediscovered.
+# ---------------------------------------------------------------------------
+REVENIUM_POLICY_FILE="${REVENIUM_POLICY_FILE:-$HOME/revenium-policy.yaml}"
+if command -v nemoclaw >/dev/null 2>&1 && nemoclaw "$NEMOCLAW_SANDBOX_NAME" status >/dev/null 2>&1; then
+  if nemoclaw "$NEMOCLAW_SANDBOX_NAME" policy list 2>/dev/null | grep -qi 'revenium'; then
+    ok "Egress preset" "revenium already applied"
+  elif [ -f "$REVENIUM_POLICY_FILE" ]; then
+    nemoclaw "$NEMOCLAW_SANDBOX_NAME" policy add --from-file "$REVENIUM_POLICY_FILE" --yes >/dev/null 2>&1
+    if nemoclaw "$NEMOCLAW_SANDBOX_NAME" policy list 2>/dev/null | grep -qi 'revenium'; then
+      ok "Egress preset" "revenium applied"
+    else
+      no "Egress preset" "policy add did not result in a visible revenium policy"
+    fi
+  else
+    wn "Egress preset" "revenium policy file not found at ${REVENIUM_POLICY_FILE} — skipped"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 7. Host-side share mount — the host<->sandbox state channel (D-13). Needs
+#    the sshfs installed in step 2. Idempotent: gated on already-mounted.
+# ---------------------------------------------------------------------------
+SHARE_MOUNT_POINT="${SHARE_MOUNT_POINT:-$HOME/nemoclaw-${NEMOCLAW_SANDBOX_NAME}-mount}"
+if command -v nemoclaw >/dev/null 2>&1 && nemoclaw "$NEMOCLAW_SANDBOX_NAME" status >/dev/null 2>&1; then
+  # A mount entry can exist yet be stale (I/O error) after a sandbox rebuild
+  # recreates the underlying container — verify liveness, not just presence,
+  # per the SSHFS-cache-lag hazard documented in CONVENTIONS.md.
+  if mount | grep -q "$SHARE_MOUNT_POINT" && ls "$SHARE_MOUNT_POINT" >/dev/null 2>&1; then
+    ok "Share mount" "already mounted and readable at ${SHARE_MOUNT_POINT}"
+  else
+    if mount | grep -q "$SHARE_MOUNT_POINT"; then
+      wn "Share mount" "stale mount detected at ${SHARE_MOUNT_POINT} — unmounting before remount"
+      fusermount3 -uz "$SHARE_MOUNT_POINT" >/dev/null 2>&1 || sudo umount -l "$SHARE_MOUNT_POINT" >/dev/null 2>&1 || true
+    fi
+    mkdir -p "$SHARE_MOUNT_POINT"
+    nemoclaw "$NEMOCLAW_SANDBOX_NAME" share mount /sandbox/.openclaw "$SHARE_MOUNT_POINT" >/dev/null 2>&1
+    sleep 2
+    if mount | grep -q "$SHARE_MOUNT_POINT" && ls "$SHARE_MOUNT_POINT" >/dev/null 2>&1; then
+      ok "Share mount" "mounted /sandbox/.openclaw at ${SHARE_MOUNT_POINT}"
+    else
+      no "Share mount" "mount attempt did not result in a visible, readable mount"
+    fi
+  fi
+
+  # Resolve the in-sandbox SQLite store path from the live filesystem — do
+  # NOT assume the standalone `~/.openclaw/` layout carries over (HOME is
+  # /sandbox, user `sandbox`, per CONVENTIONS.md).
+  HOST_MOUNT_SQLITE_STORE="$(find "$SHARE_MOUNT_POINT/agents" -maxdepth 3 -iname 'openclaw-agent.sqlite' 2>/dev/null | head -1)"
+  if [ -n "$HOST_MOUNT_SQLITE_STORE" ]; then
+    # Record the path AS SEEN INSIDE the sandbox (HOME=/sandbox, user `sandbox`),
+    # not the host-side mount point — the mount point is a host convenience,
+    # the in-sandbox path is what production code (Phase 19+) actually uses.
+    SANDBOX_SQLITE_STORE="/sandbox/.openclaw/${HOST_MOUNT_SQLITE_STORE#"$SHARE_MOUNT_POINT/"}"
+    record_version "nemoclaw-sandbox" "sqlite-store-path" "$SANDBOX_SQLITE_STORE"
+    ok "In-sandbox SQLite store" "found at ${SANDBOX_SQLITE_STORE} (host mount: ${HOST_MOUNT_SQLITE_STORE})"
+  else
+    line "In-sandbox SQLite store" "· not yet created (no in-sandbox agent turn has run)"
+  fi
+fi
+
 echo "--------------------------------------------------"
 echo "Summary: ${pass} pass, ${warn} warn, ${fail} fail"
 echo
@@ -244,6 +404,6 @@ elif [ "$warn" -gt 0 ]; then
   echo "VERDICT: USABLE WITH CAVEATS — review warnings above."
   exit 0
 else
-  echo "VERDICT: COMPATIBLE — standalone path provisioned successfully."
+  echo "VERDICT: COMPATIBLE — standalone + NemoClaw paths provisioned successfully."
   exit 0
 fi

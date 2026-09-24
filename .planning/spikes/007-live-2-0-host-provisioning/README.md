@@ -198,7 +198,82 @@ sqlite3 -cmd "PRAGMA busy_timeout=5000;" \
 the tracer's end-to-end proof. **Host:** 52.90.9.242. **Date:** 2026-09-24. **Versions in effect:**
 OpenClaw `2026.9.6 (eb377ac)`, Node `v24.21.0`.
 
-### NemoClaw/OpenShell path (Task 2) — not yet run
+### Finding 4 — NemoClaw's default "latest" install resolves BELOW the v0.0.128 floor;
+### `NEMOCLAW_INSTALL_TAG` is the documented pin mechanism
+
+The non-interactive installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | ... bash`) does
+**not** resolve "latest" to the newest published git tag. Reading the fetched installer script
+(`resolve_release_tag()` / `checkout_release_version()`) shows it walks `git ls-remote --tags
+origin 'refs/tags/v*'` to find a **maintained last-known-good** release and explicitly rejects
+prereleases — a different, more conservative notion of "latest" than D-15 anticipated. On this
+host, that resolved to **NemoClaw v0.0.124**, even though v0.0.128 and v0.0.129 already existed as
+real, non-prerelease tags (confirmed via a read-only `git ls-remote --tags origin` against the
+installer's own source checkout at `~/.nemoclaw/source/nemoclaw-blueprint`). The in-sandbox
+OpenClaw that v0.0.124 manages was **`2026.7.1`** — below the project's `>=2026.8.1` hard floor,
+i.e. **not 2.0 at all**. The installer's own error-handling code documents the escape hatch:
+`NEMOCLAW_INSTALL_TAG=v<X>` pins to an explicit release. Re-running with
+`NEMOCLAW_INSTALL_TAG=v0.0.128` triggered a clean upgrade (`revenium-2-0  NemoClaw image
+v0.0.124 → v0.0.128`, sandbox rebuild, `OpenClaw v2026.7.1 → v2026.9.1`) — exactly matching
+RESEARCH.md's A1 assumption (`v0.0.128` bundles OpenClaw `2026.9.1`) once explicitly requested.
+`provision-2-0-host.sh` now defaults `NEMOCLAW_INSTALL_TAG` to the project's stated floor rather
+than trusting the installer's own "latest," and records this as a deliberate pin, not the
+installer's organic resolution — **Phase 22/24 must know that a plain re-run of the documented
+install command, without this override, currently lands you on a pre-2.0 NemoClaw-managed
+OpenClaw.**
+
+### Finding 5 — NemoClaw v0.0.128's CLI renamed `policy-add`/`policy-list` to `policy add`/`policy list`
+
+CONVENTIONS.md (established on NemoClaw v0.0.55 during the v1.4 spikes) documents `nemoclaw <name>
+policy-add --from-file <yaml>` and a corresponding `policy-list`. On v0.0.128, `nemoclaw --help`
+lists these as **space-separated subcommands** — `policy add` / `policy list` / `policy remove` /
+`policy get` — under a `Policy Presets:` section; the hyphenated forms are not recognized. The
+first Task 2 run silently "succeeded" at applying the policy (exit 0, discarded stderr) but the
+verification step's `policy-list` check also used the stale hyphenated form and reported a false
+negative. Corrected in `provision-2-0-host.sh`; recorded here so Phase 22 doesn't rediscover it.
+
+### Finding 6 — a live SSHFS share mount goes stale across a sandbox rebuild
+
+Mounting `/sandbox/.openclaw` before the NemoClaw v0.0.124→v0.0.128 upgrade left a mount table
+entry that returned `Input/output error` on any file access afterward — the upgrade destroys and
+recreates the underlying sandbox container, invalidating the existing SSHFS session even though
+`mount` still lists it. `nemoclaw <name> share status <mount-point>` correctly reported `○ Not
+mounted (expected at ...)` despite the stale kernel mount table entry. Fixed by checking mount
+*readability* (`ls "$mount" >/dev/null`), not just presence in `mount` output, and unmounting
+(`fusermount3 -uz`) before remounting when stale — a concrete instance of the SSHFS-cache-lag
+hazard CONVENTIONS.md already flagged in the abstract, now reproduced and handled in the script.
+
+### Evidence triplet — NemoClaw/OpenShell path provisioned on the same host
+
+**Command:**
+```bash
+ssh -i ~/.ssh/hermes-sandbox.pem ubuntu@52.90.9.242 'bash ~/provision-2-0-host.sh > ~/provision-run.log 2>&1'
+```
+**Raw output** (final section of `provision-run.log`, clean idempotent re-run):
+```
+NemoClaw                           ✓ already installed (v0.0.128 >= v0.0.128)
+NemoClaw                           ✓ nemoclaw v0.0.128 (>= v0.0.128)
+NemoClaw sandbox                   ✓ revenium-2-0 is up
+NemoClaw sandbox OpenClaw          ✓ OpenClaw 2026.9.1 (ad6fe23)
+Egress preset                      ✓ revenium already applied
+Share mount                        ✓ already mounted and readable at /home/ubuntu/nemoclaw-revenium-2-0-mount
+In-sandbox SQLite store            ✓ found at /sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite (host mount: /home/ubuntu/nemoclaw-revenium-2-0-mount/agents/main/agent/openclaw-agent.sqlite)
+--------------------------------------------------
+Summary: 14 pass, 0 warn, 0 fail
+
+VERDICT: COMPATIBLE — standalone + NemoClaw paths provisioned successfully.
+```
+**Interpretation:** both production install paths are live on `52.90.9.242` simultaneously (D-13).
+The NemoClaw-managed OpenClaw (`2026.9.1`) and the standalone-path OpenClaw (`2026.9.6`) are
+different versions, as D-15 anticipated — not normalized to match. The `revenium` egress preset
+(`api.revenium.ai:443`, `tls: skip`) is applied to the sandbox (confirmed both via `policy list`
+showing `● revenium [user-added] — custom OpenShell policy` and in the full `policy explain`-style
+status dump's `network_policies.nemoclaw_custom__revenium__revenium` block). The host-side SSHFS
+share mount of `/sandbox/.openclaw` is live and readable, and the in-sandbox SQLite store resolves
+to a path under `/sandbox/.openclaw/agents/main/agent/` (surfaced host-side at the mount point) —
+confirming this is a genuinely different filesystem root from the standalone path's
+`~/.openclaw/agents/main/agent/`, per D-15/D-13. **Host:** 52.90.9.242. **Date:** 2026-09-24.
+**Versions in effect:** NemoClaw `v0.0.128`, in-sandbox OpenClaw `2026.9.1 (ad6fe23)`, standalone
+OpenClaw `2026.9.6 (eb377ac)`, Node `v24.21.0`, Docker `29.8.1`.
 
 ### `api.revenium.ai` egress confirmation (Task 3) — not yet run
 
@@ -216,3 +291,18 @@ OpenClaw `2026.9.6 (eb377ac)`, Node `v24.21.0`.
   script on this host must resolve Node explicitly, never via bare `$PATH` including that directory.
 - OpenClaw's official installer's npm-global bin dir is `~/.npm-global/bin` (not `~/.local/bin`,
   not nvm-style) — this is where the `openclaw` binary actually lands.
+- NemoClaw-sandbox agentId is also `main`; in-sandbox SQLite store resolves under
+  `/sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite` — surfaced host-side at the share
+  mount point (e.g. `~/nemoclaw-revenium-2-0-mount/agents/main/agent/openclaw-agent.sqlite`).
+- Sandbox name used: `revenium-2-0`. Share mount point: `~/nemoclaw-<sandbox>-mount`.
+- Credential file: `/home/ubuntu/.spike-17.env` (mode 600; `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`,
+  `REVENIUM_API_KEY`) — spike-scoped, delete at teardown; future phases should use their own file
+  and pass it via `CREDENTIAL_ENV_FILE` (the script no longer hardcodes the filename).
+- NemoClaw's non-pinned "latest" install resolution is NOT the newest tag — use
+  `NEMOCLAW_INSTALL_TAG=v<X>` to pin to a specific release when the maintained-lkg default lands
+  below a required floor (Finding 4).
+- NemoClaw v0.0.128's policy subcommands are `policy add` / `policy list` / `policy remove` /
+  `policy get` (space-separated) — the hyphenated `policy-add`/`policy-list` from CONVENTIONS.md
+  (written against v0.0.55) are no longer recognized (Finding 5).
+- A share mount surviving in `mount` output does not mean it is live after a sandbox rebuild —
+  verify with a real filesystem access, not just mount-table presence (Finding 6).

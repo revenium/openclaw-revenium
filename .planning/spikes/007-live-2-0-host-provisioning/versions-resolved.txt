@@ -2,3 +2,6 @@ standalone: openclaw=OpenClaw 2026.9.6 (eb377ac)
 standalone: node=v24.21.0
 standalone: sqlite-store-path=/home/ubuntu/.openclaw/agents/main/agent/openclaw-agent.sqlite
 standalone: docker=29.8.1
+nemoclaw-sandbox: nemoclaw-cli=nemoclaw v0.0.128
+nemoclaw-sandbox: openclaw=OpenClaw 2026.9.1 (ad6fe23)
+nemoclaw-sandbox: sqlite-store-path=/sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite
