@@ -226,3 +226,33 @@ trigger on this runtime (OpenClaw 2026.9.6) — this is a scope/functionality
 finding, not a probe defect.
 
 SCOPE-NOT-APPLICABLE
+
+================================================================================
+SPIKE-03 Task 2 — cross-model determinism run
+================================================================================
+Host: 52.90.9.242 (bare Ubuntu 26.04; sandbox revenium-2-0)
+Date: 2026-09-24
+Standalone versions in effect: OpenClaw 2026.9.6 (eb377ac), Node v24.21.0
+NemoClaw/sandbox versions in effect: NemoClaw v0.0.128, in-sandbox OpenClaw v2026.9.1
+
+Precondition check:
+$ tail -1 dispatch-run.log
+SCOPE-NOT-APPLICABLE
+$ nemoclaw revenium-2-0 status
+  ... OpenClaw: running ... (exit 0)
+Both pairings still live; classification line present from Task 1.
+
+Branch taken: the Task 1 classification line reads SCOPE-NOT-APPLICABLE.
+Per this task's instructions, the cross-model determinism soak is
+deliberately NOT run. Task 1's scope probe closed the question before any
+soak-window time was spent: `command-dispatch: tool` does not achieve
+deterministic, zero-model-involvement dispatch even for the easier,
+documented human-typed-slash-command case (four independently repaired
+harness attempts on the standalone/Claude pairing, cross-checked against a
+control test), so there is no live behavior left for a 30-turn-per-model
+determinism run to distinguish — a scope NO is a complete answer, not a
+partial one, and running the soak anyway would be exactly the sequencing
+mistake RESEARCH.md's Pitfall 1 and the plan's Task 2 instructions both warn
+against.
+
+DETERMINISM-TALLY: not-run (scope)
