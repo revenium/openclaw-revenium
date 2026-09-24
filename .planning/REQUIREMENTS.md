@@ -13,8 +13,11 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Fact-Finding (live host)
 
+**Target host:** `52.90.9.242` — `ssh -i ~/.ssh/hermes-sandbox.pem ubuntu@52.90.9.242`. Verified reachable 2026-09-23: bare Ubuntu 26.04 LTS x86_64, passwordless sudo, node v22.23.2, **no** openclaw / nemoclaw / docker / revenium. Provisioning it (Node `>=24.16`, Docker, OpenClaw `>=2026.8.1`, NemoClaw `>=v0.0.128`, revenium CLI) is SPIKE-00 and gates every other requirement in this milestone. The four AWS hosts used through v1.4 (`34.224.27.67`, `98.82.34.123`, `3.91.58.114`, `18.212.94.67`) are all unreachable as of 2026-09-23 and must not be planned against.
+
 Must complete before any porting work. Research could not resolve these from documentation; all four researchers independently recommended a live-host spike first.
 
+- [ ] **SPIKE-00**: Operator has a provisioned Linux host running OpenClaw `>= 2026.8.1`, Node `>= 24.16`, Docker, and NemoClaw `>= v0.0.128`, with the provisioning steps recorded so it is reproducible
 - [ ] **SPIKE-01**: Operator can read an evidence-backed written determination of how the skill reads completions and toolCalls from a 2.0 SQLite session store, produced against a live 2.0 host
 - [ ] **SPIKE-02**: Operator can read a per-model hook-firing matrix recorded from a live 2.0 host, so model-dependent gaps (the B-05 class) are known before porting rather than discovered in production
 - [ ] **SPIKE-03**: Operator can read a yes/no verdict on whether the `command-dispatch: tool` SKILL.md frontmatter field makes marker-writing deterministic, with the evidence behind it
@@ -109,7 +112,7 @@ Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SPIKE-01..04 | TBD | Pending |
+| SPIKE-00..04 | TBD | Pending |
 | READ-01..04 | TBD | Pending |
 | GATE-01..04 | TBD | Pending |
 | PLUG-01..05 | TBD | Pending |
@@ -120,9 +123,9 @@ Populated during roadmap creation.
 | ATTR-01 | TBD | Pending (contingent) |
 
 **Coverage:**
-- v1 requirements: 25 total (24 committed + 1 contingent)
+- v1 requirements: 26 total (25 committed + 1 contingent)
 - Mapped to phases: 0
-- Unmapped: 25 ⚠️
+- Unmapped: 26 ⚠️
 
 ---
 *Requirements defined: 2026-09-23*
