@@ -37,6 +37,8 @@ fail()  { echo ""; echo "  ✗ $*" >&2; exit 1; }
 
 command_exists() { command -v "$1" &>/dev/null; }
 
+. "${SCRIPT_DIR}/version-gate.sh"
+
 # ---------------------------------------------------------------------------
 # Flag parse
 # ---------------------------------------------------------------------------
@@ -83,6 +85,13 @@ if [[ "${TARGET}" == "nemoclaw" ]] && [[ "${_os}" == "Darwin" ]]; then
   cloud) with Docker. The standalone OpenClaw path (default, no --nemoclaw
   flag) continues to work on macOS."
 fi
+
+# ---------------------------------------------------------------------------
+# 2b. Runtime version gate (GATE-01/GATE-02)
+# ---------------------------------------------------------------------------
+step "Checking runtime versions"
+require_openclaw_version
+info "Runtime versions OK"
 
 # ---------------------------------------------------------------------------
 # Script-existence guards
