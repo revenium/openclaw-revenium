@@ -185,23 +185,39 @@ map_stop_reason() {
 }
 
 # ---------------------------------------------------------------------------
-# Offset helpers — track last-processed line count per session (replaces DONE:)
+# Offset helpers — the on-disk {sid: N} atomic-write shape is byte-identical
+# to pre-Phase-19, but D-06 INVERTS what N means and, with it, which
+# mechanism is actually correct:
+#   BEFORE: N was a transcript line count and the sole correctness gate —
+#     a wrong/stale/reset N could double-bill (a line re-read past the
+#     ledger's protection) or, worse, silently skip billable lines.
+#   AFTER:  N is a transcript_events.seq high-water mark and ONLY bounds how
+#     many rows a tick re-reads. The `TX:` ledger (grep -q "^TX:${tx_id}$")
+#     is now the SOLE correctness gate. A wrong, stale, or manually-reset N
+#     costs wasted work at worst — the ledger catches the resulting
+#     duplicate and re-billing is impossible. This is the safe direction:
+#     the opposite ordering (a cursor that silently advances past a row the
+#     store had not yet flushed) is the fail-open trap, because that
+#     completion is lost permanently, not just re-read.
+# The default for a session with no recorded mark is -1, not 0: seq is
+# 0-indexed (the first row in a session is seq 0), so a 0 default under a
+# `seq > N` filter would silently skip that very first row forever.
 # ---------------------------------------------------------------------------
 get_offset() {
   local sid="$1"
   if [[ ! -f "${OFFSETS_FILE}" ]]; then
-    echo 0
+    echo -1
     return
   fi
   # Env-passing heredoc discipline (T-04-09): pass path + sid via env, never
   # interpolate (sid is a session filename; OFFSETS_FILE path may contain a quote).
-  OFFSETS_FILE="${OFFSETS_FILE}" SID="${sid}" python3 - <<'PY' 2>/dev/null || echo 0
+  OFFSETS_FILE="${OFFSETS_FILE}" SID="${sid}" python3 - <<'PY' 2>/dev/null || echo -1
 import json, os
 try:
     d = json.load(open(os.environ['OFFSETS_FILE']))
-    print(d.get(os.environ['SID'], 0))
+    print(d.get(os.environ['SID'], -1))
 except Exception:
-    print(0)
+    print(-1)
 PY
 }
 
@@ -538,19 +554,36 @@ PY
   markers_cache_file=$(mktemp "${TMPDIR:-/tmp}/rv-markers.XXXXXX")
   jobs_cache_file=$(mktemp "${TMPDIR:-/tmp}/rv-jobs.XXXXXX")
 
+  # D-06 cursor demotion: fetch the per-session high-water mark BEFORE
+  # building session_file, so both store_session_events and store_completions
+  # below read only rows past what the previous tick already saw. This is a
+  # read-volume bound, not a correctness gate — see the inversion comment at
+  # get_offset's definition.
+  local offset
+  offset=$(get_offset "${session_id}")
+
   # D-01 seam: session_file is now a tempfile of this session's raw
   # transcript_events.event_json rows (store_session_events), NOT a path on
   # disk. Every existing consumer below (system_prompt / msg_meta_file /
-  # user_msgs_file jq filters, the offset/total_lines gate, and the toolCall
+  # user_msgs_file jq filters, the offset/max_seq gate, and the toolCall
   # scan's SESSION_FILE env assignment) reads "${session_file}" unchanged —
   # event_json preserves the byte-identical record shape the old JSONL lines
   # carried (RESEARCH Pitfall 1), so nothing downstream needed to change.
-  # Task 3 replaces the total_lines/offset semantics with store_max_seq; this
-  # tempfile's line count is left as the interim high-water bound until then.
   local session_file completions_tmp
   session_file=$(mktemp "${TMPDIR:-/tmp}/rv-events.XXXXXX")
-  store_session_events "${session_id}" "-1" > "${session_file}"
+  store_session_events "${session_id}" "${offset}" > "${session_file}"
   completions_tmp=$(mktemp "${TMPDIR:-/tmp}/rv-completions.XXXXXX")
+
+  # RESEARCH Pitfall 3: a row with event_json IS NULL is a zstd-compacted
+  # record, not absent data — count it and log at INFO when non-zero so a
+  # skipped row is always visible rather than silently dropped (READ-04's
+  # spirit applied one level deeper: inside a READABLE store, rows that
+  # cannot be read must still be visible).
+  local null_event_count
+  null_event_count=$(store_null_event_count "${session_id}" "${offset}")
+  if [[ "${null_event_count:-0}" -gt 0 ]]; then
+    info "Session ${session_id}: ${null_event_count} compacted (zstd) row(s) skipped this tick"
+  fi
 
   _cleanup_session_tmp() {
     rm -f "${markers_cache_file}" "${jobs_cache_file}" "${msg_meta_file}" "${user_msgs_file}" \
@@ -748,16 +781,16 @@ PY
     done < "${jobs_cache_file}"
   fi
 
-  # Get last processed line offset for this session
-  local offset total_lines
-  offset=$(get_offset "${session_id}")
-  # WR-05: count lines the way `tail -n +N` / `read` actually consume them.
-  # `wc -l` counts newline characters, so it undercounts by one when the final
-  # line has no trailing newline — leaving the offset short and re-yielding a
-  # processed line once it later gets terminated. `grep -c ''` counts the final
-  # unterminated line too. (Ledger dedup still protects against double-billing,
-  # but the offset arithmetic itself must be correct.)
-  total_lines=$(grep -c '' "${session_file}" 2>/dev/null || echo 0)
+  # D-06: max_seq is the current transcript_events.seq high-water mark for
+  # this session — a read-volume bound, NOT a correctness gate. The `TX:`
+  # ledger (grep -q "^TX:${tx_id}$" below) is the sole correctness mechanism:
+  # if max_seq is wrong, stale, or reset, the ledger catches any resulting
+  # duplicate and the only cost is wasted work re-reading already-metered
+  # rows — it can never lose money. The opposite ordering (a cursor that
+  # advances past an unflushed row) would lose that completion permanently,
+  # which is exactly the fail-open trap D-06 exists to avoid.
+  local max_seq
+  max_seq=$(store_max_seq "${session_id}")
 
   # D-01/D-04: fetch this tick's usage-bearing completions (deduped by
   # responseId) into a tempfile, read via `while IFS=$'\x1f' read -r ...`
@@ -766,7 +799,7 @@ PY
   store_completions "${session_id}" "${offset}" > "${completions_tmp}"
 
   # Nothing new to process — replaces the old DONE: skip
-  if [[ "${offset}" -ge "${total_lines}" ]]; then
+  if [[ "${offset}" -ge "${max_seq}" ]]; then
     _cleanup_session_tmp
     return 0
   fi
@@ -1444,7 +1477,7 @@ PY
   # offset so those lines are re-scanned next tick. Re-processing succeeded
   # lines is safe because the ledger (TX:) dedups them, so no double-billing.
   if [[ "${failed_count}" -eq 0 ]]; then
-    set_offset "${session_id}" "${total_lines}"
+    set_offset "${session_id}" "${max_seq}"
   else
     warn "Session ${session_id}: ${failed_count} failure(s) — not advancing offset (will retry next tick)"
   fi
@@ -1662,19 +1695,38 @@ main() {
   # UNREADABLE (the fail-open blackout this milestone exists to close).
   # store_probe caches its result for the rest of this process.
   store_probe
+  # D-14: write the durable status file in ALL THREE branches so
+  # read-path-status.json always reflects the most recent tick — the
+  # guardrail-status.json precedent. Never a halt file, never touches
+  # guardrail-status.json, never a return value that could stop an agent
+  # turn: an unreadable store is an observability defect, not a budget
+  # breach.
   case "${STORE_STATE}" in
     UNREADABLE)
+      store_write_status "UNREADABLE" "${STORE_PROBE_ERROR}"
       error "Session store unreadable — metering skipped this tick. Paths tried: ${STORE_PATHS_TRIED//$'\n'/, }. ${STORE_PROBE_ERROR}"
       return 1
       ;;
     EMPTY)
+      store_write_status "EMPTY" ""
       info "Session store is readable but holds zero non-cron sessions (fresh host) — nothing to meter this tick."
       return 0
       ;;
     READABLE)
-      : # continue below
+      store_write_status "READABLE" ""
       ;;
   esac
+
+  # D-07: revenium-offsets.json is obsolete under the SQLite read path. It is
+  # retained UNTOUCHED — never deleted, never rewritten, never read for any
+  # correctness purpose — it is the only record of where the pre-2.0 JSONL
+  # read path stopped, and its cleanup belongs to the uninstall path, not a
+  # metering tick. get_offset/set_offset continue to use this same file, but
+  # (per the D-06 comment at their definition) the LINE offsets it holds are
+  # no longer interpreted as line counts — only as a seq high-water mark.
+  if [[ -f "${OFFSETS_FILE}" ]]; then
+    info "revenium-offsets.json is obsolete under the SQLite read path (D-07) — retained untouched; per-session high-water marks now bound seq, not line count."
+  fi
 
   local total_files=0
   while IFS=$'\x1f' read -r session_id _sl_session_key _sl_created_via _sl_updated_at; do

@@ -363,6 +363,195 @@ else
   fail "store_write_status: did not write ${READ_PATH_STATUS_FILE}"
 fi
 
+# =============================================================================
+# GROUP: tick states — drives scripts/report.sh end-to-end (READ-04 / D-13/D-14)
+# =============================================================================
+echo "--- GROUP: tick states ---"
+
+# Shared fake HOME so the stub-revenium.sh wins on PATH (mirrors
+# test_report_jobs_argv.sh's TMP_FAKE_HOME convention).
+TICK_FAKE_HOME=$(new_tmp)
+mkdir -p "${TICK_FAKE_HOME}/.local/bin"
+ln -sf "${STUB_SH}" "${TICK_FAKE_HOME}/.local/bin/revenium"
+
+mk_tick_home() {
+  local d
+  d=$(new_tmp)
+  mkdir -p "${d}/skills/revenium/markers"
+  echo '{}' > "${d}/revenium-offsets.json"
+  touch "${d}/revenium-reported.ledger"
+  echo '{"organizationName":"TickTest"}' > "${d}/skills/revenium/config.json"
+  echo "${d}"
+}
+
+# --- READABLE tick ---
+TICK_READABLE=$(mk_tick_home)
+TICK_READABLE_DB="${TICK_READABLE}/agents/main/agent/openclaw-agent.sqlite"
+mk_store "${TICK_READABLE_DB}"
+mk_session "${TICK_READABLE_DB}" "aaaaaaaa-0000-0000-0000-000000000060" "agent:main:main" "" 100
+mk_assistant_event "${TICK_READABLE_DB}" "aaaaaaaa-0000-0000-0000-000000000060" 0 "msg_tick_readable" "run_tick" 150
+
+tick_readable_argv=$(mktemp "${TMPDIR:-/tmp}/tick-readable-argv.XXXXXX")
+STUB_REVENIUM_ARGV_FILE="${tick_readable_argv}" OPENCLAW_HOME="${TICK_READABLE}" HOME="${TICK_FAKE_HOME}" \
+  bash "${REPORT_SH}" >/dev/null 2>&1
+tick_readable_rc=$?
+tick_readable_status="${TICK_READABLE}/skills/revenium/read-path-status.json"
+
+if [[ "${tick_readable_rc}" -eq 0 ]]; then
+  pass "tick states: READABLE fixture exits 0"
+else
+  fail "tick states: READABLE fixture exited ${tick_readable_rc} (expected 0)"
+fi
+if [[ -f "${tick_readable_status}" ]] && grep -q '"state": "READABLE"' "${tick_readable_status}"; then
+  pass "tick states: READABLE fixture's read-path-status.json records state READABLE"
+else
+  fail "tick states: read-path-status.json missing or not READABLE: $(cat "${tick_readable_status}" 2>/dev/null)"
+fi
+if grep -q "^msg_tick_readable$" "${tick_readable_argv}"; then
+  pass "tick states: READABLE fixture's completion (seq 0) was actually metered"
+else
+  fail "tick states: expected msg_tick_readable in captured argv"
+fi
+
+# --- EMPTY tick (cron-only session) ---
+TICK_EMPTY=$(mk_tick_home)
+TICK_EMPTY_DB="${TICK_EMPTY}/agents/main/agent/openclaw-agent.sqlite"
+mk_store "${TICK_EMPTY_DB}"
+mk_session "${TICK_EMPTY_DB}" "aaaaaaaa-0000-0000-0000-000000000061" "agent:main:cron:x" "cron" 100
+
+OPENCLAW_HOME="${TICK_EMPTY}" HOME="${TICK_FAKE_HOME}" bash "${REPORT_SH}" >/dev/null 2>&1
+tick_empty_rc=$?
+tick_empty_status="${TICK_EMPTY}/skills/revenium/read-path-status.json"
+
+if [[ "${tick_empty_rc}" -eq 0 ]]; then
+  pass "tick states: EMPTY fixture (cron-only) exits 0"
+else
+  fail "tick states: EMPTY fixture exited ${tick_empty_rc} (expected 0)"
+fi
+if [[ -f "${tick_empty_status}" ]] && grep -q '"state": "EMPTY"' "${tick_empty_status}"; then
+  pass "tick states: EMPTY fixture's read-path-status.json records state EMPTY"
+else
+  fail "tick states: read-path-status.json missing or not EMPTY: $(cat "${tick_empty_status}" 2>/dev/null)"
+fi
+
+# --- UNREADABLE tick (no store file at all) ---
+TICK_UNREADABLE=$(mk_tick_home)
+
+OPENCLAW_HOME="${TICK_UNREADABLE}" HOME="${TICK_FAKE_HOME}" bash "${REPORT_SH}" >/dev/null 2>&1
+tick_unreadable_rc1=$?
+tick_unreadable_status="${TICK_UNREADABLE}/skills/revenium/read-path-status.json"
+tick_unreadable_ts1=$(python3 -c "import json; print(json.load(open('${tick_unreadable_status}'))['timestamp'])" 2>/dev/null || true)
+
+if [[ "${tick_unreadable_rc1}" -ne 0 ]]; then
+  pass "tick states: UNREADABLE fixture (no store file) exits non-zero"
+else
+  fail "tick states: UNREADABLE fixture exited 0 (expected non-zero)"
+fi
+if [[ -f "${tick_unreadable_status}" ]] && grep -q '"state": "UNREADABLE"' "${tick_unreadable_status}"; then
+  pass "tick states: UNREADABLE fixture's read-path-status.json records state UNREADABLE"
+else
+  fail "tick states: read-path-status.json missing or not UNREADABLE: $(cat "${tick_unreadable_status}" 2>/dev/null)"
+fi
+
+# Second UNREADABLE tick over the SAME unchanged store: exactly one status
+# file must remain, holding the SECOND tick's timestamp.
+sleep 1
+OPENCLAW_HOME="${TICK_UNREADABLE}" HOME="${TICK_FAKE_HOME}" bash "${REPORT_SH}" >/dev/null 2>&1
+tick_unreadable_rc2=$?
+tick_unreadable_ts2=$(python3 -c "import json; print(json.load(open('${tick_unreadable_status}'))['timestamp'])" 2>/dev/null || true)
+tick_unreadable_file_count=$(find "${TICK_UNREADABLE}/skills/revenium" -maxdepth 1 -name "read-path-status.json*" | wc -l | tr -d ' ')
+
+if [[ "${tick_unreadable_rc2}" -ne 0 && "${tick_unreadable_file_count}" -eq 1 && "${tick_unreadable_ts2}" != "${tick_unreadable_ts1}" ]]; then
+  pass "tick states: two consecutive UNREADABLE ticks leave exactly one status file, holding the later timestamp"
+else
+  fail "tick states: UNREADABLE idempotency broken (rc2=${tick_unreadable_rc2} files=${tick_unreadable_file_count} ts1=${tick_unreadable_ts1} ts2=${tick_unreadable_ts2})"
+fi
+
+# A subsequent READABLE tick over the SAME home overwrites state back to READABLE.
+mkdir -p "$(dirname "${TICK_UNREADABLE}/agents/main/agent/openclaw-agent.sqlite")"
+mk_store "${TICK_UNREADABLE}/agents/main/agent/openclaw-agent.sqlite"
+mk_session "${TICK_UNREADABLE}/agents/main/agent/openclaw-agent.sqlite" "aaaaaaaa-0000-0000-0000-000000000062" "agent:main:main" "" 100
+OPENCLAW_HOME="${TICK_UNREADABLE}" HOME="${TICK_FAKE_HOME}" bash "${REPORT_SH}" >/dev/null 2>&1
+if grep -q '"state": "READABLE"' "${tick_unreadable_status}"; then
+  pass "tick states: a subsequent readable tick overwrites state back to READABLE"
+else
+  fail "tick states: state did not flip back to READABLE: $(cat "${tick_unreadable_status}" 2>/dev/null)"
+fi
+
+# --- Obsolete offsets notice (D-07): exactly one INFO line, file byte-identical ---
+# The notice is unconditional on every READABLE tick, but set_offset only
+# WRITES when a session has new rows to advance past — so "byte-identical"
+# is tested across a SECOND tick over an already-fully-processed session
+# (the first, priming tick legitimately changes the file from {} to a real
+# entry; that's expected and untested here).
+TICK_OFFSETS=$(mk_tick_home)
+TICK_OFFSETS_DB="${TICK_OFFSETS}/agents/main/agent/openclaw-agent.sqlite"
+mk_store "${TICK_OFFSETS_DB}"
+mk_session "${TICK_OFFSETS_DB}" "aaaaaaaa-0000-0000-0000-000000000063" "agent:main:main" "" 100
+mk_assistant_event "${TICK_OFFSETS_DB}" "aaaaaaaa-0000-0000-0000-000000000063" 0 "msg_offsets_notice" "run_o" 100
+offsets_file="${TICK_OFFSETS}/revenium-offsets.json"
+
+# Priming tick — advances the high-water mark past this session's only row.
+OPENCLAW_HOME="${TICK_OFFSETS}" HOME="${TICK_FAKE_HOME}" bash "${REPORT_SH}" >/dev/null 2>&1
+
+offsets_sha_before=$(shasum -a 256 "${offsets_file}" | awk '{print $1}')
+offsets_tick_output=$(OPENCLAW_HOME="${TICK_OFFSETS}" HOME="${TICK_FAKE_HOME}" bash "${REPORT_SH}" 2>&1)
+offsets_sha_after=$(shasum -a 256 "${offsets_file}" | awk '{print $1}')
+obsolete_line_count=$(printf '%s\n' "${offsets_tick_output}" | grep -c "revenium-offsets.json is obsolete" || true)
+
+if [[ "${obsolete_line_count}" -eq 1 ]]; then
+  pass "tick states: exactly one INFO line noting revenium-offsets.json is obsolete"
+else
+  fail "tick states: expected exactly 1 obsolete-offsets INFO line, got ${obsolete_line_count}"
+fi
+if [[ "${offsets_sha_before}" == "${offsets_sha_after}" ]]; then
+  pass "tick states: revenium-offsets.json is byte-identical before and after the tick"
+else
+  fail "tick states: revenium-offsets.json was modified by the tick"
+fi
+
+# --- D-06: resetting the seq high-water mark to 0 must not double-bill ---
+# Two completions (seq 0 and seq 1) so a reset to 0 genuinely rewinds the
+# mark below an already-metered row, not a no-op on an already-0 value.
+TICK_RESET=$(mk_tick_home)
+TICK_RESET_DB="${TICK_RESET}/agents/main/agent/openclaw-agent.sqlite"
+mk_store "${TICK_RESET_DB}"
+mk_session "${TICK_RESET_DB}" "aaaaaaaa-0000-0000-0000-000000000065" "agent:main:main" "" 100
+mk_assistant_event "${TICK_RESET_DB}" "aaaaaaaa-0000-0000-0000-000000000065" 0 "msg_reset_0" "run_r" 100
+mk_assistant_event "${TICK_RESET_DB}" "aaaaaaaa-0000-0000-0000-000000000065" 1 "msg_reset_1" "run_r" 100
+OPENCLAW_HOME="${TICK_RESET}" HOME="${TICK_FAKE_HOME}" bash "${REPORT_SH}" >/dev/null 2>&1
+
+python3 - "${TICK_RESET}/revenium-offsets.json" "aaaaaaaa-0000-0000-0000-000000000065" <<'PY'
+import json, sys
+path, sid = sys.argv[1], sys.argv[2]
+d = json.load(open(path))
+d[sid] = 0
+json.dump(d, open(path, 'w'))
+PY
+reset_argv=$(mktemp "${TMPDIR:-/tmp}/tick-reset-argv.XXXXXX")
+STUB_REVENIUM_ARGV_FILE="${reset_argv}" OPENCLAW_HOME="${TICK_RESET}" HOME="${TICK_FAKE_HOME}" \
+  bash "${REPORT_SH}" >/dev/null 2>&1
+if ! grep -q "^--transaction-id$" "${reset_argv}"; then
+  pass "tick states: resetting the seq high-water mark to 0 meters zero new transactions (TX: ledger, not the cursor, is the gate)"
+else
+  fail "tick states: reset high-water mark caused a re-meter (--transaction-id present)"
+fi
+
+# --- Compacted-row visibility (RESEARCH Pitfall 3): one INFO line with the skip count ---
+TICK_COMPACT=$(mk_tick_home)
+TICK_COMPACT_DB="${TICK_COMPACT}/agents/main/agent/openclaw-agent.sqlite"
+mk_store "${TICK_COMPACT_DB}"
+mk_session "${TICK_COMPACT_DB}" "aaaaaaaa-0000-0000-0000-000000000064" "agent:main:main" "" 100
+mk_assistant_event "${TICK_COMPACT_DB}" "aaaaaaaa-0000-0000-0000-000000000064" 0 "msg_compact" "run_c" 100
+mk_compacted_event "${TICK_COMPACT_DB}" "aaaaaaaa-0000-0000-0000-000000000064" 1
+
+compact_output=$(OPENCLAW_HOME="${TICK_COMPACT}" HOME="${TICK_FAKE_HOME}" bash "${REPORT_SH}" 2>&1)
+if printf '%s\n' "${compact_output}" | grep -q "1 compacted (zstd) row(s) skipped"; then
+  pass "tick states: a session with one compacted row logs one INFO line reporting the skip count"
+else
+  fail "tick states: expected a compacted-row-skip INFO line, got: $(printf '%s\n' "${compact_output}" | grep -i compact || echo '(none)')"
+fi
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 echo ""
