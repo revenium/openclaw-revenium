@@ -61,8 +61,21 @@ make_openclaw_home() {
   # Symlink get-root-session-id.py so report.sh can resolve subagent->root
   # for GROUP F/G/H tests.  Groups A-E use single root sessions and never
   # invoke the resolver; the symlink is harmless for them.
+  #
+  # Phase 19 (plan 19-05, D-02): get-root-session-id.py now shells into
+  # session-store.sh for its store-parentage fallback and its id<->key
+  # translation helpers, resolved relative to get-root-session-id.py's OWN
+  # file path (never a skill-directory constant) so a real skill deployment
+  # -- where both scripts are copied into the same scripts/ directory --
+  # finds it. This fixture must therefore symlink session-store.sh alongside
+  # get-root-session-id.py, or every store-CLI call silently fails (fail-open
+  # returns "", per _store_cli's own contract) and current_key never
+  # resolves -- the resolver falls through to "no linkage found" even when
+  # a correct sidecar edge exists.
   ln -sf "${REPO_ROOT}/scripts/get-root-session-id.py" \
          "${d}/skills/revenium/scripts/get-root-session-id.py"
+  ln -sf "${REPO_ROOT}/scripts/session-store.sh" \
+         "${d}/skills/revenium/scripts/session-store.sh"
   echo '{}' > "${d}/revenium-offsets.json"
   touch "${d}/revenium-reported.ledger"
   touch "${d}/revenium-jobs.ledger"
@@ -118,6 +131,30 @@ run_report() {
   # (env: expanded VAR=val words are not recognized as assignment prefixes by
   # the shell, so without `env` an extra_env entry would be executed as the
   # command name. With no extras, `env bash ...` is behavior-identical.)
+}
+
+# ---------------------------------------------------------------------------
+# write_subagent_edge <openclaw_home> <child_uuid> <parent_uuid>
+#   Phase 19 (D-08/plan 19-05): parent->child linkage for get-root-session-id.py
+#   is no longer read from a `sessions_spawn` transcript tool-result line (that
+#   mechanism was removed in plan 19-05 — PLUG-04/RQ success criterion 3
+#   deliberately replaced it). The resolver's sidecar-primary path reads
+#   child->parent SESSION-KEY edges from skills/revenium/subagent-edges.jsonl
+#   (mirroring plugin/src/gate.js :: appendSidecarEdge / readSidecarEdges,
+#   plan 19-03), keyed by the SAME session_key mk_mirror_jsonl_dir assigns
+#   each mirrored session ("agent:main:<uuid>" — see mk-session-store.sh) —
+#   NOT the pre-2.0 "agent:main:subagent:<uuid>" key shape the old transcript
+#   marker used, which never matched a session_key this fixture harness
+#   actually creates. Appends one `{"event":"spawned", ...}` line, following
+#   the exact shape tests/test_get_root_session_id.py's write_sidecar builds
+#   (plan 19-05's own passing sidecar-resolution tests).
+# ---------------------------------------------------------------------------
+write_subagent_edge() {
+  local openclaw_home="$1" child_uuid="$2" parent_uuid="$3"
+  mkdir -p "${openclaw_home}/skills/revenium"
+  printf '%s\n' \
+    '{"event":"spawned","childSessionKey":"agent:main:'"${child_uuid}"'","parentSessionKey":"agent:main:'"${parent_uuid}"'"}' \
+    >> "${openclaw_home}/skills/revenium/subagent-edges.jsonl"
 }
 
 # ===========================================================================
@@ -605,7 +642,7 @@ rm -f "${ARGV_FILE_E1}" "${ARGV_FILE_E2}" "${ARGV_FILE_E_MERGED}"
 
 # ===========================================================================
 # GROUP F: Subagent inherits root's agentic_job_id (JROLL-01)
-#   ROOT session has a sessions_spawn link to CHILD session.
+#   ROOT session has a subagent-edges sidecar link to CHILD session.
 #   ROOT marker declares a job (root-job-1a2b).
 #   CHILD marker has its OWN job id (child-job-9z9z) — proves it is NOT shipped.
 #   After report.sh runs:
@@ -623,10 +660,10 @@ JOB_TYPE_ROOT_F="feature_development"
 TMP_HOME_F=$(make_openclaw_home)
 ARGV_FILE_F=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-f.XXXXXX")
 
-# Root session JSONL with sessions_spawn tool result — required so
-# get-root-session-id.py resolves CHILD_UUID_F -> ROOT_UUID_F.
-# toolName must be literally "sessions_spawn"; details.childSessionKey must use
-# "agent:main:subagent:<UUID>" prefix (resolver strips prefix via rsplit(":", 1)[-1]).
+# Root session JSONL (the sessions_spawn tool-result line below is retained as
+# realistic transcript content but is NOT what the resolver reads — plan
+# 19-05 replaced that walk. The write_subagent_edge call after both session
+# files is what makes get-root-session-id.py resolve CHILD_UUID_F -> ROOT_UUID_F.
 cat > "${TMP_HOME_F}/agents/main/sessions/${ROOT_UUID_F}.jsonl" <<JSONL
 {"type":"session","version":3,"id":"${ROOT_UUID_F}","timestamp":"2026-03-01T10:00:00.000Z","cwd":"/tmp/test"}
 {"type":"message","id":"spawn-msg-f1","parentId":"00000000","timestamp":"2026-03-01T10:01:00.000Z","message":{"role":"toolResult","toolName":"sessions_spawn","content":[{"type":"text","text":"{}"}],"details":{"status":"accepted","childSessionKey":"agent:main:subagent:${CHILD_UUID_F}","runId":"run-f001"}}}
@@ -647,6 +684,10 @@ printf '%s\n' '{"kind":"job","ts":"2026-03-01T10:05:00Z","sid":"'"${ROOT_UUID_F}
 # Child marker with a DIFFERENT job id — proves it is NOT shipped (JROLL-01 / D-04)
 printf '%s\n' '{"kind":"job","ts":"2026-03-01T10:03:30Z","sid":"'"${CHILD_UUID_F}"'","agentic_job_id":"child-job-9z9z","job_name":"Child Own Job","job_type":"bug_fix","status":"SUCCESS","completion_id":"comp-child-f001"}' \
   > "${TMP_HOME_F}/skills/revenium/markers/${CHILD_UUID_F}.jsonl"
+
+# Sidecar edge — the actual mechanism get-root-session-id.py resolves
+# CHILD_UUID_F -> ROOT_UUID_F through (plan 19-05, D-08 sidecar-primary path).
+write_subagent_edge "${TMP_HOME_F}" "${CHILD_UUID_F}" "${ROOT_UUID_F}"
 
 # Run report.sh for GROUP F
 run_report "${TMP_HOME_F}" "${ARGV_FILE_F}"
@@ -707,7 +748,7 @@ rm -f "${ARGV_FILE_F}"
 
 # ===========================================================================
 # GROUP G: Race window / orphan-drop — root has NO job marker yet (JROLL-02 / D-07)
-#   ROOT session has a sessions_spawn link to CHILD session.
+#   ROOT session has a subagent-edges sidecar link to CHILD session.
 #   NO root job marker written (root has not declared its job — the race).
 #   CHILD has its OWN orphan job marker (orphan-job-7x7x) — proves it is NOT shipped.
 #   After report.sh runs:
@@ -724,7 +765,8 @@ CHILD_UUID_G="a7000000-cccc-cccc-cccc-000000000002"
 TMP_HOME_G=$(make_openclaw_home)
 ARGV_FILE_G=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-g.XXXXXX")
 
-# Root session JSONL with sessions_spawn link — resolver needs this to identify CHILD as subagent
+# Root session JSONL (sessions_spawn line kept for transcript realism only —
+# see write_subagent_edge, called below, for the actual resolution linkage).
 cat > "${TMP_HOME_G}/agents/main/sessions/${ROOT_UUID_G}.jsonl" <<JSONL
 {"type":"session","version":3,"id":"${ROOT_UUID_G}","timestamp":"2026-03-02T10:00:00.000Z","cwd":"/tmp/test"}
 {"type":"message","id":"spawn-msg-g1","parentId":"00000000","timestamp":"2026-03-02T10:01:00.000Z","message":{"role":"toolResult","toolName":"sessions_spawn","content":[{"type":"text","text":"{}"}],"details":{"status":"accepted","childSessionKey":"agent:main:subagent:${CHILD_UUID_G}","runId":"run-g001"}}}
@@ -741,6 +783,9 @@ JSONL
 # Child has its OWN orphan marker — proves the orphan id is dropped, not shipped (D-04/D-07)
 printf '%s\n' '{"kind":"job","ts":"2026-03-02T10:03:30Z","sid":"'"${CHILD_UUID_G}"'","agentic_job_id":"orphan-job-7x7x","job_name":"Orphan Job","job_type":"bug_fix","status":"SUCCESS","completion_id":"comp-child-g001"}' \
   > "${TMP_HOME_G}/skills/revenium/markers/${CHILD_UUID_G}.jsonl"
+
+# Sidecar edge — resolver needs this to identify CHILD_UUID_G as ROOT_UUID_G's subagent.
+write_subagent_edge "${TMP_HOME_G}" "${CHILD_UUID_G}" "${ROOT_UUID_G}"
 
 # Run report.sh for GROUP G
 run_report "${TMP_HOME_G}" "${ARGV_FILE_G}"
@@ -800,7 +845,7 @@ rm -f "${ARGV_FILE_G}"
 
 # ===========================================================================
 # GROUP H: Subagent job markers suppressed; root still creates once (JROLL-03)
-#   ROOT session with sessions_spawn link to CHILD; BOTH have completions.
+#   ROOT session with a subagent-edges sidecar link to CHILD; BOTH have completions.
 #   ROOT marker declares job root-job-5e6f (enables JROLL-01 inherit path).
 #   CHILD marker has its OWN job id sub-job-3c4d — proves subagent-own-job
 #   marker is suppressed (JROLL-03): no JOB:sub-job-3c4d: ledger rows.
@@ -820,7 +865,9 @@ SUB_JOB_ID_H="sub-job-3c4d"
 TMP_HOME_H=$(make_openclaw_home)
 ARGV_FILE_H=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-h.XXXXXX")
 
-# Root session JSONL with sessions_spawn link AND a root completion
+# Root session JSONL with a root completion (sessions_spawn line kept for
+# transcript realism only — see write_subagent_edge, called below, for the
+# actual resolution linkage).
 cat > "${TMP_HOME_H}/agents/main/sessions/${ROOT_UUID_H}.jsonl" <<JSONL
 {"type":"session","version":3,"id":"${ROOT_UUID_H}","timestamp":"2026-03-03T10:00:00.000Z","cwd":"/tmp/test"}
 {"type":"message","id":"spawn-msg-h1","parentId":"00000000","timestamp":"2026-03-03T10:01:00.000Z","message":{"role":"toolResult","toolName":"sessions_spawn","content":[{"type":"text","text":"{}"}],"details":{"status":"accepted","childSessionKey":"agent:main:subagent:${CHILD_UUID_H}","runId":"run-h001"}}}
@@ -841,6 +888,9 @@ printf '%s\n' '{"kind":"job","ts":"2026-03-03T10:05:00Z","sid":"'"${ROOT_UUID_H}
 # Child marker with the subagent's OWN job id — must be suppressed (JROLL-03)
 printf '%s\n' '{"kind":"job","ts":"2026-03-03T10:03:30Z","sid":"'"${CHILD_UUID_H}"'","agentic_job_id":"'"${SUB_JOB_ID_H}"'","job_name":"Subagent Own Job","job_type":"feature_development","status":"SUCCESS","completion_id":"comp-child-h001"}' \
   > "${TMP_HOME_H}/skills/revenium/markers/${CHILD_UUID_H}.jsonl"
+
+# Sidecar edge — resolver needs this to identify CHILD_UUID_H as ROOT_UUID_H's subagent.
+write_subagent_edge "${TMP_HOME_H}" "${CHILD_UUID_H}" "${ROOT_UUID_H}"
 
 # Run report.sh for GROUP H
 run_report "${TMP_HOME_H}" "${ARGV_FILE_H}"
