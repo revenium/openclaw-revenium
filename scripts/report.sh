@@ -1374,84 +1374,29 @@ PY
 
   # ---------------------------------------------------------------------------
   # toolCall scan loop — AFTER completion metering (TOOLEV-04 sequencing rule).
-  # Scans the same session file for toolCall content items; for each:
+  # Reads the D-01 seam directly (the call below) for each toolCall content
+  # item; for each row:
   #   1. _register_tool (create-once, registry ledger gated)
   #   2. _meter_tool_event (at-most-once, tool-events ledger gated)
   # CRITICAL: NEVER touch failed_count/reported_count; NEVER return/exit.
   # Gated on TOOLS_CLI_CAPABLE (TOOLEV-04).
+  #
+  # Two things the deleted Python transcript scan used to do implicitly are
+  # now explicit in the seam's SQL: (1) the call-to-result correlation is an
+  # exact structural match on the tool-call identifier (a LEFT JOIN on
+  # toolCallId), never a scan/substring match over the transcript — D-19,
+  # spike 011 hit a real false match from substring correlation; (2) the
+  # duration now prefers the toolResult's own recorded `durationMs` value
+  # over a start/end timestamp subtraction, which is strictly higher
+  # fidelity and is the field the live store actually carries.
+  # Cursor-bound by ${offset}, same as store_completions above — bounded
+  # read volume, not a correctness gate (the tool-events ledger is).
   # ---------------------------------------------------------------------------
   if [[ "${TOOLS_CLI_CAPABLE}" == "true" ]]; then
     local tool_scan_tmp
     tool_scan_tmp=$(mktemp)
 
-    SESSION_FILE="${session_file}" python3 - <<'PY' 2>/dev/null > "${tool_scan_tmp}" || true
-import json, os
-from datetime import datetime, timezone
-
-sf = os.environ.get('SESSION_FILE', '')
-
-def parse_ts(s):
-    try: return datetime.fromisoformat(s.replace('Z', '+00:00'))
-    except Exception: pass
-    for fmt in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ'):
-        try: return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
-        except Exception: pass
-    return None
-
-tool_calls = {}   # toolcall_id -> {name, parent_msg_ts}
-tool_results = {} # toolcall_id -> {result_ts, is_error, error_msg}
-try:
-    with open(sf, encoding='utf-8') as fh:
-        for line in fh:
-            line = line.strip()
-            if not line: continue
-            try: r = json.loads(line)
-            except: continue
-            if r.get('type') != 'message': continue
-            msg = r.get('message', {})
-            if msg.get('role') == 'assistant':
-                for item in msg.get('content', []):
-                    if item.get('type') == 'toolCall' and item.get('id'):
-                        tool_calls[item['id']] = {
-                            'name': item.get('name', 'unknown'),
-                            'parent_msg_ts': r.get('timestamp', ''),
-                        }
-            elif msg.get('role') == 'toolResult':
-                tc_id = msg.get('toolCallId')
-                if tc_id:
-                    err_text = ''
-                    if msg.get('isError'):
-                        for c in msg.get('content', []):
-                            if c.get('type') == 'text':
-                                err_text = c.get('text', '')[:256]
-                                break
-                    # Strip newlines/tabs/field-separator so a multi-line error
-                    # can never split into a spurious TSV row (WR-02) or shift fields.
-                    for _ch in ('\n', '\r', '\t', '\x1f'):
-                        err_text = err_text.replace(_ch, ' ')
-                    tool_results[tc_id] = {
-                        'result_ts': r.get('timestamp', ''),
-                        'is_error': 'true' if msg.get('isError') else 'false',
-                        'error_msg': err_text,
-                    }
-except Exception:
-    pass
-for tc_id, tc in tool_calls.items():
-    tr = tool_results.get(tc_id, {})
-    start_ts = parse_ts(tc['parent_msg_ts'])
-    end_ts = parse_ts(tr.get('result_ts', ''))
-    duration_ms = 0
-    if start_ts and end_ts:
-        duration_ms = max(0, int((end_ts - start_ts).total_seconds() * 1000))
-    # Join with \x1f (unit separator), NOT \t: read's IFS treats tab as
-    # whitespace and COLLAPSES empty fields, which would shift every column
-    # whenever a tool name (or other middle field) is empty. \x1f is
-    # non-whitespace, so empty fields are preserved positionally.
-    print('\x1f'.join([
-        tc_id, tc['name'], tc['parent_msg_ts'],
-        str(duration_ms), tr.get('is_error', 'false'), tr.get('error_msg', ''),
-    ]))
-PY
+    store_tool_calls "${session_id}" "${offset}" > "${tool_scan_tmp}"
 
     while IFS=$'\x1f' read -r tc_id tool_name parent_ts duration_ms is_error error_msg; do
       [[ -z "${tc_id}" ]] && continue

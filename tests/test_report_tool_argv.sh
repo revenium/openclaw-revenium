@@ -3,23 +3,29 @@
 # test_report_tool_argv.sh — Integration tests for report.sh tool registry
 # and tool-event metering (TOOLEV-01..04)
 #
+# Phase 19 (D-01/D-19): rebuilt on the synthetic-SQLite fixture harness
+# (tests/lib/mk-session-store.sh) — report.sh's toolCall scan now reads
+# store_tool_calls directly instead of scanning a transcript file. Every
+# pre-existing GROUP below is unchanged in INTENT; only the fixture
+# construction changed (mk_session/mk_assistant_event/mk_toolcall_pair
+# instead of writing JSONL lines). GROUP TR is new — the five <behavior>
+# cases from the plan's tracer task.
+#
 # Strategy:
-#   Build a tmp OPENCLAW_HOME with a session JSONL fixture containing one
-#   assistant message with a toolCall content item and its corresponding
-#   toolResult. Place stub-revenium.sh on PATH capturing all argv to
-#   STUB_REVENIUM_ARGV_FILE. Run report.sh and assert captured argv contains
-#   the expected tool registry and tool-event tokens.
-#
-# EXPECTED RESULT THIS PLAN (Wave 0 / Plan 00):
-#   This test FAILS RED — report.sh has no tool registry or tool-event wiring
-#   yet (no tools create, no meter tool-event tokens are produced). The test
-#   turns green in Wave 1 when Plans 01 (registry) and 02 (tool-event) land.
-#   Do NOT stub report.sh or weaken assertions to make it pass now.
-#
-# Fixture produces:
-#   - One TOOL_CALL completion (asst-001, stopReason toolUse, 150 tokens)
-#   - One CHAT completion (asst-002, stopReason stop, 380 tokens)
-#   - One toolCall (toolu_test001, name=read) with toolResult 250ms later
+#   Build one synthetic SQLite store per group at the real
+#   agents/<agentId>/agent/openclaw-agent.sqlite layout (store_db_paths'
+#   glob is exercised, not bypassed). The canonical fixture (GROUPs T/I/X/P)
+#   holds:
+#     - One TOOL_CALL completion (resp-001, stopReason toolUse, 150 tokens)
+#     - One CHAT completion (resp-002, stopReason stop, 380 tokens)
+#     - One toolCall (toolu_test001, name=read) with toolResult 250ms later
+#   Real live-store evidence (sample-rows.txt) shows the toolCall-bearing
+#   assistant row and the usage-bearing completion row are NOT necessarily
+#   the same row (an agentic loop's tool-invoking turn and its token-usage
+#   summary can be separate transcript_events rows) — the fixture models
+#   this as two distinct events rather than conflating them into one, which
+#   is also why store_tool_calls' correlation is a real SQL JOIN keyed on
+#   toolCallId rather than a same-message assumption.
 #   - Tool registry should register "read" as CUSTOM (BUILTIN is not a valid API enum)
 #   - Tool-event should emit for toolu_test001 with --duration-ms 250 --success
 #
@@ -34,6 +40,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPORT_SH="${REPO_ROOT}/scripts/report.sh"
 STUB_SH="${SCRIPT_DIR}/stub-revenium.sh"
+
+# shellcheck source=lib/mk-session-store.sh
+. "${SCRIPT_DIR}/lib/mk-session-store.sh"
 
 PASS=0
 FAIL=0
@@ -82,23 +91,20 @@ count_adjacent() {
 # Helper: build a fresh tmp OPENCLAW_HOME and return the path.
 # Usage: TMP_HOME=$(make_openclaw_home)
 # Creates:
-#   agents/main/sessions/
 #   skills/revenium/markers/
-#   skills/revenium/scripts/ (symlink to get-root-session-id.py)
 #   revenium-offsets.json ({})
 #   revenium-reported.ledger (empty)
 #   revenium-jobs.ledger (empty)
 #   revenium-tools.ledger (empty)
 #   revenium-tool-events.ledger (empty)
 #   skills/revenium/config.json ({"organizationName":"TestOrg"})
+# The SQLite store itself is built separately (build_canonical_fixture /
+# build_toolcall_pair) at agents/main/agent/openclaw-agent.sqlite.
 # ---------------------------------------------------------------------------
 make_openclaw_home() {
   local d
   d=$(mktemp -d "${TMPDIR:-/tmp}/test-rpt-tools-home.XXXXXX")
-  mkdir -p "${d}/agents/main/sessions" "${d}/skills/revenium/markers" \
-            "${d}/skills/revenium/scripts"
-  ln -sf "${REPO_ROOT}/scripts/get-root-session-id.py" \
-         "${d}/skills/revenium/scripts/get-root-session-id.py"
+  mkdir -p "${d}/skills/revenium/markers"
   echo '{}' > "${d}/revenium-offsets.json"
   touch "${d}/revenium-reported.ledger"
   touch "${d}/revenium-jobs.ledger"
@@ -106,6 +112,11 @@ make_openclaw_home() {
   touch "${d}/revenium-tool-events.ledger"
   echo '{"organizationName":"TestOrg"}' > "${d}/skills/revenium/config.json"
   echo "${d}"
+}
+
+# db_for <openclaw_home> — the real glob layout store_db_paths matches.
+db_for() {
+  echo "$1/agents/main/agent/openclaw-agent.sqlite"
 }
 
 # ---------------------------------------------------------------------------
@@ -125,7 +136,8 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 # run_report <OPENCLAW_HOME> <ARGV_FILE> [KEY=VALUE ...]
 #   Runs report.sh with the stub on PATH; swallows exit code.
-#   Extra KEY=VALUE args are prepended to the env.
+#   Extra KEY=VALUE args are prepended to the env. Assumes the SQLite store
+#   under <OPENCLAW_HOME> was already built by the caller.
 # ---------------------------------------------------------------------------
 run_report() {
   local openclaw_home="$1"
@@ -138,27 +150,29 @@ run_report() {
   bash "${REPORT_SH}" 2>&1 || true
 }
 
-# ===========================================================================
-# FIXTURE: canonical tool-call session (RESEARCH.md Session Fixture for Tests)
-# One toolCall (read, toolu_test001) + one toolResult 250ms later.
-# Produces: one TOOL_CALL completion (asst-001) + one CHAT completion (asst-002).
-# ===========================================================================
-SID_T1="test-tool-sid-001"
-
-# Canonical session fixture content (shared across groups to avoid repetition)
-FIXTURE_JSONL='{"type":"session","version":3,"id":"test-tool-sid-001","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp"}
-{"type":"message","id":"user-001","parentId":"00000000","timestamp":"2026-01-01T10:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Use the read tool"}]}}
-{"type":"message","id":"asst-001","parentId":"user-001","timestamp":"2026-01-01T10:01:05.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"toolu_test001","name":"read","arguments":{"file_path":"/tmp/x"}}],"stopReason":"toolUse","model":"claude-sonnet-4-6","api":"anthropic-messages","provider":"anthropic","usage":{"input":100,"output":50,"cacheRead":0,"cacheWrite":0,"totalTokens":150}}}
-{"type":"message","id":"result-001","parentId":"asst-001","timestamp":"2026-01-01T10:01:05.250Z","message":{"role":"toolResult","toolCallId":"toolu_test001","toolName":"read","isError":false,"content":[{"type":"text","text":"file contents"}]}}
-{"type":"message","id":"asst-002","parentId":"result-001","timestamp":"2026-01-01T10:01:06.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Done"}],"stopReason":"stop","model":"claude-sonnet-4-6","api":"anthropic-messages","provider":"anthropic","usage":{"input":200,"output":30,"cacheRead":150,"cacheWrite":0,"totalTokens":380}}}'
+# ---------------------------------------------------------------------------
+# build_canonical_fixture <db> <sid>
+#   One TOOL_CALL completion + one toolCall/toolResult pair (read,
+#   toolu_test001, 250ms) + one CHAT completion. Mirrors the pre-2.0
+#   FIXTURE_JSONL shape used by GROUPs T/I/X/P.
+# ---------------------------------------------------------------------------
+build_canonical_fixture() {
+  local db="$1" sid="$2"
+  mk_store "${db}"
+  mk_session "${db}" "${sid}" "agent:main:${sid}" "" 100
+  mk_assistant_event "${db}" "${sid}" 0 "resp-001-${sid}" "run-1" 150 "claude-sonnet-4-6" "2026-01-01T10:01:05.000Z" "toolUse"
+  mk_toolcall_pair "${db}" "${sid}" 1 "toolu_test001" "read" 250 "false"
+  mk_assistant_event "${db}" "${sid}" 3 "resp-002-${sid}" "run-1" 380 "claude-sonnet-4-6" "2026-01-01T10:01:06.000Z" "stop"
+}
 
 # ===========================================================================
 # GROUP T: Basic tool registry + tool-event (TOOLEV-01..03)
 # ===========================================================================
+SID_T1="10000000-aaaa-aaaa-aaaa-000000000001"
 TMP_HOME_T=$(make_openclaw_home)
 ARGV_FILE_T=$(mktemp "${TMPDIR:-/tmp}/test-rpt-tools-argv-t.XXXXXX")
 
-printf '%s\n' "${FIXTURE_JSONL}" > "${TMP_HOME_T}/agents/main/sessions/${SID_T1}.jsonl"
+build_canonical_fixture "$(db_for "${TMP_HOME_T}")" "${SID_T1}"
 
 # First run — all tool registry and tool-event argv should appear
 run_report "${TMP_HOME_T}" "${ARGV_FILE_T}"
@@ -232,8 +246,7 @@ else
   fail "TOOLEV-02: --success flag NOT found in argv (RED — tool-event will appear failed in dashboard)"
 fi
 
-# TOOLEV-02 timing: --duration-ms 250 (250ms delta from fixture timestamps)
-# asst-001 ts: 2026-01-01T10:01:05.000Z, result-001 ts: 2026-01-01T10:01:05.250Z
+# TOOLEV-02 timing: --duration-ms 250 (the fixture's toolCall/toolResult durationMs)
 if argv_vals "--duration-ms" "${ARGV_FILE_T}" | grep -q "^250$"; then
   pass "TOOLEV-02 timing: --duration-ms 250 found in argv (250ms fixture delta)"
 else
@@ -285,16 +298,17 @@ rm -f "${ARGV_FILE_T}"
 # Run report.sh TWICE against the same OPENCLAW_HOME. The second run must
 # NOT re-register the tool or re-emit the tool-event.
 # ===========================================================================
+SID_I1="20000000-aaaa-aaaa-aaaa-000000000001"
 TMP_HOME_I=$(make_openclaw_home)
 ARGV_FILE_I1=$(mktemp "${TMPDIR:-/tmp}/test-rpt-tools-argv-i1.XXXXXX")
 ARGV_FILE_I2=$(mktemp "${TMPDIR:-/tmp}/test-rpt-tools-argv-i2.XXXXXX")
 
-printf '%s\n' "${FIXTURE_JSONL}" > "${TMP_HOME_I}/agents/main/sessions/${SID_T1}.jsonl"
+build_canonical_fixture "$(db_for "${TMP_HOME_I}")" "${SID_I1}"
 
 # First run
 run_report "${TMP_HOME_I}" "${ARGV_FILE_I1}"
 
-# Second run (same OPENCLAW_HOME — no reset of offsets/ledgers)
+# Second run (same OPENCLAW_HOME — no reset of offsets/ledgers, store unchanged)
 run_report "${TMP_HOME_I}" "${ARGV_FILE_I2}"
 
 # Merge both argv files for cross-run token count assertions
@@ -315,7 +329,6 @@ fi
 # the TOOLS_CLI_CAPABLE probe (`revenium meter tool-event --help`) also emits
 # consecutive "meter\ntool-event" tokens in the argv file on every cron tick.
 # --duration-ms ONLY appears in real `meter tool-event` posts, not in --help probes.
-# (Pattern from test_report_jobs_argv.sh lines 491-493: probe-awareness via distinct flag.)
 meter_tool_event_count=$(count_grep "^--duration-ms$" "${ARGV_FILE_I_MERGED}")
 if [[ "${meter_tool_event_count}" -eq 1 ]]; then
   pass "TOOLEV-04 event idempotency: meter tool-event called exactly once across two runs (tool-events ledger dedup)"
@@ -334,10 +347,11 @@ rm -f "${ARGV_FILE_I1}" "${ARGV_FILE_I2}" "${ARGV_FILE_I_MERGED}"
 # The fixture tool is `read` (id=read, toolCall id=toolu_test001), so seeding
 # these superstrings MUST NOT suppress the real calls when dedup is anchored.
 # ===========================================================================
+SID_X1="30000000-aaaa-aaaa-aaaa-000000000001"
 TMP_HOME_X=$(make_openclaw_home)
 ARGV_FILE_X=$(mktemp "${TMPDIR:-/tmp}/test-rpt-tools-argv-x.XXXXXX")
 
-printf '%s\n' "${FIXTURE_JSONL}" > "${TMP_HOME_X}/agents/main/sessions/${SID_T1}.jsonl"
+build_canonical_fixture "$(db_for "${TMP_HOME_X}")" "${SID_X1}"
 # Pre-seed superstring ledger entries (prefix-collision bait)
 printf 'TOOL:read-file:123.000\n'       > "${TMP_HOME_X}/revenium-tools.ledger"
 printf 'TOOLEV:toolu_test0019\n'        > "${TMP_HOME_X}/revenium-tool-events.ledger"
@@ -368,14 +382,16 @@ rm -f "${ARGV_FILE_X}"
 # --tool-id ""` — garbage that the API rejects and that pollutes the ledger.
 # report.sh must skip them entirely.
 # ===========================================================================
+SID_E1="40000000-aaaa-aaaa-aaaa-000000000001"
 TMP_HOME_E=$(make_openclaw_home)
 ARGV_FILE_E=$(mktemp "${TMPDIR:-/tmp}/test-rpt-tools-argv-e.XXXXXX")
 
-# Fixture: one assistant toolCall with an EMPTY name + its toolResult.
-EMPTY_FIXTURE='{"type":"session","version":3,"id":"test-tool-sid-empty","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp"}
-{"type":"message","id":"asst-e1","parentId":"00000000","timestamp":"2026-01-01T10:01:05.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"toolu_empty001","name":"","arguments":{}}],"stopReason":"toolUse","model":"claude-sonnet-4-6","api":"anthropic-messages","provider":"anthropic","usage":{"input":10,"output":5,"cacheRead":0,"cacheWrite":0,"totalTokens":15}}}
-{"type":"message","id":"result-e1","parentId":"asst-e1","timestamp":"2026-01-01T10:01:05.250Z","message":{"role":"toolResult","toolCallId":"toolu_empty001","toolName":"","isError":false,"content":[{"type":"text","text":"ok"}]}}'
-printf '%s\n' "${EMPTY_FIXTURE}" > "${TMP_HOME_E}/agents/main/sessions/empty-tool-sid.jsonl"
+DB_E="$(db_for "${TMP_HOME_E}")"
+mk_store "${DB_E}"
+mk_session "${DB_E}" "${SID_E1}" "agent:main:${SID_E1}" "" 100
+# One toolCall with an EMPTY name + its toolResult. No accompanying
+# usage-bearing completion — this group only exercises the toolCall scan.
+mk_toolcall_pair "${DB_E}" "${SID_E1}" 0 "toolu_empty001" "" 10 "false"
 
 run_report "${TMP_HOME_E}" "${ARGV_FILE_E}"
 
@@ -407,10 +423,11 @@ rm -f "${ARGV_FILE_E}"
 # STUB_REVENIUM_NO_TOOLS=1 forces the tools probe to fail → TOOLS_CLI_CAPABLE=false.
 # All tool work must be skipped; meter completion must still appear.
 # ===========================================================================
+SID_P1="50000000-aaaa-aaaa-aaaa-000000000001"
 TMP_HOME_P=$(make_openclaw_home)
 ARGV_FILE_P=$(mktemp "${TMPDIR:-/tmp}/test-rpt-tools-argv-p.XXXXXX")
 
-printf '%s\n' "${FIXTURE_JSONL}" > "${TMP_HOME_P}/agents/main/sessions/${SID_T1}.jsonl"
+build_canonical_fixture "$(db_for "${TMP_HOME_P}")" "${SID_P1}"
 
 # Run with STUB_REVENIUM_NO_TOOLS=1 — probe fails → TOOLS_CLI_CAPABLE=false
 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_P}" \
@@ -443,6 +460,123 @@ else
 fi
 
 rm -f "${ARGV_FILE_P}"
+
+# ===========================================================================
+# GROUP TR: Tracer — "a tool call in the store becomes one tool-event"
+# The five <behavior> cases from Task 1 of 19-04-PLAN.md. Session id/tool
+# call id/duration deliberately mirror the live sample-rows.txt evidence
+# (exec / toolu_..., durationMs 2085) that motivated store_tool_calls.
+# ===========================================================================
+
+# --- TR-1/TR-2: one call+result pair -> exactly one tool-event + one registration
+SID_TR1="60000000-aaaa-aaaa-aaaa-000000000001"
+TMP_HOME_TR1=$(make_openclaw_home)
+ARGV_FILE_TR1=$(mktemp "${TMPDIR:-/tmp}/test-rpt-tools-argv-tr1.XXXXXX")
+DB_TR1="$(db_for "${TMP_HOME_TR1}")"
+mk_store "${DB_TR1}"
+mk_session "${DB_TR1}" "${SID_TR1}" "agent:main:${SID_TR1}" "" 100
+mk_toolcall_pair "${DB_TR1}" "${SID_TR1}" 0 "toolu_tracer_001" "exec" 2085 "false"
+
+run_report "${TMP_HOME_TR1}" "${ARGV_FILE_TR1}"
+
+if [[ "$(count_grep "^--duration-ms$" "${ARGV_FILE_TR1}")" -eq 1 ]] \
+   && argv_vals "--duration-ms" "${ARGV_FILE_TR1}" | grep -q "^2085$"; then
+  pass "GROUP TR-1: exactly one tool-event argv carrying duration 2085"
+else
+  fail "GROUP TR-1: expected exactly one --duration-ms 2085 in captured argv"
+fi
+
+if grep -q "^TOOLEV:toolu_tracer_001$" "${TMP_HOME_TR1}/revenium-tool-events.ledger" 2>/dev/null; then
+  pass "GROUP TR-1: tool-events ledger keyed by toolu_tracer_001"
+else
+  fail "GROUP TR-1: TOOLEV:toolu_tracer_001 NOT found in tool-events ledger"
+fi
+
+if [[ "$(count_adjacent "tools" "create" "${ARGV_FILE_TR1}")" -eq 1 ]]; then
+  pass "GROUP TR-2: exactly one tools create registration for the fixture's tool"
+else
+  fail "GROUP TR-2: expected exactly one tools create, got $(count_adjacent "tools" "create" "${ARGV_FILE_TR1}")"
+fi
+
+# --- TR-3: a second tick over the unchanged fixture captures zero additional tool-event
+ARGV_FILE_TR1_TICK2=$(mktemp "${TMPDIR:-/tmp}/test-rpt-tools-argv-tr1-tick2.XXXXXX")
+run_report "${TMP_HOME_TR1}" "${ARGV_FILE_TR1_TICK2}"
+if [[ "$(count_grep "^--duration-ms$" "${ARGV_FILE_TR1_TICK2}")" -eq 0 ]]; then
+  pass "GROUP TR-3: second tick over the unchanged fixture emits zero additional tool-events"
+else
+  fail "GROUP TR-3: second tick re-emitted a tool-event (ledger dedup broken)"
+fi
+rm -f "${ARGV_FILE_TR1}" "${ARGV_FILE_TR1_TICK2}"
+
+# --- TR-4: a toolCall with no matching toolResult still produces one tool-event,
+#     error flag false, empty error text (the LEFT JOIN's result-less-call path).
+SID_TR4="60000000-aaaa-aaaa-aaaa-000000000004"
+TMP_HOME_TR4=$(make_openclaw_home)
+ARGV_FILE_TR4=$(mktemp "${TMPDIR:-/tmp}/test-rpt-tools-argv-tr4.XXXXXX")
+DB_TR4="$(db_for "${TMP_HOME_TR4}")"
+mk_store "${DB_TR4}"
+mk_session "${DB_TR4}" "${SID_TR4}" "agent:main:${SID_TR4}" "" 100
+# mk_toolcall_pair always inserts both rows; delete the result row afterward
+# to model a toolCall whose result has not landed yet.
+mk_toolcall_pair "${DB_TR4}" "${SID_TR4}" 0 "toolu_noresult001" "search" 999 "false"
+"${STUB_SQLITE3_BIN:-sqlite3}" "${DB_TR4}" "DELETE FROM transcript_events WHERE session_id='${SID_TR4}' AND seq=1;"
+
+run_report "${TMP_HOME_TR4}" "${ARGV_FILE_TR4}"
+
+if [[ "$(count_grep "^--duration-ms$" "${ARGV_FILE_TR4}")" -eq 1 ]] \
+   && argv_vals "--duration-ms" "${ARGV_FILE_TR4}" | grep -q "^0$"; then
+  pass "GROUP TR-4: a result-less toolCall still emits one tool-event (duration 0)"
+else
+  fail "GROUP TR-4: expected exactly one --duration-ms 0 for the result-less toolCall"
+fi
+if grep -q "^--success$" "${ARGV_FILE_TR4}" && ! grep -q "^--error-message$" "${ARGV_FILE_TR4}"; then
+  pass "GROUP TR-4: result-less toolCall reports success (error flag false) with no error text"
+else
+  fail "GROUP TR-4: result-less toolCall did not report success/empty-error as expected"
+fi
+rm -f "${ARGV_FILE_TR4}"
+
+# --- TR-5: a toolResult whose error text spans two lines produces a single-line
+#     captured argv value — no field is shifted (T-19-13).
+SID_TR5="60000000-aaaa-aaaa-aaaa-000000000005"
+TMP_HOME_TR5=$(make_openclaw_home)
+ARGV_FILE_TR5=$(mktemp "${TMPDIR:-/tmp}/test-rpt-tools-argv-tr5.XXXXXX")
+DB_TR5="$(db_for "${TMP_HOME_TR5}")"
+mk_store "${DB_TR5}"
+mk_session "${DB_TR5}" "${SID_TR5}" "agent:main:${SID_TR5}" "" 100
+TR5_CALL_JSON='{"type":"message","id":"call-tr5","parentId":"parent-tr5","timestamp":"2026-09-24T04:29:20.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"toolu_multiline001","name":"exec","arguments":{}}]}}'
+mk_event "${DB_TR5}" "${SID_TR5}" 0 "${TR5_CALL_JSON}"
+TR5_RESULT_JSON=$(python3 - <<'PY'
+import json
+doc = {
+    "type": "message",
+    "id": "result-tr5",
+    "parentId": "call-tr5",
+    "timestamp": "2026-09-24T04:29:22.085Z",
+    "message": {
+        "role": "toolResult",
+        "toolCallId": "toolu_multiline001",
+        "toolName": "exec",
+        "content": [{"type": "text", "text": "line one\nline two"}],
+        "details": {"status": "failed", "durationMs": 500},
+        "isError": True,
+    },
+}
+print(json.dumps(doc))
+PY
+)
+mk_event "${DB_TR5}" "${SID_TR5}" 1 "${TR5_RESULT_JSON}"
+
+run_report "${TMP_HOME_TR5}" "${ARGV_FILE_TR5}"
+
+error_msg_lines=$(argv_vals "--error-message" "${ARGV_FILE_TR5}")
+error_msg_count=$(printf '%s\n' "${error_msg_lines}" | grep -c . || true)
+if [[ "${error_msg_count}" -eq 1 ]] && printf '%s' "${error_msg_lines}" | grep -q "line one line two"; then
+  pass "GROUP TR-5: two-line error text is captured as a single-line argv value"
+else
+  fail "GROUP TR-5: multi-line error text was not collapsed to a single argv line (got: ${error_msg_lines})"
+fi
+rm -f "${ARGV_FILE_TR5}"
 
 # ===========================================================================
 # Summary

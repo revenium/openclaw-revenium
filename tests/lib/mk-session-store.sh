@@ -172,21 +172,27 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-# mk_assistant_event <db> <session_id> <seq> <response_id> <run_id> <total_tokens> [model]
-# Builds the record shape verbatim from tracer-turn-readback.txt.
+# mk_assistant_event <db> <session_id> <seq> <response_id> <run_id> <total_tokens> [model] [timestamp]
+# Builds the record shape verbatim from tracer-turn-readback.txt. [timestamp]
+# is the record's top-level ISO-8601 `.timestamp` field (defaults to the
+# original fixed value) — callers that need distinct, orderable completion
+# timestamps (e.g. Phase D marker-after-completion correlation tests) pass
+# their own. [stop_reason] (9th, optional) defaults to "stop"; pass
+# "toolUse" to model a TOOL_CALL-classified completion (report.sh's
+# operation_type switch reads $.message.stopReason).
 # ---------------------------------------------------------------------------
 mk_assistant_event() {
-  local db="$1" sid="$2" seq="$3" response_id="$4" run_id="$5" total_tokens="$6" model="${7:-claude-sonnet-4-6}"
+  local db="$1" sid="$2" seq="$3" response_id="$4" run_id="$5" total_tokens="$6" model="${7:-claude-sonnet-4-6}" timestamp="${8:-2026-09-24T04:29:16.671Z}" stop_reason="${9:-stop}"
   local event_json
   event_json=$(
-    RID="${response_id}" RUNID="${run_id}" TT="${total_tokens}" MODEL="${model}" SEQ="${seq}" python3 - <<'PY'
+    RID="${response_id}" RUNID="${run_id}" TT="${total_tokens}" MODEL="${model}" SEQ="${seq}" TS="${timestamp}" SR="${stop_reason}" python3 - <<'PY'
 import json, os
 seq = int(os.environ['SEQ'])
 doc = {
     "type": "message",
     "id": f"msg-id-{seq}",
     "parentId": f"parent-id-{seq}",
-    "timestamp": "2026-09-24T04:29:16.671Z",
+    "timestamp": os.environ['TS'],
     "message": {
         "role": "assistant",
         "content": [{"type": "text", "text": "ok"}],
@@ -200,7 +206,7 @@ doc = {
             "cacheWrite": 0,
             "totalTokens": int(os.environ['TT']),
         },
-        "stopReason": "stop",
+        "stopReason": os.environ['SR'],
         "timestamp": 1790224153946,
         "responseId": os.environ['RID'],
         "responseModel": os.environ['MODEL'],
