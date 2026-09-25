@@ -3,8 +3,16 @@
 # test_report_argv.sh — Integration tests for report.sh task-type/agent wiring
 # (METER-03 / TRACE-01 / TRACE-02)
 #
+# Phase 19 (D-01/D-05): rebuilt on the synthetic-SQLite fixture harness
+# (tests/lib/mk-session-store.sh) — report.sh's session discovery and
+# completion metering are now SQL-only. Every scenario below is unchanged in
+# INTENT from the pre-2.0 JSONL-fixture version; only the fixture
+# construction changed.
+#
 # Strategy:
-#   Build a tmp OPENCLAW_HOME with four session JSONL fixtures:
+#   Build one synthetic SQLite store at the real
+#   agents/<agentId>/agent/openclaw-agent.sqlite layout (store_db_paths' glob
+#   is exercised, not bypassed), holding four sessions:
 #
 #   Session A (Phase D — marker-after-completion, no completion_id):
 #     Two completions each followed by a marker WITHOUT a completion_id.
@@ -16,16 +24,31 @@
 #     Every completion tagged --task-type unclassified.
 #
 #   Session C (Phase A — exact completion_id match):
-#     Marker carries completion_id = comp's .id → exact match → tagged correctly.
+#     Marker carries completion_id = comp's responseId → exact match → tagged
+#     correctly. LOAD-BEARING CHANGE (D-05): under the pre-2.0 read path the
+#     marker's completion_id matched the record's top-level .id; under the
+#     SQL seam, report.sh's Phase A correlation matches the marker against
+#     the completion's transaction id, which store_completions defines as
+#     responseId (D-05). If this fixture instead set completion_id to the
+#     record's own synthetic .id (msg-id-N), the mismatch would NOT be
+#     visible as an obvious failure here — Phase D's timestamp fallback
+#     would still produce a plausible-looking "analysis" label, silently
+#     masking the exact-match path being broken. Session C's marker
+#     therefore MUST use the completion's responseId, so a regression in
+#     that correlation shows up as a red test rather than a quiet
+#     degradation to the fallback path.
 #
 #   Session D (anti-bleed — id-keyed marker does NOT steal label for other turns):
-#     comp1 has a matching marker (completion_id=comp1_id) → tagged
+#     comp1 has a matching marker (completion_id=comp1's responseId) → tagged
 #     comp2 has NO marker referencing it → unclassified (must not steal comp1's)
 #
 #   - Place stub-revenium.sh on PATH capturing all argv to STUB_REVENIUM_ARGV_FILE
 #   - Run report.sh
 #   - Assert captured argv contains --task-type with correct labels and
 #     --agent with "openclaw-" prefix
+#
+# tests/fixtures/sessions/*.jsonl are pre-2.0 fixtures, left untouched on
+# disk — they are not read by this suite.
 # =============================================================================
 
 set -uo pipefail
@@ -34,6 +57,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPORT_SH="${REPO_ROOT}/scripts/report.sh"
 STUB_SH="${SCRIPT_DIR}/stub-revenium.sh"
+
+# shellcheck source=lib/mk-session-store.sh
+. "${SCRIPT_DIR}/lib/mk-session-store.sh"
 
 PASS=0
 FAIL=0
@@ -45,11 +71,12 @@ fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 # Build tmp OPENCLAW_HOME
 # ---------------------------------------------------------------------------
 TMP_HOME=$(mktemp -d "${TMPDIR:-/tmp}/test-rpt-home.XXXXXX")
-TMP_SESSIONS="${TMP_HOME}/agents/main/sessions"
 TMP_SKILL_DIR="${TMP_HOME}/skills/revenium"
 TMP_MARKERS="${TMP_SKILL_DIR}/markers"
+DB="${TMP_HOME}/agents/main/agent/openclaw-agent.sqlite"
 
-mkdir -p "${TMP_SESSIONS}" "${TMP_SKILL_DIR}" "${TMP_MARKERS}"
+mkdir -p "${TMP_SKILL_DIR}" "${TMP_MARKERS}"
+mk_store "${DB}"
 
 # Offsets file (empty — process all lines)
 OFFSETS_FILE="${TMP_HOME}/revenium-offsets.json"
@@ -72,23 +99,17 @@ echo '{"organizationName":"TestOrg"}' > "${CONFIG_FILE}"
 # whose marker_ts >= completion_ts.
 #
 # Timestamps:
-#   T1: comp1 response    2026-01-01T10:06:00Z
+#   T1: comp1 response    2026-01-01T10:06:00.000Z
 #   T2: marker research   2026-01-01T10:07:00Z  → marker after comp1 → research
-#   T3: comp2 response    2026-01-01T10:09:00Z
+#   T3: comp2 response    2026-01-01T10:09:00.000Z
 #   T4: marker generation 2026-01-01T10:10:00Z  → marker after comp2 → generation
 #
 # Markers for Session A have NO completion_id (legacy/Phase-D path).
 # ---------------------------------------------------------------------------
 SID_A="aaaaaaaa-1111-1111-1111-000000000001"
-SESSION_A="${TMP_SESSIONS}/${SID_A}.jsonl"
-
-cat > "${SESSION_A}" <<'JSONL'
-{"type":"session","version":3,"id":"aaaaaaaa-1111-1111-1111-000000000001","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
-{"type":"message","id":"user-A-001","parentId":"00000000","timestamp":"2026-01-01T10:04:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Research task"}]}}
-{"type":"message","id":"comp-A-001","parentId":"user-A-001","timestamp":"2026-01-01T10:06:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Research response"}],"usage":{"input":100,"output":50,"cacheRead":0,"cacheWrite":0,"totalTokens":150}}}
-{"type":"message","id":"user-A-002","parentId":"comp-A-001","timestamp":"2026-01-01T10:08:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Generation task"}]}}
-{"type":"message","id":"comp-A-002","parentId":"user-A-002","timestamp":"2026-01-01T10:09:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Generation response"}],"usage":{"input":120,"output":60,"cacheRead":0,"cacheWrite":0,"totalTokens":180}}}
-JSONL
+mk_session "${DB}" "${SID_A}" "agent:main:${SID_A}" "" 100
+mk_assistant_event "${DB}" "${SID_A}" 0 "resp-A-001" "run-A-1" 150 "claude-sonnet-4-5" "2026-01-01T10:06:00.000Z"
+mk_assistant_event "${DB}" "${SID_A}" 1 "resp-A-002" "run-A-1" 180 "claude-sonnet-4-5" "2026-01-01T10:09:00.000Z"
 
 # Marker file for session A: two markers WITHOUT completion_id (legacy Phase D markers).
 # Markers are written AFTER their respective completions.
@@ -100,60 +121,46 @@ echo '{"ts":"2026-01-01T10:10:00Z","task_type":"generation"}' >> "${MARKER_A}"
 # Session B: no marker file (should be unclassified)
 # ---------------------------------------------------------------------------
 SID_B="bbbbbbbb-2222-2222-2222-000000000002"
-SESSION_B="${TMP_SESSIONS}/${SID_B}.jsonl"
-
-cat > "${SESSION_B}" <<'JSONL'
-{"type":"session","version":3,"id":"bbbbbbbb-2222-2222-2222-000000000002","timestamp":"2026-01-01T11:00:00.000Z","cwd":"/tmp/test"}
-{"type":"message","id":"user-B-001","parentId":"00000000","timestamp":"2026-01-01T11:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Some task"}]}}
-{"type":"message","id":"comp-B-001","parentId":"user-B-001","timestamp":"2026-01-01T11:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Some response"}],"usage":{"input":80,"output":40,"cacheRead":0,"cacheWrite":0,"totalTokens":120}}}
-JSONL
+mk_session "${DB}" "${SID_B}" "agent:main:${SID_B}" "" 101
+mk_assistant_event "${DB}" "${SID_B}" 0 "resp-B-001" "run-B-1" 120 "claude-sonnet-4-5" "2026-01-01T11:02:00.000Z"
 
 # No marker file for SID_B
 
 # ---------------------------------------------------------------------------
 # Session C: Phase A — exact completion_id match
 #
-# The marker carries completion_id = comp-C-001 (the completion's .id).
-# Phase A should match it regardless of timestamp ordering.
-# The marker ts is AFTER the completion ts (real lifecycle).
+# The marker carries completion_id = the completion's responseId (D-05: the
+# transaction id store_completions dedups on). Phase A should match it
+# regardless of timestamp ordering. The marker ts is AFTER the completion ts
+# (real lifecycle).
 # ---------------------------------------------------------------------------
 SID_C="cccccccc-3333-3333-3333-000000000003"
-SESSION_C="${TMP_SESSIONS}/${SID_C}.jsonl"
+mk_session "${DB}" "${SID_C}" "agent:main:${SID_C}" "" 102
+mk_assistant_event "${DB}" "${SID_C}" 0 "resp-C-001" "run-C-1" 135 "claude-sonnet-4-5" "2026-01-01T12:02:00.000Z"
 
-cat > "${SESSION_C}" <<'JSONL'
-{"type":"session","version":3,"id":"cccccccc-3333-3333-3333-000000000003","timestamp":"2026-01-01T12:00:00.000Z","cwd":"/tmp/test"}
-{"type":"message","id":"user-C-001","parentId":"00000000","timestamp":"2026-01-01T12:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Analysis task"}]}}
-{"type":"message","id":"comp-C-001","parentId":"user-C-001","timestamp":"2026-01-01T12:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Analysis response"}],"usage":{"input":90,"output":45,"cacheRead":0,"cacheWrite":0,"totalTokens":135}}}
-JSONL
-
-# Marker for session C: includes completion_id → Phase A exact match.
+# Marker for session C: includes completion_id (the responseId) → Phase A exact match.
 MARKER_C="${TMP_MARKERS}/${SID_C}.jsonl"
-echo '{"ts":"2026-01-01T12:03:00Z","task_type":"analysis","completion_id":"comp-C-001"}' > "${MARKER_C}"
+echo '{"ts":"2026-01-01T12:03:00Z","task_type":"analysis","completion_id":"resp-C-001"}' > "${MARKER_C}"
 
 # ---------------------------------------------------------------------------
 # Session D: anti-bleed — id-keyed marker must NOT steal label from other turns
 #
-# comp-D-001 has a matching marker (completion_id=comp-D-001) → tagged "debugging"
-# comp-D-002 has NO marker referencing it → must be unclassified
-#   (the id-keyed marker for comp-D-001 must not bleed onto comp-D-002 via
-#    timestamp fallback, because markers with a completion_id are excluded from
-#    Phase D according to the contract: they belong to a specific completion).
+# comp-D-001 (responseId resp-D-001) has a matching marker → tagged "debugging"
+# comp-D-002 (responseId resp-D-002) has NO marker referencing it → must be
+#   unclassified (the id-keyed marker for comp-D-001 must not bleed onto
+#   comp-D-002 via timestamp fallback, because markers with a completion_id
+#   are excluded from Phase D according to the contract: they belong to a
+#   specific completion).
 # ---------------------------------------------------------------------------
 SID_D="dddddddd-4444-4444-4444-000000000004"
-SESSION_D="${TMP_SESSIONS}/${SID_D}.jsonl"
+mk_session "${DB}" "${SID_D}" "agent:main:${SID_D}" "" 103
+mk_assistant_event "${DB}" "${SID_D}" 0 "resp-D-001" "run-D-1" 105 "claude-sonnet-4-5" "2026-01-01T13:02:00.000Z"
+mk_assistant_event "${DB}" "${SID_D}" 1 "resp-D-002" "run-D-1" 90 "claude-sonnet-4-5" "2026-01-01T13:05:00.000Z"
 
-cat > "${SESSION_D}" <<'JSONL'
-{"type":"session","version":3,"id":"dddddddd-4444-4444-4444-000000000004","timestamp":"2026-01-01T13:00:00.000Z","cwd":"/tmp/test"}
-{"type":"message","id":"user-D-001","parentId":"00000000","timestamp":"2026-01-01T13:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Debug task"}]}}
-{"type":"message","id":"comp-D-001","parentId":"user-D-001","timestamp":"2026-01-01T13:02:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Debug response"}],"usage":{"input":70,"output":35,"cacheRead":0,"cacheWrite":0,"totalTokens":105}}}
-{"type":"message","id":"user-D-002","parentId":"comp-D-001","timestamp":"2026-01-01T13:04:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Follow-up with no marker"}]}}
-{"type":"message","id":"comp-D-002","parentId":"user-D-002","timestamp":"2026-01-01T13:05:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-5","stopReason":"end_turn","content":[{"type":"text","text":"Follow-up response"}],"usage":{"input":60,"output":30,"cacheRead":0,"cacheWrite":0,"totalTokens":90}}}
-JSONL
-
-# Marker for session D: only comp-D-001 has a marker (id-keyed).
+# Marker for session D: only comp-D-001 has a marker (id-keyed on its responseId).
 # comp-D-002 has no corresponding marker.
 MARKER_D="${TMP_MARKERS}/${SID_D}.jsonl"
-echo '{"ts":"2026-01-01T13:03:00Z","task_type":"debugging","completion_id":"comp-D-001"}' > "${MARKER_D}"
+echo '{"ts":"2026-01-01T13:03:00Z","task_type":"debugging","completion_id":"resp-D-001"}' > "${MARKER_D}"
 
 # ---------------------------------------------------------------------------
 # Stub revenium: place in a fake HOME/.local/bin so it wins after report.sh's
