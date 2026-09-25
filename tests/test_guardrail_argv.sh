@@ -21,7 +21,7 @@
 # newest-*.jsonl-by-mtime listing onto
 # scripts/session-store.sh :: store_current_session_id (D-10).
 #
-# CLI flag answers (resolved 2026-06-04 on live a live test host, Team DZxzEl):
+# CLI flag answers (resolved 2026-06-04 on a live test host):
 #   A1: --transaction-id is OPTIONAL — do NOT assert it; implementation MUST NOT add it.
 #   A2: zero token values accepted — no --total-tokens 1 sentinel needed.
 #   A3: COST_LIMIT is a valid --stop-reason enum value.

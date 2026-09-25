@@ -201,7 +201,7 @@ export function handleBeforeToolCall(runId, toolName, params, opts = {}) {
 // an openclaw:core:exec invocation.
 //
 // Schema confirmed live (15-B05-SCHEMA-PROBE.md, session 524a4a76,
-// host 34.224.27.67, 2026-06-10):
+// a live test host, 2026-06-10):
 //   event.messages[N].message.role === "assistant"
 //   event.messages[N].message.content[M].type === "toolCall"
 //   event.messages[N].message.content[M].name === "tool_search_code"

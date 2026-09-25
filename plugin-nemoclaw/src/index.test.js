@@ -549,7 +549,7 @@ describe("WR-01 / WR-04 — non-string exec path does NOT downgrade marked:true"
 // source that detects Nemotron's tool_search_code-based exec invocations, and
 // that safeBeforeAgentFinalize properly threads the transcript to impl.
 //
-// Schema (confirmed live on host 34.224.27.67, session 524a4a76):
+// Schema (confirmed live on a test host, session 524a4a76):
 //   event.messages[N].message.role === "assistant"
 //   event.messages[N].message.content[M].type === "toolCall"
 //   event.messages[N].message.content[M].name === "tool_search_code"
