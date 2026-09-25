@@ -555,23 +555,24 @@ PY
   jobs_cache_file=$(mktemp "${TMPDIR:-/tmp}/rv-jobs.XXXXXX")
 
   # D-06 cursor demotion: fetch the per-session high-water mark BEFORE
-  # building session_file, so both store_session_events and store_completions
-  # below read only rows past what the previous tick already saw. This is a
-  # read-volume bound, not a correctness gate — see the inversion comment at
-  # get_offset's definition.
+  # building any cursor-bound row stream, so store_completions and the
+  # toolCall row fetch below read only rows past what the previous tick
+  # already saw. This is a read-volume bound, not a correctness gate — see
+  # the inversion comment at get_offset's definition.
   local offset
   offset=$(get_offset "${session_id}")
 
-  # D-01 seam: session_file is now a tempfile of this session's raw
-  # transcript_events.event_json rows (store_session_events), NOT a path on
-  # disk. Every existing consumer below (system_prompt / msg_meta_file /
-  # user_msgs_file jq filters, the offset/max_seq gate, and the toolCall
-  # scan's SESSION_FILE env assignment) reads "${session_file}" unchanged —
-  # event_json preserves the byte-identical record shape the old JSONL lines
-  # carried (RESEARCH Pitfall 1), so nothing downstream needed to change.
-  local session_file completions_tmp
-  session_file=$(mktemp "${TMPDIR:-/tmp}/rv-events.XXXXXX")
-  store_session_events "${session_id}" "${offset}" > "${session_file}"
+  # D-01 seam: session_events_tmp (declared here, populated later — see the
+  # population site right after the "nothing new" gate below) will hold the
+  # FULL session's transcript_events.event_json rows, NOT a path on disk and
+  # NOT bound by the offset cursor. event_json preserves the byte-identical
+  # record shape the old JSONL lines carried (RESEARCH Pitfall 1), so the
+  # three jq/awk consumers below (system_prompt / msg_meta_file /
+  # user_msgs_file) are unchanged except for their input source. Only the
+  # completion (store_completions) and toolCall row fetches take the
+  # high-water mark — this asymmetry is deliberate (see the population-site
+  # comment) and must not be "optimized" away.
+  local session_events_tmp="" completions_tmp
   completions_tmp=$(mktemp "${TMPDIR:-/tmp}/rv-completions.XXXXXX")
 
   # RESEARCH Pitfall 3: a row with event_json IS NULL is a zstd-compacted
@@ -587,7 +588,7 @@ PY
 
   _cleanup_session_tmp() {
     rm -f "${markers_cache_file}" "${jobs_cache_file}" "${msg_meta_file}" "${user_msgs_file}" \
-          "${session_file}" "${completions_tmp}"
+          "${session_events_tmp}" "${completions_tmp}"
   }
   local marker_file="${MARKERS_DIR}/${session_id}.jsonl"
   if [[ -f "${marker_file}" ]]; then
@@ -804,9 +805,19 @@ PY
     return 0
   fi
 
+  # session_events_tmp: the FULL session's event_json rows, no after_seq
+  # bound. Populated here — after the "nothing new" early return, so a quiet
+  # session never pays for it — and deliberately NOT bound by ${offset}: the
+  # system prompt is the FIRST user message in the whole session, and the
+  # metadata cache below resolves a completion's parent message, which will
+  # usually predate the cursor. Do not add an after_seq bound here; that
+  # would silently reintroduce the bug this asymmetry exists to avoid.
+  session_events_tmp=$(mktemp "${TMPDIR:-/tmp}/rv-events.XXXXXX")
+  store_session_events "${session_id}" > "${session_events_tmp}"
+
   # Extract system prompt from the first user message in the session
   local system_prompt=""
-  system_prompt=$(jq -r 'select(.type=="message") | .message | select(.role=="user") | .content[] | select(.type=="text") | .text' "${session_file}" 2>/dev/null | head -1 || true)
+  system_prompt=$(jq -r 'select(.type=="message") | .message | select(.role=="user") | .content[] | select(.type=="text") | .text' "${session_events_tmp}" 2>/dev/null | head -1 || true)
   # Truncate to 500 chars to avoid overly long CLI args
   if [[ ${#system_prompt} -gt 500 ]]; then
     system_prompt="${system_prompt:0:500}..."
@@ -820,13 +831,13 @@ PY
 
   # msg_meta_file: TAB-separated "id \t parentId \t role \t timestamp"
   jq -r 'select(.type=="message") | [.id // "", .parentId // "", (.message.role // ""), .timestamp // ""] | @tsv' \
-    "${session_file}" 2>/dev/null > "${msg_meta_file}" || true
+    "${session_events_tmp}" 2>/dev/null > "${msg_meta_file}" || true
 
   # user_msgs_file: TAB-separated "id \t text_content"
   # Content has newlines replaced with \n literal to keep one line per message.
   jq -r 'select(.type=="message") | select(.message.role=="user") |
     [.id, ([.message.content[] | select(.type=="text") | .text] | join("\\n"))] | @tsv' \
-    "${session_file}" 2>/dev/null > "${user_msgs_file}" || true
+    "${session_events_tmp}" 2>/dev/null > "${user_msgs_file}" || true
 
   # Helper: look up a field from msg_meta_file by message ID
   # Usage: meta_lookup ID FIELD_NUM  (2=parentId, 3=role, 4=timestamp)
