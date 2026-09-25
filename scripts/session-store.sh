@@ -96,6 +96,22 @@ _store_valid_seq() {
   [[ "${1:-}" =~ ^-?[0-9]+$ ]]
 }
 
+# _store_valid_db_path <path> — CR-01/T-19-27..29 mitigation. A store path
+# becomes part of a sqlite connection URI (`file:<path>?mode=ro`); a literal
+# `?`, `#`, or `%` in the path is a URI metacharacter that truncates or
+# reinterprets the URI, silently dropping the read-only parameter and
+# falling through to a read-write-and-create connection. Reject any
+# candidate whose bytes fall outside this anchored allowlist BEFORE it ever
+# reaches a connection string: absolute path only (leading `/`), remaining
+# bytes drawn ONLY from A-Za-z0-9 plus / . _ - + : @ , = ~. Verified
+# sufficient for every real host path family this project targets:
+# ${HOME}/.openclaw/agents/<id>/agent/openclaw-agent.sqlite, the sandbox
+# /sandbox/.openclaw/... form, and both Linux /tmp/... and macOS
+# /var/folders/<a>/<b>/T/... test temp roots.
+_store_valid_db_path() {
+  [[ "${1:-}" =~ ^/[A-Za-z0-9/._+:@,=~-]+$ ]]
+}
+
 # ---------------------------------------------------------------------------
 # store_sql <db_path> <sql> — THE ONLY place a sqlite connection is
 # constructed (T-19-03). Read-only URI, explicit busy_timeout, no retry or
@@ -126,6 +142,16 @@ STORE_LAST_SQL_ERROR=""
 store_sql() {
   local db_path="$1" sql="$2"
   local stderr_tmp stdout_tmp rc
+  # CR-01 defense-in-depth: store_db_paths already gates both its sources
+  # (glob arm and REVENIUM_SESSION_STORE override), but any future caller
+  # reaching store_sql directly must not be able to bypass the allowlist —
+  # this is the only place a connection is actually built. Validate BEFORE
+  # anything else, including the flags probe and the mktemp calls, so a
+  # rejected path never touches the sqlite3 binary at all.
+  if ! _store_valid_db_path "${db_path}"; then
+    STORE_LAST_SQL_ERROR="store_sql: rejected db_path outside the safe path allowlist: ${db_path:0:64}"
+    return 1
+  fi
   _store_sqlite_flags
   stderr_tmp=$(mktemp "${TMPDIR:-/tmp}/store-sql-err.XXXXXX")
   stdout_tmp=$(mktemp "${TMPDIR:-/tmp}/store-sql-out.XXXXXX")
@@ -152,12 +178,15 @@ store_sql() {
 }
 
 # ---------------------------------------------------------------------------
-# store_db_paths — one absolute store path per line, LC_ALL=C sorted. Honors
-# REVENIUM_SESSION_STORE (explicit override — also the Phase 22 SSHFS
+# store_db_paths_raw — every candidate path UNFILTERED (override arm or glob
+# arm), one absolute store path per line, LC_ALL=C sorted in the glob arm.
+# Honors REVENIUM_SESSION_STORE (explicit override — also the Phase 22 SSHFS
 # parameterization point and the test override). Emits nothing when no store
-# exists anywhere.
+# exists anywhere. This is the audit-trail source for STORE_PATHS_TRIED — a
+# rejected candidate must still appear here even though store_db_paths
+# below will filter it out.
 # ---------------------------------------------------------------------------
-store_db_paths() {
+store_db_paths_raw() {
   if [[ -n "${REVENIUM_SESSION_STORE:-}" ]]; then
     printf '%s\n' "${REVENIUM_SESSION_STORE}"
     return 0
@@ -169,6 +198,29 @@ store_db_paths() {
   for _ss_f in ${SESSION_STORE_GLOB}; do
     [[ -e "${_ss_f}" ]] && printf '%s\n' "${_ss_f}"
   done | LC_ALL=C sort
+}
+
+# ---------------------------------------------------------------------------
+# store_db_paths — the filtered reader every existing caller keeps using.
+# Reads store_db_paths_raw and, for each candidate, either emits it or warns
+# (bounded to 64 characters) and skips it — CR-01: both the glob result and
+# the REVENIUM_SESSION_STORE override pass through the same
+# _store_valid_db_path gate, so a candidate carrying a URI metacharacter (or
+# any other byte outside the safe path allowlist) never reaches a
+# connection string.
+# ---------------------------------------------------------------------------
+store_db_paths() {
+  local _ss_raw _ss_p
+  _ss_raw="$(store_db_paths_raw)"
+  [[ -z "${_ss_raw}" ]] && return 0
+  while IFS= read -r _ss_p; do
+    [[ -z "${_ss_p}" ]] && continue
+    if _store_valid_db_path "${_ss_p}"; then
+      printf '%s\n' "${_ss_p}"
+    else
+      warn "store_db_paths: rejected candidate path outside the safe path allowlist: ${_ss_p:0:64}"
+    fi
+  done <<< "${_ss_raw}"
 }
 
 # ---------------------------------------------------------------------------
