@@ -1,7 +1,7 @@
 /**
  * index.ts — Revenium Marker Gate plugin entry point.
  *
- * Registers four OpenClaw hooks:
+ * Registers six OpenClaw hooks:
  *   before_prompt_build — prepends the metering directives (task classification +
  *                         job lifecycle) to EVERY turn. Added 2026-06-13: OpenClaw
  *                         2026.6.6 refuses finalize revise actions on turns with
@@ -10,15 +10,19 @@
  *   before_tool_call  — observes working tool calls; adds runId to tracking sets
  *   before_agent_finalize — returns a revise action when a substantive turn did not classify
  *   agent_end         — cleans up tracking sets to prevent memory leaks
+ *   subagent_spawned  — appends a child-to-parent session-key edge to the
+ *                       PLUG-04 sidecar (root-session resolution, phase 19)
+ *   subagent_ended    — appends a matching lifecycle "ended" record to the same sidecar
  *
  * The pure gate logic lives in ./gate.js (importable by node:test without tsc
  * or the openclaw peer). This file is the thin wiring layer only.
  *
  * IMPORTANT: Any change to this file requires a rebuild + re-commit of
- * dist/index.js (the host has no tsc; see Pitfall 2 in 11-RESEARCH.md).
+ * dist/index.js (the host has no tsc; see Phase 19-03, prior reference:
+ * Pitfall 2 in 11-RESEARCH.md).
  */
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-import { safeBeforeToolCall, safeBeforeAgentFinalize, safeAgentEnd, buildMeteringInjection, } from "./gate.js";
+import { safeBeforeToolCall, safeBeforeAgentFinalize, safeAgentEnd, safeSubagentSpawned, safeSubagentEnded, buildMeteringInjection, } from "./gate.js";
 // Loaded ONCE at plugin load — static for the gateway's lifetime (no hook-time
 // fs I/O). null (file missing/out-of-bounds) → the hook returns undefined.
 const METERING_INJECTION = buildMeteringInjection();
@@ -71,6 +75,24 @@ export default definePluginEntry({
                 safeAgentEnd(ctx?.runId);
             }
             catch { /* fail-open */ }
+        });
+        // subagent_spawned: NOT a conversation hook — no allowConversationAccess needed.
+        // Records the direct child-to-parent session-key link (PLUG-04/D-08) into the
+        // durable sidecar that scripts/get-root-session-id.py (plan 19-05) reads.
+        api.on("subagent_spawned", async (event, ctx) => {
+            try {
+                safeSubagentSpawned(event, ctx);
+            }
+            catch { /* fail-open: observation is best-effort, never block the turn */ }
+        });
+        // subagent_ended: NOT a conversation hook — no allowConversationAccess needed.
+        // Records a matching lifecycle "ended" record so a resolver can tell a
+        // still-running child from a completed one without re-querying the store.
+        api.on("subagent_ended", async (event, ctx) => {
+            try {
+                safeSubagentEnded(event, ctx);
+            }
+            catch { /* fail-open: observation is best-effort, never block the turn */ }
         });
     },
 });
