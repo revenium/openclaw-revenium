@@ -2,7 +2,8 @@
 # =============================================================================
 # test_version_gate.sh — Hermetic tests for scripts/version-gate.sh
 # Covers: GATE-01 (OpenClaw floor refusal), GATE-02 (numeric CalVer
-#         comparison), GATE-04 (Node floor refusal, added in plan 18-01 Task 2)
+#         comparison), GATE-04 (Node floor refusal, added in plan 18-01 Task 2),
+#         READ-04 (sqlite3 CLI presence gate, added in plan 19-02)
 #
 # Strategy:
 #   GROUP VG-A/VG-E: source scripts/version-gate.sh directly in a subshell and
@@ -10,6 +11,14 @@
 #   GROUP VG-B/VG-C/VG-D/VG-F: invoke scripts/install.sh end-to-end with
 #     STUB_OPENCLAW_VERSION_OUTPUT / STUB_NODE_VERSION overrides and mktemp -d
 #     HOME isolation, and assert on exit code + combined output.
+#   GROUP VG-G: source scripts/version-gate.sh directly in a subshell and
+#     unit-test require_sqlite3 / sqlite3_detected. The absent-binary case
+#     uses a restricted PATH (a tmp bin dir holding only symlinked grep/head)
+#     rather than relying on the host lacking sqlite3 — unlike openclaw/node,
+#     sqlite3 is commonly present on both dev machines and CI images, so the
+#     STUB-only idiom used by VG-B..VG-D would not actually exercise the
+#     absent-binary path. The present-binary case uses
+#     STUB_SQLITE3_VERSION_OUTPUT instead, mirroring VG-A..VG-F.
 #
 # EXPECTED RESULT BEFORE PLAN 18-01 TASK 1:
 #   This test FAILS RED — scripts/version-gate.sh does not yet exist and
@@ -20,13 +29,23 @@
 #   extends the gate to the Node floor.
 #   Do NOT stub version-gate.sh or weaken assertions to make it pass now.
 #
+# EXPECTED RESULT BEFORE PLAN 19-02 TASK 2:
+#   GROUP VG-G is RED — require_sqlite3/sqlite3_detected do not exist yet in
+#   scripts/version-gate.sh. Goes GREEN when Task 2 adds them and wires
+#   require_sqlite3 into both scripts/post-install.sh and
+#   scripts/post-install-nemoclaw.sh.
+#
 # NOTE (expected totals): 9+ passed after Task 1 (VG-A..VG-D); 19+ passed
-#   after Task 2 (VG-A..VG-F).
+#   after Task 2 (VG-A..VG-F); 21 passed with GROUP VG-G RED (plan 19-02
+#   Task 1); 30 passed, 0 failed once GROUP VG-G goes GREEN (plan 19-02
+#   Task 2).
 #
 # SECURITY: This test never eval's or string-interpolates captured output
 #   into shell commands. No real openclaw or node binary is required — every
 #   assertion runs through the STUB_OPENCLAW_VERSION_OUTPUT / STUB_NODE_VERSION
-#   env-var overrides.
+#   env-var overrides. GROUP VG-G's restricted-PATH tmp dir holds only
+#   symlinks to real, already-resolved system binaries (grep/head) — no
+#   downloaded or fabricated binaries are placed on PATH.
 # =============================================================================
 
 set -uo pipefail
@@ -266,12 +285,99 @@ else
 fi
 
 # ===========================================================================
+# GROUP VG-G: READ-04 sqlite3 dependency gate (require_sqlite3/sqlite3_detected)
+# ===========================================================================
+echo ""
+echo "--- GROUP VG-G: READ-04 sqlite3 dependency gate ---"
+
+# Restricted PATH containing only the binaries the gate legitimately needs
+# (grep, head — used internally by sqlite3_detected's extraction pipeline).
+# Deliberately excludes sqlite3 itself so the absent-binary case is genuine
+# even on hosts (like this dev machine, and many CI images) that have a real
+# sqlite3 CLI reachable on the normal PATH.
+TMP_BIN_VGG=$(mktemp -d "${TMPDIR:-/tmp}/test-vgate-bin.XXXXXX")
+TMP_HOMES+=("${TMP_BIN_VGG}")
+for _vgg_bin in grep head; do
+  _vgg_real="$(command -v "${_vgg_bin}" 2>/dev/null || true)"
+  [[ -n "${_vgg_real}" ]] && ln -sf "${_vgg_real}" "${TMP_BIN_VGG}/${_vgg_bin}"
+done
+
+# --- Absent case: require_sqlite3 refuses (non-zero exit, actionable message) ---
+rc_vgg1=0
+out_vgg1=$(PATH="${TMP_BIN_VGG}" bash -c ". ${VERSION_GATE_SH} 2>/dev/null; require_sqlite3" 2>&1) || rc_vgg1=$?
+
+if [[ "${rc_vgg1}" -ne 0 ]]; then
+  pass "VG-G: require_sqlite3 exits non-zero when sqlite3 is absent from PATH"
+else
+  fail "VG-G: require_sqlite3 exited 0 with sqlite3 absent from PATH"
+fi
+
+if echo "${out_vgg1}" | grep -qi "sqlite3"; then
+  pass "VG-G: refusal message names sqlite3"
+else
+  fail "VG-G: refusal message does not name sqlite3"
+fi
+
+if echo "${out_vgg1}" | grep -qiE "session store|metering"; then
+  pass "VG-G: refusal message names the reason (session store / metering read path)"
+else
+  fail "VG-G: refusal message does not explain why sqlite3 is needed (mentions sqlite3)"
+fi
+
+if echo "${out_vgg1}" | grep -qiE "apt(-get)? install"; then
+  pass "VG-G: refusal message carries an apt-style install command"
+else
+  fail "VG-G: refusal message missing an apt-style install command (mentions sqlite3)"
+fi
+
+if echo "${out_vgg1}" | grep -qiE "brew install"; then
+  pass "VG-G: refusal message carries a Homebrew-style install command"
+else
+  fail "VG-G: refusal message missing a Homebrew-style install command (mentions sqlite3)"
+fi
+
+# --- Present case (via STUB override — no PATH restriction needed) ---
+rc_vgg3=0
+stdout_vgg3=$( (. "${VERSION_GATE_SH}" 2>/dev/null; STUB_SQLITE3_VERSION_OUTPUT="3.46.1" require_sqlite3) 2>/dev/null ) || rc_vgg3=$?
+
+if [[ "${rc_vgg3}" -eq 0 ]]; then
+  pass "VG-G: require_sqlite3 returns 0 when sqlite3 is present (STUB_SQLITE3_VERSION_OUTPUT)"
+else
+  fail "VG-G: require_sqlite3 returned non-zero (${rc_vgg3}) with sqlite3 present (STUB_SQLITE3_VERSION_OUTPUT, sqlite3)"
+fi
+
+if [[ -z "${stdout_vgg3}" ]]; then
+  pass "VG-G: require_sqlite3 prints nothing to stdout when sqlite3 is present"
+else
+  fail "VG-G: require_sqlite3 printed to stdout when sqlite3 is present (sqlite3): '${stdout_vgg3}'"
+fi
+
+# --- sqlite3_detected: STUB override honored, stdout purity (no stderr contamination) ---
+STDERR_FILE_VGG=$(mktemp "${TMPDIR:-/tmp}/test-vgate-stderr.XXXXXX")
+TMP_HOMES+=("${STDERR_FILE_VGG}")
+detected_vgg=$( (. "${VERSION_GATE_SH}" 2>/dev/null; STUB_SQLITE3_VERSION_OUTPUT="3.46.1" sqlite3_detected) 2>"${STDERR_FILE_VGG}" )
+stderr_vgg="$(cat "${STDERR_FILE_VGG}" 2>/dev/null || true)"
+
+if [[ "${detected_vgg}" == "3.46.1" ]]; then
+  pass "VG-G: sqlite3_detected honors STUB_SQLITE3_VERSION_OUTPUT and returns exactly '3.46.1' on stdout"
+else
+  fail "VG-G: sqlite3_detected with STUB_SQLITE3_VERSION_OUTPUT returned '${detected_vgg}' (sqlite3), expected '3.46.1'"
+fi
+
+if echo "${stderr_vgg}" | grep -qi "STUB_SQLITE3_VERSION_OUTPUT"; then
+  pass "VG-G: sqlite3_detected warns to stderr when the STUB override is in effect"
+else
+  fail "VG-G: sqlite3_detected did not warn to stderr about the STUB_SQLITE3_VERSION_OUTPUT override (sqlite3)"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 echo ""
 echo "NOTE: expected total after Task 1+2: 19+ passed (VG-A..VG-F), 0 failed."
+echo "NOTE: expected total after plan 19-02: 30 passed (VG-A..VG-G), 0 failed."
 if [[ "${FAIL}" -gt 0 ]]; then
   exit 1
 fi
