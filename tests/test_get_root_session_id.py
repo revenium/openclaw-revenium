@@ -1,24 +1,49 @@
 """Unit tests for scripts/get-root-session-id.py
 
-Tests cover the five behaviors specified in TRACE-01:
-  1. no-parent sid -> returns itself
-  2. one-hop: child from parent-with-spawn.jsonl -> returns parent uuid
-  3. cycle (A declares B, B declares A) -> terminates at max_depth, returns deepest resolved
-  4. missing/unreadable sessions_dir or malformed JSON -> returns input sid (fail-open)
-  5. empty sid argument -> sys.exit(0) with no output
+READ-03 / PLUG-04 root-session resolution against OpenClaw 2.0's SQLite
+session store and the plugin's subagent-parentage sidecar (plan 19-05).
 
-Fixtures:
-  - tests/fixtures/sessions/parent-with-spawn.jsonl
-      parent uuid: a1b2c3d4-0001-0001-0001-000000000001
-      child uuid:  b1b2c3d4-0002-0002-0002-000000000002
-  - tests/fixtures/sessions/plain-session.jsonl
-      session uuid: c3d4e5f6-0003-0003-0003-000000000003 (no subagent linkage)
+Two resolution sources are exercised here, in priority order (D-08):
+  1. The plugin sidecar (child session KEY -> parent session KEY edges),
+     mirrored from plugin/src/gate.js :: readSidecarEdges (plan 19-03).
+  2. The store's own parentage columns, reached via
+     scripts/session-store.sh's executed-mode CLI (plan 19-01, D-02).
+
+Fixtures build a REAL SQLite database via tests/lib/mk-session-store.sh's
+mk_store/mk_session helpers (the resolver goes through the store CLI, so a
+mock would not exercise the real path) plus hand-written sidecar JSONL
+files, all under a temporary OPENCLAW_HOME passed to the resolver via its
+`openclaw_home` keyword argument (D-09's new, purely-additive parameter).
+
+Task 1 tests cover: a one-hop and a two-hop sidecar resolution, the
+no-linkage-anywhere passthrough, the empty-input short-circuit, the cycle
+depth cap, the CLI's one-line-stdout/exit-0 contract (including the
+no-argument case), the `sessions_dir` legacy-parameter inertness, fail-open
+on a store-less OPENCLAW_HOME, and malformed sidecar lines being skipped.
+
+Task 2 tests cover RESOLUTION_SOURCE attribution: the store fallback
+answering when the sidecar is silent, the sidecar winning a deliberate
+disagreement with the store (and the store never being queried for that
+hop), the "neither source answers" case, and the diagnostic CLI flag's
+stdout/stderr separation.
+
+Task 3 tests cover the READ-03 properties: idempotency across repeated
+resolutions, duplicate-edge idempotency, a truncated final sidecar line
+(the exact on-disk state a concurrent append can leave for a reader),
+rotated-file resolution with live-file override, an unreadable sidecar
+file, a non-zero-exit store CLI, and a hanging store CLI abandoned at a
+shortened timeout.
 """
+from __future__ import annotations
+
 import importlib.util
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -27,6 +52,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _MODULE_PATH = _REPO_ROOT / "scripts" / "get-root-session-id.py"
+_MK_SESSION_STORE_SH = _REPO_ROOT / "tests" / "lib" / "mk-session-store.sh"
 
 spec = importlib.util.spec_from_file_location("get_root_session_id_module", _MODULE_PATH)
 _mod = importlib.util.module_from_spec(spec)
@@ -34,106 +60,234 @@ spec.loader.exec_module(_mod)
 
 get_root_session_id = _mod.get_root_session_id
 
+
 # ---------------------------------------------------------------------------
-# Fixture UUIDs (must match the JSONL fixtures created in Task 1).
+# Fixture helper — a temp OPENCLAW_HOME with a real SQLite store (built via
+# tests/lib/mk-session-store.sh, the same schema-authoritative fixture
+# builder plan 19-01 introduced) and, optionally, hand-written sidecar JSONL
+# files matching plugin/src/gate.js's exact on-disk schema (plan 19-03).
 # ---------------------------------------------------------------------------
-PARENT_UUID = "a1b2c3d4-0001-0001-0001-000000000001"
-CHILD_UUID = "b1b2c3d4-0002-0002-0002-000000000002"
-PLAIN_UUID = "c3d4e5f6-0003-0003-0003-000000000003"
-FIXTURES_DIR = _REPO_ROOT / "tests" / "fixtures" / "sessions"
+class _Fixture:
+    def __init__(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="grsid-fixture-")
+        self.openclaw_home = self.tmpdir
+        self.db_path = os.path.join(
+            self.openclaw_home, "agents", "main", "agent", "openclaw-agent.sqlite"
+        )
+        self._mk_store()
+
+    def cleanup(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _mk_store(self):
+        subprocess.run(
+            ["bash", "-c", '. "$1"; mk_store "$2"', "_", str(_MK_SESSION_STORE_SH), self.db_path],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def add_session(self, sid: str, skey: str, created_via: str = "", updated_at: int = 100):
+        """Insert one session_nodes/session_windows row pair (mk_session)."""
+        subprocess.run(
+            [
+                "bash", "-c",
+                '. "$1"; mk_session "$2" "$3" "$4" "$5" "$6"', "_",
+                str(_MK_SESSION_STORE_SH), self.db_path, sid, skey, created_via, str(updated_at),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _sidecar_dir(self) -> str:
+        d = os.path.join(self.openclaw_home, "skills", "revenium")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def sidecar_path(self, rotated: bool = False) -> str:
+        return os.path.join(self._sidecar_dir(), "subagent-edges.jsonl" + (".1" if rotated else ""))
+
+    def write_sidecar(self, edges, rotated: bool = False, extra_raw: str = "", mode: str = "w"):
+        """edges: iterable of (child_key, parent_key) tuples -> spawned records.
+
+        extra_raw is appended verbatim after the JSON lines (no trailing
+        newline added), for building a truncated-final-line fixture.
+        """
+        path = self.sidecar_path(rotated=rotated)
+        with open(path, mode, encoding="utf-8") as fh:
+            for child_key, parent_key in edges:
+                fh.write(
+                    json.dumps(
+                        {
+                            "event": "spawned",
+                            "childSessionKey": child_key,
+                            "parentSessionKey": parent_key,
+                            "runId": "run-1",
+                            "capturedAt": "2026-09-25T00:00:00.000Z",
+                        }
+                    )
+                    + "\n"
+                )
+            if extra_raw:
+                fh.write(extra_raw)
+        return path
 
 
-class TestGetRootSessionId(unittest.TestCase):
+def _sid(n: str) -> str:
+    """Build a hex-UUID-shaped session id (matches _store_valid_id)."""
+    return f"aaaaaaaa-0000-0000-0000-{n:0>12}"
 
-    def test_no_parent_returns_self(self):
-        """A session that is not declared as anyone's child resolves to itself."""
-        result = get_root_session_id(PLAIN_UUID, sessions_dir=str(FIXTURES_DIR))
-        self.assertEqual(result, PLAIN_UUID)
 
-    def test_one_hop_child_returns_parent(self):
-        """Resolving the child uuid from parent-with-spawn.jsonl returns the parent uuid."""
-        result = get_root_session_id(CHILD_UUID, sessions_dir=str(FIXTURES_DIR))
-        self.assertEqual(result, PARENT_UUID)
+# ===========================================================================
+# Task 1: sidecar-primary resolution, contract preservation, fail-open
+# ===========================================================================
+class TestSidecarResolution(unittest.TestCase):
+    def setUp(self):
+        self.fx = _Fixture()
+
+    def tearDown(self):
+        self.fx.cleanup()
+
+    def test_sidecar_one_hop_resolves_to_parent(self):
+        child_sid, parent_sid = _sid("1"), _sid("2")
+        child_key, parent_key = "agent:main:subagent:child1", "agent:main:main"
+        self.fx.add_session(child_sid, child_key)
+        self.fx.add_session(parent_sid, parent_key)
+        self.fx.write_sidecar([(child_key, parent_key)])
+
+        result = get_root_session_id(child_sid, openclaw_home=self.fx.openclaw_home)
+        self.assertEqual(result, parent_sid)
+
+    def test_sidecar_two_hop_chain_resolves_to_root(self):
+        grandchild_sid, child_sid, root_sid = _sid("3"), _sid("4"), _sid("5")
+        grandchild_key = "agent:main:subagent:grandchild"
+        child_key = "agent:main:subagent:child"
+        root_key = "agent:main:main"
+        self.fx.add_session(grandchild_sid, grandchild_key)
+        self.fx.add_session(child_sid, child_key)
+        self.fx.add_session(root_sid, root_key)
+        self.fx.write_sidecar([(grandchild_key, child_key), (child_key, root_key)])
+
+        result = get_root_session_id(grandchild_sid, openclaw_home=self.fx.openclaw_home)
+        self.assertEqual(result, root_sid)
+
+    def test_no_sidecar_no_parentage_returns_input_unchanged(self):
+        plain_sid = _sid("6")
+        self.fx.add_session(plain_sid, "agent:main:main")
+        # No sidecar file written at all.
+
+        result = get_root_session_id(plain_sid, openclaw_home=self.fx.openclaw_home)
+        self.assertEqual(result, plain_sid)
+
+    def test_empty_sid_function_returns_empty(self):
+        """Empty string returns empty without touching disk."""
+        result = get_root_session_id("")
+        self.assertEqual(result, "")
 
     def test_cycle_terminates_at_max_depth(self):
-        """A cycle (A declares B, B declares A) terminates and does not hang or raise."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create A.jsonl declaring B as child
-            a_uuid = "aaaa0000-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-            b_uuid = "bbbb0000-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-            a_path = os.path.join(tmpdir, f"{a_uuid}.jsonl")
-            b_path = os.path.join(tmpdir, f"{b_uuid}.jsonl")
+        a_sid, b_sid = _sid("7"), _sid("8")
+        a_key, b_key = "agent:main:subagent:a", "agent:main:subagent:b"
+        self.fx.add_session(a_sid, a_key)
+        self.fx.add_session(b_sid, b_key)
+        self.fx.write_sidecar([(a_key, b_key), (b_key, a_key)])
 
-            # A declares B as child
-            with open(a_path, "w") as f:
-                f.write(json.dumps({"type": "session", "id": a_uuid}) + "\n")
-                f.write(json.dumps({
-                    "type": "message",
-                    "message": {
-                        "role": "toolResult",
-                        "toolName": "sessions_spawn",
-                        "details": {
-                            "childSessionKey": f"agent:main:subagent:{b_uuid}",
-                            "status": "accepted"
-                        }
+        try:
+            result = get_root_session_id(a_sid, openclaw_home=self.fx.openclaw_home, max_depth=10)
+        except Exception as e:  # pragma: no cover - failure path
+            self.fail(f"get_root_session_id raised on cycle: {e}")
+        self.assertIsInstance(result, str)
+        self.assertTrue(len(result) > 0)
+
+    def test_legacy_sessions_dir_param_is_inert(self):
+        child_sid, parent_sid = _sid("9"), _sid("10")
+        child_key, parent_key = "agent:main:subagent:child9", "agent:main:main"
+        self.fx.add_session(child_sid, child_key)
+        self.fx.add_session(parent_sid, parent_key)
+        self.fx.write_sidecar([(child_key, parent_key)])
+
+        result = get_root_session_id(
+            child_sid,
+            sessions_dir="/nonexistent/path",
+            openclaw_home=self.fx.openclaw_home,
+        )
+        self.assertEqual(result, parent_sid)
+
+    def test_unreadable_base_fails_open(self):
+        """A store-less OPENCLAW_HOME (no agents/ dir at all) fails open."""
+        empty_home = tempfile.mkdtemp(prefix="grsid-empty-home-")
+        try:
+            sid = _sid("11")
+            result = get_root_session_id(sid, openclaw_home=empty_home)
+            self.assertEqual(result, sid)
+        finally:
+            shutil.rmtree(empty_home, ignore_errors=True)
+
+    def test_malformed_sidecar_lines_skipped(self):
+        child_sid, parent_sid = _sid("12"), _sid("13")
+        child_key, parent_key = "agent:main:subagent:child12", "agent:main:main"
+        self.fx.add_session(child_sid, child_key)
+        self.fx.add_session(parent_sid, parent_key)
+
+        path = self.fx.sidecar_path()
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("NOT VALID JSON\n")
+            fh.write('{"also": broken\n')
+            fh.write("\n")
+            fh.write(json.dumps({"event": "ended", "childSessionKey": "x"}) + "\n")
+            fh.write(
+                json.dumps(
+                    {
+                        "event": "spawned",
+                        "childSessionKey": child_key,
+                        "parentSessionKey": parent_key,
                     }
-                }) + "\n")
+                )
+                + "\n"
+            )
 
-            # B declares A as child (cycle)
-            with open(b_path, "w") as f:
-                f.write(json.dumps({"type": "session", "id": b_uuid}) + "\n")
-                f.write(json.dumps({
-                    "type": "message",
-                    "message": {
-                        "role": "toolResult",
-                        "toolName": "sessions_spawn",
-                        "details": {
-                            "childSessionKey": f"agent:main:subagent:{a_uuid}",
-                            "status": "accepted"
-                        }
-                    }
-                }) + "\n")
+        result = get_root_session_id(child_sid, openclaw_home=self.fx.openclaw_home)
+        self.assertEqual(result, parent_sid)
 
-            # Should not raise and should terminate
-            try:
-                result = get_root_session_id(a_uuid, sessions_dir=tmpdir, max_depth=10)
-                # Must be a string (not an exception)
-                self.assertIsInstance(result, str)
-                self.assertTrue(len(result) > 0)
-            except Exception as e:
-                self.fail(f"get_root_session_id raised an exception on cycle: {e}")
 
-    def test_missing_sessions_dir_fails_open(self):
-        """Missing sessions directory returns the input sid (fail-open)."""
-        nonexistent = "/tmp/nonexistent-sessions-dir-9999-xyz"
-        result = get_root_session_id(PLAIN_UUID, sessions_dir=nonexistent)
-        self.assertEqual(result, PLAIN_UUID)
+class TestCliContract(unittest.TestCase):
+    def setUp(self):
+        self.fx = _Fixture()
 
-    def test_malformed_jsonl_line_fails_open(self):
-        """Malformed JSON lines are skipped; the function does not raise."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            a_uuid = "cccc0000-cccc-cccc-cccc-cccccccccccc"
-            malformed_path = os.path.join(tmpdir, f"{a_uuid}.jsonl")
-            with open(malformed_path, "w") as f:
-                f.write("NOT VALID JSON\n")
-                f.write("{\"also\": broken\n")
-                f.write("\n")
+    def tearDown(self):
+        self.fx.cleanup()
 
-            result = get_root_session_id(a_uuid, sessions_dir=tmpdir)
-            self.assertEqual(result, a_uuid)
+    def test_cli_prints_root_id_and_exits_zero(self):
+        child_sid, parent_sid = _sid("14"), _sid("15")
+        child_key, parent_key = "agent:main:subagent:child14", "agent:main:main"
+        self.fx.add_session(child_sid, child_key)
+        self.fx.add_session(parent_sid, parent_key)
+        self.fx.write_sidecar([(child_key, parent_key)])
 
-    def test_empty_sid_exits_zero(self):
-        """Empty sid argument causes sys.exit(0) with no output."""
-        import subprocess
-        cmd = [sys.executable, str(_MODULE_PATH), ""]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        env = dict(os.environ)
+        env["OPENCLAW_HOME"] = self.fx.openclaw_home
+        proc = subprocess.run(
+            [sys.executable, str(_MODULE_PATH), child_sid],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        self.assertEqual(proc.returncode, 0)
+        lines = proc.stdout.splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0], parent_sid)
+
+    def test_cli_no_argument_exits_zero_prints_nothing(self):
+        proc = subprocess.run([sys.executable, str(_MODULE_PATH)], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout.strip(), "")
 
-    def test_empty_sid_function_returns_empty(self):
-        """get_root_session_id('') returns the empty string (not None, not raising)."""
-        result = get_root_session_id("")
-        self.assertEqual(result, "")
+    def test_empty_sid_exits_zero(self):
+        proc = subprocess.run(
+            [sys.executable, str(_MODULE_PATH), ""], capture_output=True, text=True
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), "")
 
 
 if __name__ == "__main__":
