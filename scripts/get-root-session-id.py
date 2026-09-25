@@ -51,6 +51,18 @@ from typing import Optional
 _STORE_SCRIPT_OVERRIDE_ENV = "_REVENIUM_GRSID_STORE_SCRIPT"
 _STORE_CLI_TIMEOUT_ENV = "_REVENIUM_GRSID_STORE_TIMEOUT"
 
+# Records which source answered the most recent get_root_session_id() call:
+# "sidecar", "store", "none" (no edge found by either source), or "error"
+# (the blanket fail-open guard fired). Printed to stderr by the CLI form
+# only when a second, non-empty argv argument (a diagnostic flag) is given
+# -- stdout always stays exactly one line, because scripts/common.sh's
+# wrapper captures stdout through command substitution and any extra line
+# would corrupt the agent attribution value (the same failure mode Phase 18
+# fixed in the version gate, in a different file). Set to the source of the
+# FIRST hop that produced a parent -- a later hop in the same walk does not
+# override it.
+RESOLUTION_SOURCE = "none"
+
 # Relative path components of the sidecar under an OpenClaw home directory.
 # Mirrors plugin/src/gate.js :: resolveSidecarPath exactly (plan 19-03) --
 # the skill's state directory, not the plugin's run-state directory.
@@ -159,10 +171,19 @@ def _session_id_for_key(base: str, key: str) -> str:
 
 def _parent_key_for_key(base: str, key: str) -> str:
     """Store-parentage FALLBACK for one hop (D-08: consulted only when the
-    sidecar has no edge for `key`). plan 19-01's `parent-session-id` verb
-    takes and returns session IDS, so this translates key -> id, asks for
-    the parent id, then translates that back to a key. Returning empty at
-    any step means no parent.
+    sidecar has no edge for `key`, and never pre-fetched for a hop the
+    sidecar already answers). plan 19-01's `parent-session-id` verb takes
+    and returns session IDS, so this translates key -> id, asks for the
+    parent id, then translates that back to a key. Returning empty at any
+    step means no parent.
+
+    NOTE (D-08/D-17): the parentage columns this ultimately reads
+    (session_windows.parent_session_key/spawned_by,
+    session_nodes.parent_session_key/spawned_by/fork_source_session_key)
+    are present in the captured live schema but have never been observed
+    populated for a real parent/child pair -- exactly why this is the
+    fallback, not the primary path, and why plan 19-07's live verification
+    must record whether they ever answer.
     """
     sid = _session_id_for_key(base, key)
     if not sid:
@@ -207,7 +228,9 @@ def get_root_session_id(
     Returns:
         Root session id string, or the input sid on any failure.
     """
+    global RESOLUTION_SOURCE
     if not sid:
+        RESOLUTION_SOURCE = "none"
         return sid
 
     base = _resolve_base(openclaw_home)
@@ -220,26 +243,45 @@ def get_root_session_id(
         # to id space once at the bottom.
         current_key = _session_key_for_id(base, sid)
         if not current_key:
+            RESOLUTION_SOURCE = "none"
             return sid  # an id the store does not know at all -- nothing to walk
 
+        source = "none"
         for _ in range(max_depth):
             parent_key = sidecar_edges.get(current_key)
+            hop_source = "sidecar" if parent_key else None
             if not parent_key:
                 # D-08: the store fallback is consulted ONLY when the
                 # sidecar has no entry for this hop -- never pre-fetched.
                 parent_key = _parent_key_for_key(base, current_key)
+                if parent_key:
+                    hop_source = "store"
             if not parent_key:
                 break  # current_key is the root
+            if source == "none":
+                # RESOLUTION_SOURCE reflects the FIRST hop that produced a
+                # parent -- a later hop in the same walk never overrides it.
+                source = hop_source
             current_key = parent_key
+
+        RESOLUTION_SOURCE = source
+        if source == "none":
+            return sid  # no linkage found by either source
 
         result_id = _session_id_for_key(base, current_key)
         return result_id or sid
 
     except Exception:
+        RESOLUTION_SOURCE = "error"
         return sid  # blanket guard, never raises
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or not sys.argv[1]:
         sys.exit(0)
-    print(get_root_session_id(sys.argv[1]))
+    _resolved = get_root_session_id(sys.argv[1])
+    print(_resolved)
+    if len(sys.argv) > 2 and sys.argv[2]:
+        # Diagnostic flag: name the resolved source on STDERR only. Stdout
+        # stays exactly one line in every case (see RESOLUTION_SOURCE doc).
+        print(RESOLUTION_SOURCE, file=sys.stderr)

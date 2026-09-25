@@ -326,7 +326,15 @@ class TestSourceAttribution(unittest.TestCase):
         wrapper = _write_logging_store_wrapper(log_path)
         os.environ[_mod._STORE_SCRIPT_OVERRIDE_ENV] = wrapper
         try:
-            result = get_root_session_id(child_sid, openclaw_home=self.fx.openclaw_home)
+            # max_depth=1: bounds the walk to exactly the one hop under
+            # test. Without this, the walk correctly continues past the
+            # resolved parent looking for a SECOND hop (there is none),
+            # which legitimately calls the store fallback for THAT
+            # unrelated lookup -- a different assertion than "the store is
+            # never consulted for the hop the sidecar just answered" (D-08).
+            result = get_root_session_id(
+                child_sid, openclaw_home=self.fx.openclaw_home, max_depth=1
+            )
         finally:
             del os.environ[_mod._STORE_SCRIPT_OVERRIDE_ENV]
 
