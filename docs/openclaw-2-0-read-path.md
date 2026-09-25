@@ -25,10 +25,13 @@ skill's session-store layer (`scripts/session-store.sh`) globs
 `${OPENCLAW_HOME}/agents/*/agent/openclaw-agent.sqlite` and treats **every matched store as one
 combined session universe** for a tick — a session id is looked up across all of them.
 
-**If one store among several is unreadable, the whole tick reports UNREADABLE**, not a partial
-result from the readable stores. This is deliberate (see below) but worth knowing operationally:
-a broken store for a rarely-used agent can silence metering for every other agent on the same
-host until it is fixed.
+Each candidate store is probed independently. An unreadable or schema-drifted store is skipped —
+named in a warn and recorded in the status file's `unhealthy_paths` array — while the remaining
+healthy stores are still metered in the same tick, which therefore still exits `0`. `UNREADABLE`
+with a non-zero exit is now reached only when **no** candidate store is healthy. If you previously
+watched for a non-zero tick exit to notice a broken store on a multi-agent host, that signal no
+longer fires for a partially degraded tick — watch `unhealthy_paths` and the warn line instead,
+because a partially degraded tick now reports success.
 
 ## The read itself
 
@@ -37,6 +40,14 @@ The read is **read-only** and **bounded by a busy timeout**:
 ```
 sqlite3 -cmd "PRAGMA busy_timeout=5000;" "file:<path>?mode=ro" "<SQL>"
 ```
+
+That guarantee holds for every path the read path will actually open, because a candidate store
+path is rejected before a connection is ever built unless it is absolute and made only of the
+allowlisted characters `_store_valid_db_path` enforces: a leading `/`, then only bytes drawn from
+`A-Za-z0-9` plus `/._+:@,=~-`. A candidate outside that class — a Phase 22 SSHFS mount point whose
+path happens to carry a byte outside it, for example — is refused loudly rather than silently
+opened read-write: it never reaches a connection string, it is named in a warn, the tick
+classifies `UNREADABLE`, and the rejection is recorded durably (see `rejected_paths` below).
 
 No retry/backoff wrapper — `busy_timeout` is the only patience the read gets. A live 62-tick,
 61-minute per-minute soak against a concurrently-written store produced zero lock errors and zero
@@ -111,7 +122,14 @@ The subagent attribution path has two sources, consulted in a fixed priority ord
 1. `cat ${OPENCLAW_HOME}/skills/revenium/read-path-status.json` — the durable status file, written
    every tick regardless of outcome. Key names: `state` (`READABLE`/`EMPTY`/`UNREADABLE`),
    `timestamp`, `paths_tried` (array), `error_text`, `schema_missing` (array, non-empty only for a
-   genuine schema-drift `UNREADABLE`), `store_count`.
+   genuine schema-drift `UNREADABLE`), `rejected_paths` (array — candidate paths refused by the
+   allowlist gate above, non-empty only when a candidate path itself was malformed), `unhealthy_paths`
+   (array — candidates that were probed and failed, present whenever at least one candidate is
+   broken, whether or not the tick as a whole still classified `READABLE`/`EMPTY` from the
+   remaining healthy stores), `store_count`. `error_text` is a bounded summary only — control
+   characters stripped, truncated to 64 characters — its full, unbounded form is in the metering
+   log; the structured arrays (`paths_tried`, `schema_missing`, `rejected_paths`, `unhealthy_paths`)
+   carry the actual paths and missing columns verbatim, never truncated.
 2. If `state` is `UNREADABLE`: check the paths in `paths_tried` exist and are readable by the
    user running the tick. Retry once before concluding schema drift — a transient lock can
    present as a false schema-missing reading (see above).
@@ -125,7 +143,17 @@ The subagent attribution path has two sources, consulted in a fixed priority ord
    for that session, with no entry in `read-path-status.json` — this is a per-session validation
    reject, not a store-level failure, so it will not show up as `UNREADABLE`. Confirmed live
    during this plan's verification.
-5. `revenium-reported.ledger` / `revenium-tool-events.ledger` under `${OPENCLAW_HOME}` are the
+5. If markers keep filing under a fresh `pseudo-<epoch>` id, or the coverage report shows zero
+   sessions: check the metering log for the resolvers' unreadable-store warning. Four scripts
+   consult `store_probe` when their own resolver answer comes back empty, and log a named warning
+   only when the store is actually unreadable rather than legitimately empty — `write-marker.sh`,
+   `write-job-marker.sh`, `guardrail-check.sh`, and `verify-markers.sh`. `verify-markers.sh` is the
+   one exception on where its warning lands: it writes to stderr rather than the metering log,
+   because, by design, it does not source `common.sh`. The coverage report `verify-markers.sh`
+   produces states the probed store state (`READABLE`/`EMPTY`/`UNREADABLE`) as its first line, so a
+   zero-session report can never be misread as a zero-coverage finding without also seeing that
+   line.
+6. `revenium-reported.ledger` / `revenium-tool-events.ledger` under `${OPENCLAW_HOME}` are the
    append-only dedup ledgers, keyed `TX:<responseId>` and `TOOLEV:<toolCallId>` respectively.
    Grepping either for an id under investigation shows whether that specific completion or tool
    call was ever metered.

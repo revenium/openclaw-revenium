@@ -62,15 +62,19 @@ fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 # scripts/report.sh and scripts/guardrail-check.sh re-pinned 2026-09-25 by
 # Phase 19 (plan 19-07) — both files were legitimately rewritten across plans
 # 19-01/19-04 (report.sh's SQLite read path) and 19-06 (guardrail-check.sh's
-# store-backed session resolver). This is the ONE deliberate re-pin plans
-# 19-01/19-04/19-06 each left red on purpose (see their SUMMARY.md files);
-# scripts/cron.sh is untouched by Phase 19 and keeps its original pin.
+# store-backed session resolver). scripts/cron.sh is untouched by Phase 19
+# and keeps its original pin.
 #   scripts/report.sh          = 0588982e13e65a55b57cb75c048f877acc9c1136679831a7d50e76a4ed71b216
-#   scripts/guardrail-check.sh = 93023f5f5fe49f89117d8248c4d26dfcbc0e881a0f0005019b9d95dc58c26aea
+# scripts/guardrail-check.sh re-pinned AGAIN 2026-09-25 by Phase 19 gap-closure
+# plan 19-10 (WR-03): the file gained a `store_warn_if_unreadable "guardrail-check"
+# || true` call before get_root_session_id runs (see 19-10-SUMMARY.md D3). Plan
+# 19-10 legitimately changed the file's bytes without re-pinning this constant,
+# which left GROUP-C red until plan 19-11 caught and fixed the omission.
+#   scripts/guardrail-check.sh = 608f396bf6b705bdaa6b85b86623d16b1187d93ca45712e7d66aa44451564e4a
 # ---------------------------------------------------------------------------
 SC4_CRON_SHA="78124b27a78595821f9914c7c79211934da236aa5aa37c21261de34fa82ecaff"
 SC4_REPORT_SHA="0588982e13e65a55b57cb75c048f877acc9c1136679831a7d50e76a4ed71b216"
-SC4_GUARDRAIL_SHA="93023f5f5fe49f89117d8248c4d26dfcbc0e881a0f0005019b9d95dc58c26aea"
+SC4_GUARDRAIL_SHA="608f396bf6b705bdaa6b85b86623d16b1187d93ca45712e7d66aa44451564e4a"
 
 # ---------------------------------------------------------------------------
 # Cleanup: track all tmp HOMEs and clean up on exit
