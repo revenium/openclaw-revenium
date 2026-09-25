@@ -57,14 +57,20 @@ fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 
 # ---------------------------------------------------------------------------
 # SC4 Baseline sha256 constants (do NOT modify — GROUP C enforces these).
-# Captured from live files 2026-06-08 (shasum -a 256):
+# Captured from live files 2026-06-08 (shasum -a 256), scripts/cron.sh only:
 #   scripts/cron.sh            = 78124b27a78595821f9914c7c79211934da236aa5aa37c21261de34fa82ecaff
-#   scripts/report.sh          = 238a08bf151d1ae4446f20d1ff20c382ec2ed18b482e6b8094b5c6147eb1741f
-#   scripts/guardrail-check.sh = 7a0f842d3ecc86246fb968ea2e7bc3a9d0a295fbc1c0ca94c60f1f7ae0dc8659
+# scripts/report.sh and scripts/guardrail-check.sh re-pinned 2026-09-25 by
+# Phase 19 (plan 19-07) — both files were legitimately rewritten across plans
+# 19-01/19-04 (report.sh's SQLite read path) and 19-06 (guardrail-check.sh's
+# store-backed session resolver). This is the ONE deliberate re-pin plans
+# 19-01/19-04/19-06 each left red on purpose (see their SUMMARY.md files);
+# scripts/cron.sh is untouched by Phase 19 and keeps its original pin.
+#   scripts/report.sh          = 0588982e13e65a55b57cb75c048f877acc9c1136679831a7d50e76a4ed71b216
+#   scripts/guardrail-check.sh = 93023f5f5fe49f89117d8248c4d26dfcbc0e881a0f0005019b9d95dc58c26aea
 # ---------------------------------------------------------------------------
 SC4_CRON_SHA="78124b27a78595821f9914c7c79211934da236aa5aa37c21261de34fa82ecaff"
-SC4_REPORT_SHA="238a08bf151d1ae4446f20d1ff20c382ec2ed18b482e6b8094b5c6147eb1741f"
-SC4_GUARDRAIL_SHA="7a0f842d3ecc86246fb968ea2e7bc3a9d0a295fbc1c0ca94c60f1f7ae0dc8659"
+SC4_REPORT_SHA="0588982e13e65a55b57cb75c048f877acc9c1136679831a7d50e76a4ed71b216"
+SC4_GUARDRAIL_SHA="93023f5f5fe49f89117d8248c4d26dfcbc0e881a0f0005019b9d95dc58c26aea"
 
 # ---------------------------------------------------------------------------
 # Cleanup: track all tmp HOMEs and clean up on exit
