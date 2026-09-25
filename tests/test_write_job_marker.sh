@@ -18,6 +18,12 @@
 #  10.  Field with | sanitized to _ in written record
 #  11.  Field with embedded newline does not break JSONL line count
 #  12.  Field longer than length cap (300 chars) truncated to <= 256 chars in record
+#
+# Rebuilt on the SQLite session-store fixture harness
+# (tests/lib/mk-session-store.sh) for Phase 19 plan 19-06, which ports
+# write-job-marker.sh's current-session resolution off the transcript-filename
+# glob onto scripts/session-store.sh :: store_current_session_id /
+# store_last_completion_id (D-10).
 # =============================================================================
 
 set -uo pipefail
@@ -25,6 +31,10 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WRITE_JOB_MARKER="${REPO_ROOT}/scripts/write-job-marker.sh"
+MK_LIB="${SCRIPT_DIR}/lib/mk-session-store.sh"
+
+# shellcheck source=lib/mk-session-store.sh
+. "${MK_LIB}"
 
 PASS=0
 FAIL=0
@@ -33,25 +43,24 @@ pass() { echo "PASS: $1"; ((PASS++)) || true; }
 fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 
 # ---------------------------------------------------------------------------
-# Test setup: build a minimal tmp OPENCLAW_HOME tree
+# Test setup: build a minimal tmp OPENCLAW_HOME tree with a SQLite store at
+# the real agents/<agentId>/agent/openclaw-agent.sqlite layout.
 # ---------------------------------------------------------------------------
 TMP_HOME=$(mktemp -d "${TMPDIR:-/tmp}/test-wjm-home.XXXXXX")
-TMP_SESSIONS="${TMP_HOME}/agents/main/sessions"
 TMP_STATE="${TMP_HOME}/skills/revenium"
 TMP_MARKERS="${TMP_STATE}/markers"
 TMP_JOB_TAXONOMY="${TMP_STATE}/job-taxonomy.json"
+DB="${TMP_HOME}/agents/main/agent/openclaw-agent.sqlite"
 
-mkdir -p "${TMP_SESSIONS}" "${TMP_STATE}"
+mkdir -p "${TMP_STATE}"
 
 # Seed job taxonomy (copy from repo root)
 cp "${REPO_ROOT}/job-taxonomy.json" "${TMP_JOB_TAXONOMY}"
 
-# Create a fake interactive session file (UUID-named)
+# One non-cron session in the store, resolvable by store_current_session_id.
 FAKE_SID="aabbccdd-0001-0001-0001-000000000001"
-FAKE_SESSION="${TMP_SESSIONS}/${FAKE_SID}.jsonl"
-echo '{"type":"session","id":"aabbccdd-0001-0001-0001-000000000001","timestamp":"2026-01-01T00:00:00.000Z"}' \
-  > "${FAKE_SESSION}"
-touch "${FAKE_SESSION}"  # set mtime to now (freshest file)
+mk_store "${DB}"
+mk_session "${DB}" "${FAKE_SID}" "agent:main:main" "" 100
 
 cleanup() {
   rm -rf "${TMP_HOME}"
@@ -493,6 +502,96 @@ if [[ ${rc} -eq 0 ]] && grep -q '"agentic_job_id":"explicit-close-17aa"' "${MARK
   pass "17: --close with explicit --job-id works without state file"
 else
   fail "17: explicit-id close failed (rc=${rc})"
+fi
+
+# ---------------------------------------------------------------------------
+# Tests 18-20: D-10 store-backed resolution behavior
+# ---------------------------------------------------------------------------
+
+# Test 18: a terminal (non-RUNNING) job marker with a completion in the store
+# includes completion_id == the responseId of the latest usage-bearing
+# assistant event (Rule 1 deviation, 19-06: job markers ARE correlated by
+# completion via report.sh's job_resolve Phase A exact-match).
+SID18="ee000000-0018-0018-0018-000000000018"
+mk_store "${DB}"
+mk_session "${DB}" "${SID18}" "agent:main:main" "" 100
+mk_assistant_event "${DB}" "${SID18}" 0 "msg_jm_001" "run-18" 10
+mk_assistant_event "${DB}" "${SID18}" 1 "msg_jm_002" "run-18" 20
+
+MARKER_FILE_18="${TMP_MARKERS}/${SID18}.jsonl"
+rm -f "${MARKER_FILE_18}"
+
+run_job_marker \
+  --job-id "completion-corr-18aa" \
+  --job-name "Completion correlation" \
+  --job-type "testing" \
+  --status "SUCCESS" >/dev/null 2>&1
+
+if [[ -f "${MARKER_FILE_18}" ]]; then
+  rec18=$(head -1 "${MARKER_FILE_18}")
+  if echo "${rec18}" | python3 -c "
+import json, sys
+rec = json.loads(sys.stdin.read().strip())
+assert rec.get('completion_id') == 'msg_jm_002', f'completion_id mismatch: {rec}'
+" 2>/dev/null; then
+    pass "18: terminal job marker's completion_id is the latest completion's responseId"
+  else
+    fail "18: completion_id missing or wrong (line: ${rec18})"
+  fi
+else
+  fail "18: no marker file written for completion-correlation test"
+fi
+
+# Test 19: a cron session newer than a chat session — the job marker files
+# under the chat (non-cron) session, never the cron session.
+CHAT_SID19="ff000000-0019-0019-0019-000000000019"
+CRON_SID19="aa100000-0019-0019-0019-00000000001a"
+mk_store "${DB}"
+mk_session "${DB}" "${CHAT_SID19}" "agent:main:chat" "" 100
+mk_session "${DB}" "${CRON_SID19}" "agent:main:cron:x" "cron" 999
+
+MARKER_FILE_CHAT19="${TMP_MARKERS}/${CHAT_SID19}.jsonl"
+MARKER_FILE_CRON19="${TMP_MARKERS}/${CRON_SID19}.jsonl"
+rm -f "${MARKER_FILE_CHAT19}" "${MARKER_FILE_CRON19}"
+
+run_job_marker \
+  --job-id "cron-tiebreak-19aa" \
+  --job-name "Cron tie-break" \
+  --job-type "testing" \
+  --status "SUCCESS" >/dev/null 2>&1
+
+if [[ -f "${MARKER_FILE_CHAT19}" && ! -f "${MARKER_FILE_CRON19}" ]]; then
+  pass "19: job marker files under the chat session, never the newer cron session"
+else
+  fail "19: expected marker under ${CHAT_SID19} only (chat=$([ -f "${MARKER_FILE_CHAT19}" ] && echo yes || echo no), cron=$([ -f "${MARKER_FILE_CRON19}" ] && echo yes || echo no))"
+fi
+
+# Test 20: no non-cron session anywhere in the store — the pseudo-id fallback
+# still fires and the job marker is still written.
+CRON_ONLY_SID20="bb100000-0020-0020-0020-00000000001b"
+mk_store "${DB}"
+mk_session "${DB}" "${CRON_ONLY_SID20}" "agent:main:cron:y" "cron" 100
+
+rm -f "${TMP_MARKERS}"/pseudo-*.jsonl
+
+output20=$(run_job_marker \
+  --job-id "pseudo-fallback-20aa" \
+  --job-name "Pseudo fallback" \
+  --job-type "testing" \
+  --status "SUCCESS" 2>&1)
+exit20=$?
+
+if [[ "${exit20}" -eq 0 ]] && echo "${output20}" | grep -q "job marker written:"; then
+  pass "20: pseudo-id fallback still writes a job marker when no non-cron session exists"
+else
+  fail "20: pseudo-id fallback did not write a job marker (exit=${exit20}, output: ${output20})"
+fi
+
+pseudo_files_20=("${TMP_MARKERS}"/pseudo-*.jsonl)
+if [[ -e "${pseudo_files_20[0]}" ]]; then
+  pass "20: job marker filed under a pseudo-<timestamp> id, not the cron session"
+else
+  fail "20: no pseudo-*.jsonl job marker file found"
 fi
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/common.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/session-store.sh"
 
 # Save the head of PATH before ensure_path so that test-injected stub directories
 # (prepended by the test harness) are not pushed back by ensure_path's Homebrew
@@ -490,12 +492,18 @@ fi
 touch "${GUARDRAIL_LEDGER_FILE}" 2>/dev/null || true
 
 # Resolve root session for agent attribution (D-07 / GRDEV-04).
-# macOS-portable: ls -t for mtime ordering (no find -printf on macOS).
+# D-10: current-session resolution now comes from the SQLite store
+# (scripts/session-store.sh :: store_current_session_id) instead of a
+# newest-*.jsonl-by-mtime listing, which resolves to nothing on a 2.0 host.
+# This file runs under `set -euo pipefail` (see header), so the call MUST
+# carry the same `|| true` discipline as every other resolver line in this
+# region — store_current_session_id's own internals invoke sqlite3 several
+# layers deep inside a piped subshell, and a failing sqlite3 call in there
+# would otherwise abort this entire guardrail gate (fail-open contract,
+# T-19-21): a resolution failure must degrade the attribution value, never
+# stop the tick.
 _guardrail_newest_session_id=""
-_guardrail_newest_session_id=$(
-  ls -t "${SESSIONS_DIR}"/*.jsonl 2>/dev/null | head -1 \
-  | xargs basename 2>/dev/null | sed 's/\.jsonl$//'
-) || true
+_guardrail_newest_session_id=$(store_current_session_id) || true
 _guardrail_root_sid="${_guardrail_newest_session_id}"
 if [[ -n "${_guardrail_newest_session_id}" ]]; then
   _guardrail_root_sid=$(get_root_session_id "${_guardrail_newest_session_id}") || true

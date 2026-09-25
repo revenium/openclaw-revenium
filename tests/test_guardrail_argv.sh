@@ -9,13 +9,19 @@
 #     - config.json (ruleIds: ["rule-abc123"])
 #     - revenium-guardrail.ledger (empty — dedup ledger for Phase 9 / Section M)
 #     - revenium-jobs.ledger (one open job for --agentic-job-id attribution)
-#     - agents/main/sessions/ (one fake session file for root-session attribution)
+#     - agents/<id>/agent/openclaw-agent.sqlite (one non-cron session, built via
+#       tests/lib/mk-session-store.sh, for D-10 root-session attribution)
 #   Place stub-revenium.sh on PATH capturing all argv to STUB_REVENIUM_ARGV_FILE.
 #   Set STUB_REVENIUM_ENFORCEMENT_JSON to a fixture with a halted rule, a warned
 #   rule, and a shadow rule.
 #   Run guardrail-check.sh and assert captured argv.
 #
-# CLI flag answers (resolved 2026-06-04 on live host 172.16.1.247, Team DZxzEl):
+# Rebuilt on the SQLite session-store fixture harness for Phase 19 plan 19-06,
+# which ports guardrail-check.sh's current-session resolution off the
+# newest-*.jsonl-by-mtime listing onto
+# scripts/session-store.sh :: store_current_session_id (D-10).
+#
+# CLI flag answers (resolved 2026-06-04 on live a live test host, Team DZxzEl):
 #   A1: --transaction-id is OPTIONAL — do NOT assert it; implementation MUST NOT add it.
 #   A2: zero token values accepted — no --total-tokens 1 sentinel needed.
 #   A3: COST_LIMIT is a valid --stop-reason enum value.
@@ -35,6 +41,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 GUARDRAIL_CHECK_SH="${REPO_ROOT}/scripts/guardrail-check.sh"
 STUB_SH="${SCRIPT_DIR}/stub-revenium.sh"
+MK_LIB="${SCRIPT_DIR}/lib/mk-session-store.sh"
+
+# shellcheck source=lib/mk-session-store.sh
+. "${MK_LIB}"
 
 PASS=0
 FAIL=0
@@ -86,6 +96,20 @@ make_openclaw_home() {
   echo "JOB:test-job-open-001:created:$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     > "${d}/revenium-jobs.ledger"
   echo "${d}"
+}
+
+# ---------------------------------------------------------------------------
+# mk_guardrail_session <openclaw_home> <session_id> — builds a fresh SQLite
+# store at the real agents/main/agent/openclaw-agent.sqlite layout with one
+# non-cron session, so guardrail-check.sh's D-10 store_current_session_id
+# resolver finds it. Replaces the old "write one *.jsonl under
+# agents/main/sessions/" fixture.
+# ---------------------------------------------------------------------------
+mk_guardrail_session() {
+  local openclaw_home="$1" sid="$2"
+  local db="${openclaw_home}/agents/main/agent/openclaw-agent.sqlite"
+  mk_store "${db}"
+  mk_session "${db}" "${sid}" "agent:main:main" "" 100
 }
 
 # ---------------------------------------------------------------------------
@@ -163,9 +187,7 @@ echo "--- GROUP A: GRDEV-01 halt emission (first run) ---"
 TMP_HOME_A=$(make_openclaw_home)
 # Create fake session file for root-session attribution
 SESSION_ID_A="aaaaaaaa-1111-1111-1111-000000000001"
-cat > "${TMP_HOME_A}/agents/main/sessions/${SESSION_ID_A}.jsonl" <<'JSONL'
-{"type":"session","version":3,"id":"aaaaaaaa-1111-1111-1111-000000000001","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
-JSONL
+mk_guardrail_session "${TMP_HOME_A}" "${SESSION_ID_A}"
 
 # Clear argv file for this group
 > "${ARGV_FILE}"
@@ -227,9 +249,7 @@ echo "--- GROUP B: GRDEV-01 idempotency (run twice, halt emitted exactly once) -
 
 TMP_HOME_B=$(make_openclaw_home)
 SESSION_ID_B="bbbbbbbb-2222-2222-2222-000000000002"
-cat > "${TMP_HOME_B}/agents/main/sessions/${SESSION_ID_B}.jsonl" <<'JSONL'
-{"type":"session","version":3,"id":"bbbbbbbb-2222-2222-2222-000000000002","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
-JSONL
+mk_guardrail_session "${TMP_HOME_B}" "${SESSION_ID_B}"
 
 # Clear argv file
 > "${ARGV_FILE}"
@@ -262,9 +282,7 @@ echo "--- GROUP C: GRDEV-02 warn emission (first run) ---"
 
 TMP_HOME_C=$(make_openclaw_home)
 SESSION_ID_C="cccccccc-3333-3333-3333-000000000003"
-cat > "${TMP_HOME_C}/agents/main/sessions/${SESSION_ID_C}.jsonl" <<'JSONL'
-{"type":"session","version":3,"id":"cccccccc-3333-3333-3333-000000000003","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
-JSONL
+mk_guardrail_session "${TMP_HOME_C}" "${SESSION_ID_C}"
 
 > "${ARGV_FILE}"
 
@@ -292,9 +310,7 @@ echo "--- GROUP D: GRDEV-02 warn re-fire (warn->ok->warn) ---"
 
 TMP_HOME_D=$(make_openclaw_home)
 SESSION_ID_D="dddddddd-4444-4444-4444-000000000004"
-cat > "${TMP_HOME_D}/agents/main/sessions/${SESSION_ID_D}.jsonl" <<'JSONL'
-{"type":"session","version":3,"id":"dddddddd-4444-4444-4444-000000000004","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
-JSONL
+mk_guardrail_session "${TMP_HOME_D}" "${SESSION_ID_D}"
 
 # Warn-only fixture: only the warn rule, no halt rule
 WARN_ONLY_ENFORCEMENT_JSON='{"rules":[{"ruleId":2002,"name":"monthly-cost-warn","metricType":"TOTAL_COST","periodType":"MONTHLY","threshold":200,"warnThreshold":160,"currentValue":175,"breached":false,"warnBreached":true,"shadowMode":false,"groupBy":"AGENT"}]}'
@@ -334,9 +350,7 @@ echo "--- GROUP E: GRDEV-03 shadow emission ---"
 
 TMP_HOME_E=$(make_openclaw_home)
 SESSION_ID_E="eeeeeeee-5555-5555-5555-000000000005"
-cat > "${TMP_HOME_E}/agents/main/sessions/${SESSION_ID_E}.jsonl" <<'JSONL'
-{"type":"session","version":3,"id":"eeeeeeee-5555-5555-5555-000000000005","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
-JSONL
+mk_guardrail_session "${TMP_HOME_E}" "${SESSION_ID_E}"
 
 > "${ARGV_FILE}"
 
@@ -360,9 +374,7 @@ echo "--- GROUP F: GRDEV-04a agent attribution ---"
 
 TMP_HOME_F=$(make_openclaw_home)
 SESSION_ID_F="ffffffff-6666-6666-6666-000000000006"
-cat > "${TMP_HOME_F}/agents/main/sessions/${SESSION_ID_F}.jsonl" <<'JSONL'
-{"type":"session","version":3,"id":"ffffffff-6666-6666-6666-000000000006","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
-JSONL
+mk_guardrail_session "${TMP_HOME_F}" "${SESSION_ID_F}"
 
 > "${ARGV_FILE}"
 
@@ -390,9 +402,7 @@ echo "--- GROUP G: GRDEV-04b agentic-job-id attribution ---"
 TMP_HOME_G1=$(make_openclaw_home)
 # make_openclaw_home already places one open job in revenium-jobs.ledger
 SESSION_ID_G="11111111-7777-7777-7777-000000000007"
-cat > "${TMP_HOME_G1}/agents/main/sessions/${SESSION_ID_G}.jsonl" <<'JSONL'
-{"type":"session","version":3,"id":"11111111-7777-7777-7777-000000000007","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
-JSONL
+mk_guardrail_session "${TMP_HOME_G1}" "${SESSION_ID_G}"
 
 > "${ARGV_FILE}"
 
@@ -412,9 +422,7 @@ rm -rf "${TMP_HOME_G1}"
 TMP_HOME_G2=$(make_openclaw_home)
 # Truncate the jobs ledger — no open jobs
 > "${TMP_HOME_G2}/revenium-jobs.ledger"
-cat > "${TMP_HOME_G2}/agents/main/sessions/${SESSION_ID_G}.jsonl" <<'JSONL'
-{"type":"session","version":3,"id":"11111111-7777-7777-7777-000000000007","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
-JSONL
+mk_guardrail_session "${TMP_HOME_G2}" "${SESSION_ID_G}"
 
 > "${ARGV_FILE}"
 
@@ -438,9 +446,7 @@ echo "--- GROUP H: GRDEV-05 fail-open (meter call failure does not block tick) -
 
 TMP_HOME_H=$(make_openclaw_home)
 SESSION_ID_H="22222222-8888-8888-8888-000000000008"
-cat > "${TMP_HOME_H}/agents/main/sessions/${SESSION_ID_H}.jsonl" <<'JSONL'
-{"type":"session","version":3,"id":"22222222-8888-8888-8888-000000000008","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
-JSONL
+mk_guardrail_session "${TMP_HOME_H}" "${SESSION_ID_H}"
 
 > "${ARGV_FILE}"
 
@@ -481,9 +487,7 @@ echo "--- GROUP I: GRDEV-05 fail-open (meter call fails, tick still exits 0) ---
 # Create a stub that accepts guardrails calls but fails on meter completion
 TMP_HOME_I=$(make_openclaw_home)
 SESSION_ID_I="33333333-9999-9999-9999-000000000009"
-cat > "${TMP_HOME_I}/agents/main/sessions/${SESSION_ID_I}.jsonl" <<'JSONL'
-{"type":"session","version":3,"id":"33333333-9999-9999-9999-000000000009","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
-JSONL
+mk_guardrail_session "${TMP_HOME_I}" "${SESSION_ID_I}"
 
 # Create a meter-failing stub: same as normal stub but exits 1 for meter completion
 TMP_METER_FAIL_BIN=$(mktemp -d "${TMPDIR:-/tmp}/test-gc-meterfail.XXXXXX")
@@ -549,9 +553,7 @@ echo "--- GROUP J: A2 zero-token values in meter call ---"
 
 TMP_HOME_J=$(make_openclaw_home)
 SESSION_ID_J="44444444-aaaa-aaaa-aaaa-00000000000a"
-cat > "${TMP_HOME_J}/agents/main/sessions/${SESSION_ID_J}.jsonl" <<'JSONL'
-{"type":"session","version":3,"id":"44444444-aaaa-aaaa-aaaa-00000000000a","timestamp":"2026-01-01T10:00:00.000Z","cwd":"/tmp/test"}
-JSONL
+mk_guardrail_session "${TMP_HOME_J}" "${SESSION_ID_J}"
 
 > "${ARGV_FILE}"
 
@@ -574,6 +576,56 @@ else
 fi
 
 rm -rf "${TMP_HOME_J}"
+
+# ===========================================================================
+# GROUP K: D-10 fail-open — a guardrail check pointed at a NONEXISTENT store
+# (no agents/*/agent/openclaw-agent.sqlite anywhere under OPENCLAW_HOME)
+# still exits 0 and still emits its guardrail argv (T-19-21). This is the
+# property most likely to regress and least likely to be noticed: the
+# resolver runs under `set -euo pipefail`, so a resolution failure that
+# doesn't carry `|| true` would silently abort the whole guardrail gate
+# instead of degrading the attribution value.
+# ===========================================================================
+echo ""
+echo "--- GROUP K: D-10 fail-open against a nonexistent session store ---"
+
+TMP_HOME_K=$(make_openclaw_home)
+# Deliberately do NOT call mk_guardrail_session — no store exists anywhere
+# under TMP_HOME_K/agents/*/agent/openclaw-agent.sqlite.
+
+> "${ARGV_FILE}"
+
+export STUB_REVENIUM_ENFORCEMENT_JSON="${HALT_ENFORCEMENT_JSON}"
+export STUB_REVENIUM_BUDGET_RULES_JSON="${HALT_BUDGET_RULES_JSON}"
+# Bypass run_guardrail_check's own `|| true` (which would mask the real exit
+# code) so this test observes guardrail-check.sh's actual exit status.
+exit_code_k=0
+STUB_REVENIUM_ARGV_FILE="${ARGV_FILE}" \
+OPENCLAW_HOME="${TMP_HOME_K}" \
+HOME="${TMP_FAKE_HOME}" \
+bash "${GUARDRAIL_CHECK_SH}" >/dev/null 2>&1 || exit_code_k=$?
+
+if [[ "${exit_code_k}" -eq 0 ]]; then
+  pass "D-10: guardrail-check.sh exits 0 against a nonexistent session store"
+else
+  fail "D-10: guardrail-check.sh exited ${exit_code_k} against a nonexistent store — fail-open broken"
+fi
+
+if argv_vals "--operation-type" | grep -q "^GUARDRAIL$"; then
+  pass "D-10: guardrail argv still emitted (--operation-type GUARDRAIL) with a nonexistent store"
+else
+  fail "D-10: guardrail argv NOT emitted against a nonexistent store"
+fi
+
+# Attribution degrades gracefully rather than crashing — some --agent value
+# is still present (falls back to the empty-newest-session-id branch).
+if argv_vals "--agent" | grep -q "^openclaw-"; then
+  pass "D-10: --agent attribution still present (degraded, not crashed) against a nonexistent store"
+else
+  fail "D-10: --agent attribution missing entirely against a nonexistent store"
+fi
+
+rm -rf "${TMP_HOME_K}"
 
 # ===========================================================================
 # Summary
