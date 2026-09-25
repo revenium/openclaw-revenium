@@ -100,6 +100,21 @@ class _Fixture:
             text=True,
         )
 
+    def set_window_parent_key(self, sid: str, parent_key: str):
+        """Write session_windows.parent_session_key directly (store-parentage
+        FALLBACK column, D-08) via a plain read-write sqlite3 connection --
+        never through the resolver's read-only store CLI."""
+        subprocess.run(
+            [
+                "sqlite3", self.db_path,
+                f"UPDATE session_windows SET parent_session_key = '{parent_key}' "
+                f"WHERE session_id = '{sid}';",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     def _sidecar_dir(self) -> str:
         d = os.path.join(self.openclaw_home, "skills", "revenium")
         os.makedirs(d, exist_ok=True)
@@ -137,6 +152,26 @@ class _Fixture:
 def _sid(n: str) -> str:
     """Build a hex-UUID-shaped session id (matches _store_valid_id)."""
     return f"aaaaaaaa-0000-0000-0000-{n:0>12}"
+
+
+def _write_logging_store_wrapper(log_path: str) -> str:
+    """Write a bash wrapper that appends the requested verb to `log_path`
+    and then delegates to the real scripts/session-store.sh, so a test can
+    assert a particular verb (e.g. "parent-session-id") was NEVER invoked
+    for a hop the sidecar already answered (D-08), without monkeypatching
+    subprocess -- the same environment-injection mechanism
+    _STORE_SCRIPT_OVERRIDE_ENV exists for.
+    """
+    real_script = _REPO_ROOT / "scripts" / "session-store.sh"
+    wrapper_path = os.path.join(os.path.dirname(log_path), "logging-store-wrapper.sh")
+    with open(wrapper_path, "w", encoding="utf-8") as fh:
+        fh.write(
+            "#!/usr/bin/env bash\n"
+            f'echo "$1" >> "{log_path}"\n'
+            f'exec bash "{real_script}" "$@"\n'
+        )
+    os.chmod(wrapper_path, 0o755)
+    return wrapper_path
 
 
 # ===========================================================================
@@ -250,12 +285,101 @@ class TestSidecarResolution(unittest.TestCase):
         self.assertEqual(result, parent_sid)
 
 
+# ===========================================================================
+# Task 2: store-parentage fallback and RESOLUTION_SOURCE attribution
+# ===========================================================================
+class TestSourceAttribution(unittest.TestCase):
+    def setUp(self):
+        self.fx = _Fixture()
+
+    def tearDown(self):
+        self.fx.cleanup()
+
+    def test_store_fallback_answers_when_no_sidecar(self):
+        child_sid, parent_sid = _sid("16"), _sid("17")
+        child_key, parent_key = "agent:main:subagent:child16", "agent:main:main"
+        self.fx.add_session(child_sid, child_key)
+        self.fx.add_session(parent_sid, parent_key)
+        # No sidecar file at all -- the store's own parentage column is the
+        # only source of a parent link (session_windows.parent_session_key,
+        # D-08's fallback).
+        self.fx.set_window_parent_key(child_sid, parent_key)
+
+        result = get_root_session_id(child_sid, openclaw_home=self.fx.openclaw_home)
+        self.assertEqual(result, parent_sid)
+        self.assertEqual(_mod.RESOLUTION_SOURCE, "store")
+
+    def test_sidecar_wins_a_deliberate_disagreement_with_store(self):
+        child_sid = _sid("18")
+        sidecar_parent_sid, store_parent_sid = _sid("19"), _sid("20")
+        child_key = "agent:main:subagent:child18"
+        sidecar_parent_key = "agent:main:sidecar-parent"
+        store_parent_key = "agent:main:store-parent"
+        self.fx.add_session(child_sid, child_key)
+        self.fx.add_session(sidecar_parent_sid, sidecar_parent_key)
+        self.fx.add_session(store_parent_sid, store_parent_key)
+        # Both sources disagree about the parent of child_sid.
+        self.fx.write_sidecar([(child_key, sidecar_parent_key)])
+        self.fx.set_window_parent_key(child_sid, store_parent_key)
+
+        log_path = os.path.join(self.fx.tmpdir, "store-invocations.log")
+        wrapper = _write_logging_store_wrapper(log_path)
+        os.environ[_mod._STORE_SCRIPT_OVERRIDE_ENV] = wrapper
+        try:
+            result = get_root_session_id(child_sid, openclaw_home=self.fx.openclaw_home)
+        finally:
+            del os.environ[_mod._STORE_SCRIPT_OVERRIDE_ENV]
+
+        self.assertEqual(result, sidecar_parent_sid)
+        self.assertEqual(_mod.RESOLUTION_SOURCE, "sidecar")
+        # The sidecar answered the only hop in this walk, so the store's
+        # own parentage-fallback verb must never have been invoked (D-08:
+        # the fallback is never pre-fetched for a hop the sidecar answers).
+        invocations = []
+        if os.path.exists(log_path):
+            with open(log_path, encoding="utf-8") as fh:
+                invocations = [line.strip() for line in fh if line.strip()]
+        self.assertNotIn("parent-session-id", invocations)
+
+    def test_neither_source_answers_returns_input_with_source_none(self):
+        plain_sid = _sid("21")
+        self.fx.add_session(plain_sid, "agent:main:main")
+        # No sidecar file, no store parentage column set.
+
+        result = get_root_session_id(plain_sid, openclaw_home=self.fx.openclaw_home)
+        self.assertEqual(result, plain_sid)
+        self.assertEqual(_mod.RESOLUTION_SOURCE, "none")
+
+
 class TestCliContract(unittest.TestCase):
     def setUp(self):
         self.fx = _Fixture()
 
     def tearDown(self):
         self.fx.cleanup()
+
+    def test_cli_diagnostic_flag_stdout_stays_one_line_source_on_stderr(self):
+        child_sid, parent_sid = _sid("22"), _sid("23")
+        child_key, parent_key = "agent:main:subagent:child22", "agent:main:main"
+        self.fx.add_session(child_sid, child_key)
+        self.fx.add_session(parent_sid, parent_key)
+        self.fx.write_sidecar([(child_key, parent_key)])
+
+        env = dict(os.environ)
+        env["OPENCLAW_HOME"] = self.fx.openclaw_home
+        proc = subprocess.run(
+            [sys.executable, str(_MODULE_PATH), child_sid, "--diagnose"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        self.assertEqual(proc.returncode, 0)
+        stdout_lines = proc.stdout.splitlines()
+        self.assertEqual(len(stdout_lines), 1)
+        self.assertEqual(stdout_lines[0], parent_sid)
+        stderr_lines = [l for l in proc.stderr.splitlines() if l.strip()]
+        self.assertEqual(len(stderr_lines), 1)
+        self.assertEqual(stderr_lines[0], "sidecar")
 
     def test_cli_prints_root_id_and_exits_zero(self):
         child_sid, parent_sid = _sid("14"), _sid("15")
