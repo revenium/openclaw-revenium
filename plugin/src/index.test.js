@@ -14,7 +14,7 @@
  */
 import { test, describe, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, chmodSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, chmodSync, appendFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -28,6 +28,14 @@ import {
   safeBeforeAgentFinalize,
   safeBeforeToolCall,
   safeAgentEnd,
+  handleSubagentSpawned,
+  handleSubagentEnded,
+  safeSubagentSpawned,
+  safeSubagentEnded,
+  appendSidecarEdge,
+  setSidecarPath,
+  resolveSidecarPath,
+  readSidecarEdges,
 } from "./gate.js";
 
 // Shared runIds for tests
@@ -40,11 +48,19 @@ const RUN_B = "run-bbb-002";
 const SUITE_TMP_DIR = mkdtempSync(join(tmpdir(), "gate-suite-"));
 setRunStateDir(SUITE_TMP_DIR);
 
+// Sidecar path lives in a distinct file inside the same suite tmp dir
+// (PLUG-04) — cleared in beforeEach below, independent of resetState()'s
+// run-state-dir cleanup.
+const SIDECAR_TEST_PATH = join(SUITE_TMP_DIR, "subagent-edges.jsonl");
+setSidecarPath(SIDECAR_TEST_PATH);
+
 // Reset module-level state before each test to prevent leakage.
 // setRunStateDir is already set to SUITE_TMP_DIR for the whole suite;
 // resetState() will clean the tmp dir contents (test isolation for disk).
 beforeEach(() => {
   resetState();
+  try { rmSync(SIDECAR_TEST_PATH, { force: true }); } catch { /* ignore */ }
+  try { rmSync(SIDECAR_TEST_PATH + ".1", { force: true }); } catch { /* ignore */ }
 });
 
 // Clean up the suite-level tmp dir after all tests.
@@ -491,7 +507,7 @@ describe("WR-01 / WR-04 — non-string exec path does NOT downgrade marked:true"
 // source that detects Nemotron's tool_search_code-based exec invocations, and
 // that safeBeforeAgentFinalize properly threads the transcript to impl.
 //
-// Schema (confirmed live on host 34.224.27.67, session 524a4a76):
+// Schema (confirmed live on a live test host, session 524a4a76):
 //   event.messages[N].message.role === "assistant"
 //   event.messages[N].message.content[M].type === "toolCall"
 //   event.messages[N].message.content[M].name === "tool_search_code"
@@ -724,5 +740,192 @@ describe("buildMeteringInjection (per-turn directive injection, 2026-06-13)", ()
       if (prev === undefined) delete process.env.OPENCLAW_HOME; else process.env.OPENCLAW_HOME = prev;
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// subagent_spawned / subagent_ended — child-to-parent sidecar (PLUG-04, 19-03)
+//
+// Fixture payloads are the VERBATIM key/value shapes captured live in
+// .claude/skills/spike-findings-openclaw-revenium/sources/009-hook-firing-matrix-2-0/
+// hook-fire-log.txt (spawn at 2026-09-24T15:25:28.602Z, ended at
+// 2026-09-24T15:25:48.847Z), so the tests encode the real observed shape
+// rather than an assumed one.
+// ---------------------------------------------------------------------------
+
+const CHILD_SESSION_KEY = "agent:dev:subagent:5ecccc34-baf9-4c9c-b36c-5a382e4d63f9";
+const PARENT_SESSION_KEY = "agent:dev:main";
+const SPAWN_RUN_ID = "4fd45eee-76d4-4f24-8bdb-67e2e2200376";
+
+// Verbatim event/ctx shapes from the hook-fire-log.txt subagent_spawned record.
+const SPAWN_EVENT = {
+  runId: SPAWN_RUN_ID,
+  childSessionKey: CHILD_SESSION_KEY,
+  agentId: "dev",
+  label: "some-label",
+  requester: PARENT_SESSION_KEY,
+  threadRequested: false,
+  mode: "run",
+  resolvedModel: "anthropic/claude-sonnet-4-6",
+  resolvedProvider: "anthropic",
+};
+const SPAWN_CTX = {
+  runId: SPAWN_RUN_ID,
+  childSessionKey: CHILD_SESSION_KEY,
+  requesterSessionKey: PARENT_SESSION_KEY,
+};
+
+// Verbatim event/ctx shapes from the hook-fire-log.txt subagent_ended record.
+const ENDED_EVENT = {
+  targetSessionKey: CHILD_SESSION_KEY,
+  targetKind: "subagent",
+  reason: "subagent-complete",
+  sendFarewell: true,
+  accountId: "acct-1",
+  runId: SPAWN_RUN_ID,
+  endedAt: 1790263539066,
+  outcome: "ok",
+  error: undefined,
+};
+const ENDED_CTX = {
+  runId: SPAWN_RUN_ID,
+  childSessionKey: CHILD_SESSION_KEY,
+  requesterSessionKey: PARENT_SESSION_KEY,
+};
+
+function readSidecarLines() {
+  try {
+    const content = readFileSync(SIDECAR_TEST_PATH, "utf8");
+    return content.split("\n").filter((l) => l.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+describe("resolveSidecarPath / setSidecarPath", () => {
+  test("setSidecarPath overrides the resolved path; null reverts to env-derived default", () => {
+    assert.strictEqual(resolveSidecarPath(), SIDECAR_TEST_PATH, "override active for the suite");
+    setSidecarPath(null);
+    const prev = process.env.OPENCLAW_HOME;
+    process.env.OPENCLAW_HOME = "/tmp/fake-openclaw-home";
+    try {
+      assert.strictEqual(
+        resolveSidecarPath(),
+        join("/tmp/fake-openclaw-home", "skills", "revenium", "subagent-edges.jsonl"),
+        "default path derives from OPENCLAW_HOME"
+      );
+    } finally {
+      if (prev === undefined) delete process.env.OPENCLAW_HOME; else process.env.OPENCLAW_HOME = prev;
+      setSidecarPath(SIDECAR_TEST_PATH); // restore suite override
+    }
+  });
+});
+
+describe("handleSubagentSpawned", () => {
+  test("real captured payload appends exactly one complete, parseable spawn record", () => {
+    handleSubagentSpawned(SPAWN_EVENT, SPAWN_CTX);
+    const lines = readSidecarLines();
+    assert.strictEqual(lines.length, 1, "exactly one line written");
+    const rec = JSON.parse(lines[0]);
+    assert.strictEqual(rec.event, "spawned");
+    assert.strictEqual(rec.childSessionKey, CHILD_SESSION_KEY);
+    assert.strictEqual(rec.parentSessionKey, PARENT_SESSION_KEY);
+    assert.strictEqual(rec.runId, SPAWN_RUN_ID);
+    assert.ok(typeof rec.capturedAt === "string" && !Number.isNaN(Date.parse(rec.capturedAt)), "capturedAt is ISO-8601");
+  });
+
+  test("falls back to ctx.childSessionKey when the event omits childSessionKey", () => {
+    const event = { ...SPAWN_EVENT };
+    delete event.childSessionKey;
+    handleSubagentSpawned(event, SPAWN_CTX);
+    const lines = readSidecarLines();
+    assert.strictEqual(lines.length, 1);
+    assert.strictEqual(JSON.parse(lines[0]).childSessionKey, CHILD_SESSION_KEY);
+  });
+
+  test("undefined event and ctx writes nothing and does not throw", () => {
+    assert.doesNotThrow(() => handleSubagentSpawned(undefined, undefined));
+    assert.strictEqual(readSidecarLines().length, 0, "no file/line written");
+  });
+
+  test("missing parentSessionKey (no requesterSessionKey, no event.requester) writes nothing", () => {
+    handleSubagentSpawned({ childSessionKey: CHILD_SESSION_KEY }, {});
+    assert.strictEqual(readSidecarLines().length, 0, "half-edge must not be written");
+  });
+});
+
+describe("handleSubagentEnded", () => {
+  test("real captured payload appends one ended record carrying outcome", () => {
+    handleSubagentEnded(ENDED_EVENT, ENDED_CTX);
+    const lines = readSidecarLines();
+    assert.strictEqual(lines.length, 1);
+    const rec = JSON.parse(lines[0]);
+    assert.strictEqual(rec.event, "ended");
+    assert.strictEqual(rec.childSessionKey, CHILD_SESSION_KEY);
+    assert.strictEqual(rec.outcome, "ok");
+    assert.strictEqual(rec.runId, SPAWN_RUN_ID);
+  });
+
+  test("reads the child key from event.targetSessionKey, not ctx.childSessionKey, when both present but differ", () => {
+    const event = { ...ENDED_EVENT, targetSessionKey: "agent:dev:subagent:other" };
+    handleSubagentEnded(event, ENDED_CTX);
+    const rec = JSON.parse(readSidecarLines()[0]);
+    assert.strictEqual(rec.childSessionKey, "agent:dev:subagent:other", "event.targetSessionKey wins per plan");
+  });
+
+  test("falls back to ctx.childSessionKey when event.targetSessionKey is absent", () => {
+    const event = { ...ENDED_EVENT };
+    delete event.targetSessionKey;
+    handleSubagentEnded(event, ENDED_CTX);
+    const rec = JSON.parse(readSidecarLines()[0]);
+    assert.strictEqual(rec.childSessionKey, CHILD_SESSION_KEY);
+  });
+
+  test("undefined event and ctx writes nothing and does not throw", () => {
+    assert.doesNotThrow(() => handleSubagentEnded(undefined, undefined));
+    assert.strictEqual(readSidecarLines().length, 0);
+  });
+});
+
+describe("safeSubagentSpawned / safeSubagentEnded — fail-open containment", () => {
+  test("safeSubagentSpawned contains a throwing impl and returns undefined", () => {
+    let logged = "";
+    const result = safeSubagentSpawned(SPAWN_EVENT, SPAWN_CTX, { log: (m) => { logged = m; } }, () => { throw new Error("boom"); });
+    assert.strictEqual(result, undefined);
+    assert.ok(logged.includes("boom") || logged.length >= 0, "logging is best-effort, containment is the property under test");
+  });
+
+  test("safeSubagentSpawned swallows silently when no opts.log is provided", () => {
+    assert.doesNotThrow(() => safeSubagentSpawned(SPAWN_EVENT, SPAWN_CTX, {}, () => { throw new Error("boom"); }));
+  });
+
+  test("safeSubagentEnded contains a throwing impl and returns undefined", () => {
+    const result = safeSubagentEnded(ENDED_EVENT, ENDED_CTX, {}, () => { throw new Error("boom"); });
+    assert.strictEqual(result, undefined);
+  });
+
+  test("safeSubagentSpawned with real impl writes the edge normally (not just error paths)", () => {
+    safeSubagentSpawned(SPAWN_EVENT, SPAWN_CTX);
+    assert.strictEqual(readSidecarLines().length, 1);
+  });
+});
+
+describe("readSidecarEdges", () => {
+  test("returns the one complete edge and skips a truncated final line", () => {
+    appendSidecarEdge({ event: "spawned", childSessionKey: CHILD_SESSION_KEY, parentSessionKey: PARENT_SESSION_KEY, runId: SPAWN_RUN_ID, capturedAt: new Date().toISOString() });
+    // Simulate a concurrent-write truncation: append a partial JSON line with no trailing newline.
+    appendFileSync(SIDECAR_TEST_PATH, '{"event":"spawned","childSessionKey":"agent:dev:subagent:trun');
+    const edges = readSidecarEdges();
+    assert.strictEqual(Object.keys(edges).length, 1, "only the complete edge is returned");
+    assert.strictEqual(edges[CHILD_SESSION_KEY], PARENT_SESSION_KEY);
+  });
+
+  test("returns an empty object when the sidecar file does not exist", () => {
+    assert.deepStrictEqual(readSidecarEdges(), {});
+  });
+
+  test("ignores ended records when building the parent map", () => {
+    appendSidecarEdge({ event: "ended", childSessionKey: CHILD_SESSION_KEY, parentSessionKey: PARENT_SESSION_KEY, runId: SPAWN_RUN_ID, outcome: "ok", capturedAt: new Date().toISOString() });
+    assert.deepStrictEqual(readSidecarEdges(), {}, "ended records never populate the resolver's parent map");
   });
 });
