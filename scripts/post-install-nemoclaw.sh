@@ -859,6 +859,22 @@ fi
 info "Preflight complete (warnings above are non-blocking)"
 
 # ---------------------------------------------------------------------------
+# 1b. Host sqlite3 dependency gate (READ-04)
+# ---------------------------------------------------------------------------
+# The NemoClaw metering loop (scripts/report.sh via scripts/session-store.sh)
+# runs HOST-side over `nemoclaw share mount` and reads the sandbox's OpenClaw
+# session store through that mount — so it is the HOST's sqlite3 that must
+# be present, not the sandbox's. This is the mirror image of
+# gate_sandbox_runtime_versions below, which deliberately checks the
+# sandbox's OpenClaw/Node rather than the host's. Runs in the host-side
+# preflight, before any sandbox provisioning work begins — deliberately NOT
+# inside gate_sandbox_runtime_versions.
+# ---------------------------------------------------------------------------
+step "Checking host sqlite3 dependency"
+require_sqlite3
+info "sqlite3 found on host (version: $(sqlite3_detected))"
+
+# ---------------------------------------------------------------------------
 # 2. NemoClaw CLI check (D-10 identity-vs-capability)
 # Identity signal (~/.nemoclaw/ presence) already triggered routing.
 # Capability check: is the nemoclaw CLI available?

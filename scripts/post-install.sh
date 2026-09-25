@@ -66,6 +66,18 @@ require_node_version
 info "OpenClaw and Node versions meet the required floors"
 
 # ---------------------------------------------------------------------------
+# 0a. sqlite3 CLI dependency gate (READ-04)
+# ---------------------------------------------------------------------------
+# From OpenClaw 2.0, scripts/report.sh reads completions/toolCalls via
+# scripts/session-store.sh's read-only sqlite3 connection to the OpenClaw
+# session store, not by parsing transcript JSONL. A host missing sqlite3
+# must be refused here, before any metering-related setup, rather than
+# surfacing later as a silent zero-metering tick.
+step "Checking host sqlite3 dependency"
+require_sqlite3
+info "sqlite3 found on host (version: $(sqlite3_detected))"
+
+# ---------------------------------------------------------------------------
 # 0b. OpenClaw health check (GATE-03)
 # ---------------------------------------------------------------------------
 # Self-contained in this file (not scripts/version-gate.sh) because the host

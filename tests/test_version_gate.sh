@@ -301,10 +301,15 @@ for _vgg_bin in grep head; do
   _vgg_real="$(command -v "${_vgg_bin}" 2>/dev/null || true)"
   [[ -n "${_vgg_real}" ]] && ln -sf "${_vgg_real}" "${TMP_BIN_VGG}/${_vgg_bin}"
 done
+# Resolve bash's own absolute path BEFORE restricting PATH below — a bare
+# "bash" word in the PATH-prefixed invocation would itself fail to resolve
+# once PATH points only at TMP_BIN_VGG (bash is not one of the two binaries
+# symlinked into it), independent of whether sqlite3 is present.
+BASH_BIN_VGG="$(command -v bash)"
 
 # --- Absent case: require_sqlite3 refuses (non-zero exit, actionable message) ---
 rc_vgg1=0
-out_vgg1=$(PATH="${TMP_BIN_VGG}" bash -c ". ${VERSION_GATE_SH} 2>/dev/null; require_sqlite3" 2>&1) || rc_vgg1=$?
+out_vgg1=$(PATH="${TMP_BIN_VGG}" "${BASH_BIN_VGG}" -c ". ${VERSION_GATE_SH} 2>/dev/null; require_sqlite3" 2>&1) || rc_vgg1=$?
 
 if [[ "${rc_vgg1}" -ne 0 ]]; then
   pass "VG-G: require_sqlite3 exits non-zero when sqlite3 is absent from PATH"
