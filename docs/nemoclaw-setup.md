@@ -22,6 +22,15 @@ Budget enforcement and token metering for [OpenClaw](https://docs.openclaw.ai) a
 
 - **`sshfs`** — the host-side metering loop mounts the sandbox filesystem over SSHFS. Install it on your Linux host (e.g., `apt install sshfs` on Debian/Ubuntu).
 
+- **`sqlite3` CLI** — required on the **host** for both install arms (standalone and NemoClaw). From OpenClaw 2.0, the metering read path queries the OpenClaw agent session store directly via the `sqlite3` command-line client rather than parsing transcript files; on the NemoClaw arm, that read happens **host-side** over the `share mount`, so it is the host's `sqlite3` that is required, not the sandbox's. Install it if missing:
+  ```bash
+  # Debian/Ubuntu
+  sudo apt-get install -y sqlite3
+  # macOS (Homebrew)
+  brew install sqlite3
+  ```
+  There is no minimum version — presence is the gate. The installer refuses at install time with this same remediation if `sqlite3` is absent. If `sqlite3` is later removed from the host, the metering tick classifies the session store unreadable, exits non-zero, and records the reason in `read-path-status.json` under the skill's state directory.
+
 - **`revenium` CLI** — delivered as a prebuilt binary tarball into the sandbox by the installer. **Do not install via Homebrew for the NemoClaw path** — Homebrew is not available inside an OpenShell sandbox, and the CLI must be accessible in-sandbox. The installer fetches, sha256-verifies, and installs the binary to `/sandbox/.local/bin/revenium` automatically.
 
 - **Revenium credentials** — you'll set these as environment variables when you run the installer (the exact `export` commands are in [Installation Step 2](#2-export-credentials-and-sandbox-name-then-run-the-nemoclaw-install-script)). You will need:
@@ -121,7 +130,7 @@ The installer also asserts this automatically (step 8 above) and aborts if the s
 The NemoClaw install path and the standalone OpenClaw + Docker path are **fully independent**:
 
 - The standalone path uses `scripts/post-install.sh`; the NemoClaw path uses `scripts/post-install-nemoclaw.sh`. The two scripts do not share install steps.
-- `scripts/install.sh` routes to the correct script based on detection (NemoClaw vs standalone vs macOS) and the `--nemoclaw` flag. Running the NemoClaw install path never modifies or re-runs `post-install.sh`. Both scripts independently enforce the same runtime version floors (OpenClaw `2026.8.1`, Node `>=24.16.0 <25.0.0` or `>=26.1.0`), since each is documented as independently runnable.
+- `scripts/install.sh` routes to the correct script based on detection (NemoClaw vs standalone vs macOS) and the `--nemoclaw` flag. Running the NemoClaw install path never modifies or re-runs `post-install.sh`. Both scripts independently enforce the same runtime version floors (OpenClaw `2026.8.1`, Node `>=24.16.0 <25.0.0` or `>=26.1.0`) and the same host `sqlite3` presence gate (no minimum version), since each is documented as independently runnable.
 - The shared operational scripts (`cron.sh`, `report.sh`, `guardrail-check.sh`) are never modified by either install path — they are sha256-pinned.
 
 For the standalone OpenClaw + Docker path, see [README.md](../README.md).
