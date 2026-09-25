@@ -522,6 +522,36 @@ else
   fail "store_write_status: did not write ${READ_PATH_STATUS_FILE}"
 fi
 
+# WR-02: error_text is bounded to exactly 64 characters (project convention
+# — see report.sh's *_log locals and guardrail-check.sh's rule_name), an
+# 8x drift down from the prior 512-character bound.
+D17B=$(new_tmp)
+READ_PATH_STATUS_FILE_B="${D17B}/read-path-status.json"
+long_error=$(python3 -c "print('x' * 300)")
+STORE_PATHS_TRIED="/some/path" STORE_SCHEMA_MISSING="" STORE_REJECTED_PATHS="" \
+  READ_PATH_STATUS_FILE="${READ_PATH_STATUS_FILE_B}" store_write_status "UNREADABLE" "${long_error}"
+if [[ -f "${READ_PATH_STATUS_FILE_B}" ]]; then
+  long_error_text_len=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))['error_text']))" "${READ_PATH_STATUS_FILE_B}")
+  if [[ "${long_error_text_len}" -eq 64 ]]; then
+    pass "store_write_status: error_text bound to exactly 64 characters for a 300-character diagnostic"
+  else
+    fail "store_write_status: expected error_text length 64, got ${long_error_text_len}"
+  fi
+  fields_present=$(python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+ok = isinstance(d.get('paths_tried'), list) and isinstance(d.get('schema_missing'), list) and isinstance(d.get('rejected_paths'), list)
+print('yes' if ok else 'no')
+" "${READ_PATH_STATUS_FILE_B}")
+  if [[ "${fields_present}" == "yes" ]]; then
+    pass "store_write_status: paths_tried/schema_missing/rejected_paths all still present as arrays"
+  else
+    fail "store_write_status: a structured field was collapsed into the bounded summary"
+  fi
+else
+  fail "store_write_status: did not write ${READ_PATH_STATUS_FILE_B} for the 300-character-diagnostic case"
+fi
+
 # =============================================================================
 # GROUP: tick states — drives scripts/report.sh end-to-end (READ-04 / D-13/D-14)
 # =============================================================================

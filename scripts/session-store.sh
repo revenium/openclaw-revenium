@@ -719,9 +719,15 @@ store_root_session_id() {
 # atomically (tempfile + os.replace in the same directory, mirroring
 # guardrail-check.sh's guardrail-status.json precedent, D-14). Before
 # writing error_text, strips every character whose code point is below 32
-# and every \x7f, then truncates to 512 characters — T-19-02: the raw
-# sqlite diagnostic can echo session-derived bytes into a durable file other
-# processes read.
+# and every \x7f, then truncates to 64 characters (WR-02) — the project-wide
+# convention already used at report.sh's *_log locals (${var:0:64}) and
+# guardrail-check.sh's rule_name = (...)[: 64] for this exact class of
+# externally-consumed diagnostic. No diagnostic value is lost at that
+# length: the candidate paths are carried verbatim in the structured
+# paths_tried array, the missing columns in schema_missing, the rejected
+# candidates in rejected_paths, and the tick's full unbounded diagnostic is
+# still written to the metering log by report.sh's error() call —
+# error_text is a bounded summary field, never the only copy.
 # ---------------------------------------------------------------------------
 store_write_status() {
   local state="$1" error_text="${2:-}"
@@ -741,8 +747,9 @@ from pathlib import Path
 
 status_file = Path(os.environ['READ_PATH_STATUS_FILE'])
 raw_error = os.environ.get('RP_ERROR', '')
-# T-19-02: strip control chars below 32 and 0x7f, then truncate to 512 chars.
-cleaned_error = ''.join(ch for ch in raw_error if ord(ch) >= 32 and ch != '\x7f')[:512]
+# T-19-02/WR-02: strip control chars below 32 and 0x7f, then truncate to
+# 64 chars, matching the project's log-injection convention for this field.
+cleaned_error = ''.join(ch for ch in raw_error if ord(ch) >= 32 and ch != '\x7f')[:64]
 
 paths_tried = [p for p in os.environ.get('RP_PATHS', '').split('\n') if p]
 schema_missing = [c for c in os.environ.get('RP_SCHEMA_MISSING', '').split('\n') if c]
