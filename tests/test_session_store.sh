@@ -622,6 +622,127 @@ else
 fi
 
 # =============================================================================
+# GROUP: row-stream purity with a broken candidate present (T-19-34)
+# =============================================================================
+echo "--- GROUP: row-stream purity with a broken candidate present ---"
+
+# A store file made unreadable by truncating it to invalid bytes — sqlite3
+# cannot even open it as a database.
+_rp_build_truncated() {
+  local db="$1"
+  mkdir -p "$(dirname "${db}")"
+  printf 'not a valid sqlite database\n' > "${db}"
+}
+
+# A schema-drifted store (missing session_nodes.session_key) — reuses the
+# same drift helper Task 2's aggregation-matrix cases already defined above.
+_rp_build_drifted() {
+  _agg_drifted_store "$1"
+}
+
+# _rp_case <case_label> <dev_builder_fn> <sid> <resp_id> — builds ONE fixture
+# OPENCLAW_HOME with a healthy populated store under agents/main and a
+# broken store under agents/dev (built by <dev_builder_fn>), then drives
+# store_list_sessions / store_current_session_id / store_completions /
+# store_last_completion_id, each with stdout and stderr captured
+# SEPARATELY, and asserts the healthy store's data survives untouched while
+# no diagnostic or broken-store path reaches stdout.
+_rp_case() {
+  local case_label="$1" dev_builder="$2" sid="$3" resp_id="$4"
+  local home main_db dev_db
+  home=$(new_tmp)
+  main_db="${home}/agents/main/agent/openclaw-agent.sqlite"
+  mk_store "${main_db}"
+  mk_session "${main_db}" "${sid}" "agent:main:main" "" 100
+  mk_assistant_event "${main_db}" "${sid}" 0 "${resp_id}" "run-rowpurity" 111
+
+  dev_db="${home}/agents/dev/agent/openclaw-agent.sqlite"
+  "${dev_builder}" "${dev_db}"
+
+  local list_out list_err cur_out cur_err comp_out comp_err lastc_out lastc_err
+  list_out=$(mktemp "${TMPDIR:-/tmp}/rp-list-out.XXXXXX"); list_err=$(mktemp "${TMPDIR:-/tmp}/rp-list-err.XXXXXX")
+  OPENCLAW_HOME="${home}" bash -c "unset REVENIUM_SESSION_STORE; . '${SESSION_STORE_SH}'; store_probe >/dev/null; store_list_sessions" \
+    > "${list_out}" 2> "${list_err}"
+
+  cur_out=$(mktemp "${TMPDIR:-/tmp}/rp-cur-out.XXXXXX"); cur_err=$(mktemp "${TMPDIR:-/tmp}/rp-cur-err.XXXXXX")
+  OPENCLAW_HOME="${home}" bash -c "unset REVENIUM_SESSION_STORE; . '${SESSION_STORE_SH}'; store_probe >/dev/null; store_current_session_id" \
+    > "${cur_out}" 2> "${cur_err}"
+
+  comp_out=$(mktemp "${TMPDIR:-/tmp}/rp-comp-out.XXXXXX"); comp_err=$(mktemp "${TMPDIR:-/tmp}/rp-comp-err.XXXXXX")
+  OPENCLAW_HOME="${home}" bash -c "unset REVENIUM_SESSION_STORE; . '${SESSION_STORE_SH}'; store_probe >/dev/null; store_completions '${sid}' -1" \
+    > "${comp_out}" 2> "${comp_err}"
+
+  lastc_out=$(mktemp "${TMPDIR:-/tmp}/rp-lastc-out.XXXXXX"); lastc_err=$(mktemp "${TMPDIR:-/tmp}/rp-lastc-err.XXXXXX")
+  OPENCLAW_HOME="${home}" bash -c "unset REVENIUM_SESSION_STORE; . '${SESSION_STORE_SH}'; store_probe >/dev/null; store_last_completion_id '${sid}'" \
+    > "${lastc_out}" 2> "${lastc_err}"
+
+  local list_row_count fields_ok=true row fields
+  list_row_count=$(grep -c . "${list_out}" || true)
+  while IFS= read -r row; do
+    [[ -z "${row}" ]] && continue
+    fields=$(printf '%s' "${row}" | awk -F$'\x1f' '{print NF}')
+    [[ "${fields}" -ne 4 ]] && fields_ok=false
+  done < "${list_out}"
+  if [[ "${list_row_count}" -eq 1 && "${fields_ok}" == "true" ]]; then
+    pass "row-stream purity (${case_label}): store_list_sessions returns exactly the healthy store's 1 row, each with 4 \\x1f fields"
+  else
+    fail "row-stream purity (${case_label}): store_list_sessions row count/fields wrong (count=${list_row_count} fields_ok=${fields_ok})"
+  fi
+
+  local cur_val cur_lines
+  cur_val=$(cat "${cur_out}")
+  cur_lines=$(wc -l < "${cur_out}" | tr -d ' ')
+  if [[ "${cur_val}" == "${sid}" && "${cur_lines}" -eq 1 ]]; then
+    pass "row-stream purity (${case_label}): store_current_session_id returns the healthy store's session id verbatim, byte for byte, no extra lines"
+  else
+    fail "row-stream purity (${case_label}): store_current_session_id wrong (val='${cur_val}' lines=${cur_lines}, expected '${sid}'/1)"
+  fi
+
+  local comp_resp
+  comp_resp=$(head -1 "${comp_out}" | awk -F$'\x1f' '{print $1}')
+  if [[ "${comp_resp}" == "${resp_id}" ]]; then
+    pass "row-stream purity (${case_label}): store_completions returns the healthy session's completion unchanged"
+  else
+    fail "row-stream purity (${case_label}): store_completions expected ${resp_id}, got '${comp_resp}'"
+  fi
+
+  local lastc_val
+  lastc_val=$(cat "${lastc_out}")
+  if [[ "${lastc_val}" == "${resp_id}" ]]; then
+    pass "row-stream purity (${case_label}): store_last_completion_id returns the healthy store's value unchanged"
+  else
+    fail "row-stream purity (${case_label}): store_last_completion_id expected ${resp_id}, got '${lastc_val}'"
+  fi
+
+  local clean=true f
+  for f in "${list_out}" "${cur_out}" "${comp_out}" "${lastc_out}"; do
+    if grep -q "Error" "${f}" || grep -qF "${dev_db}" "${f}"; then
+      clean=false
+    fi
+  done
+  if [[ "${clean}" == "true" ]]; then
+    pass "row-stream purity (${case_label}): separately-captured stdout across all four calls contains neither 'Error' nor the broken store's path"
+  else
+    fail "row-stream purity (${case_label}): a diagnostic leaked into stdout somewhere"
+  fi
+
+  local stderr_nonempty=false
+  for f in "${list_err}" "${cur_err}" "${comp_err}" "${lastc_err}"; do
+    [[ -s "${f}" ]] && stderr_nonempty=true
+  done
+  if [[ "${stderr_nonempty}" == "true" ]]; then
+    pass "row-stream purity (${case_label}): at least one call produced non-empty stderr (the broken store's diagnostic was produced and routed, not suppressed)"
+  else
+    fail "row-stream purity (${case_label}): expected non-empty stderr on at least one of the four calls, got none"
+  fi
+}
+
+_rp_case "truncated/corrupt file" _rp_build_truncated \
+  "aaaaaaaa-2000-0000-0000-000000000201" "resp-rowpurity-trunc-001"
+_rp_case "schema-drifted (missing session_key)" _rp_build_drifted \
+  "aaaaaaaa-2000-0000-0000-000000000202" "resp-rowpurity-drift-001"
+
+# =============================================================================
 # GROUP: injection rejection (T-19-01) across store_* functions
 # =============================================================================
 echo "--- GROUP: injection rejection ---"
