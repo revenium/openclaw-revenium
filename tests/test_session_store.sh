@@ -112,6 +112,91 @@ else
   fail "store_probe: expected UNREADABLE for missing event_json column"
 fi
 
+# A genuinely empty candidate set (no override, glob matches nothing) still
+# carries the ORIGINAL "no session store found" wording unchanged —
+# asserted, not assumed (T-19-29's zero-rejection path must stay untouched).
+# NOTE: this is deliberately NOT the D4/does-not-exist.sqlite scenario above
+# — an explicit REVENIUM_SESSION_STORE override to a missing file is a
+# NON-empty candidate list (the override is emitted unfiltered by
+# store_db_paths_raw regardless of on-disk existence), so it hits the
+# sqlite-open-error branch, not this one.
+D_ABSENT=$(new_tmp)
+absent_error=$(OPENCLAW_HOME="${D_ABSENT}" bash -c "unset REVENIUM_SESSION_STORE; . '${SESSION_STORE_SH}'; store_probe; printf '%s' \"\${STORE_PROBE_ERROR}\"")
+if [[ "${absent_error}" == *"No session store found under"* ]]; then
+  pass "store_probe: a truly empty candidate set keeps the original 'no session store found' wording"
+else
+  fail "store_probe: empty-candidate wording changed: ${absent_error}"
+fi
+
+# A rejected-only candidate set (no valid candidate survives) classifies
+# UNREADABLE with an error naming the rejection, not the generic
+# "no session store found" wording (T-19-29). Rooted directly under /tmp
+# (not $TMPDIR, which on macOS is a long /var/folders/... path) so the full
+# fixture path stays within the 64-char bound applied to the named path.
+D_REJ=$(mktemp -d "/tmp/ss-rej.XXXXXX")
+TMP_DIRS+=("${D_REJ}")
+DB_REJ="${D_REJ}/agents/x?/agent/openclaw-agent.sqlite"
+mk_store "${DB_REJ}"
+mk_session "${DB_REJ}" "aaaaaaaa-0000-0000-0000-00000000000r" "agent:main:main" "" 100
+rejected_probe_error=$(REVENIUM_SESSION_STORE="${DB_REJ}" bash -c ". '${SESSION_STORE_SH}'; store_probe; printf '%s' \"\${STORE_PROBE_ERROR}\"")
+if [[ "${rejected_probe_error}" == *"rejected"* && "${rejected_probe_error}" == *"x?"* ]]; then
+  pass "store_probe: rejected-only candidate set classifies UNREADABLE naming the rejection"
+else
+  fail "store_probe: expected rejection-naming error, got: ${rejected_probe_error}"
+fi
+
+# store_warn_if_unreadable: exactly one warn line on stderr across two
+# consecutive calls in one process for an UNREADABLE store (once-per-process
+# guard). Uses D5 (schema-drift UNREADABLE, no metacharacter path) rather
+# than DB_REJ — DB_REJ's own store_db_paths rejection warn would add a
+# second, unrelated stderr line and conflate two different warn channels.
+warn_unreadable_stderr=$(REVENIUM_SESSION_STORE="${DB5}" bash -c ". '${SESSION_STORE_SH}'; store_warn_if_unreadable test; store_warn_if_unreadable test" 2>&1 1>/dev/null)
+warn_unreadable_count=$(printf '%s\n' "${warn_unreadable_stderr}" | grep -c . || true)
+if [[ "${warn_unreadable_count}" -eq 1 ]]; then
+  pass "store_warn_if_unreadable: exactly one warn line across two calls for UNREADABLE (once-per-process guard)"
+else
+  fail "store_warn_if_unreadable: expected 1 warn line, got ${warn_unreadable_count}: ${warn_unreadable_stderr}"
+fi
+
+warn_empty_stderr=$(REVENIUM_SESSION_STORE="${DB4}" bash -c ". '${SESSION_STORE_SH}'; store_warn_if_unreadable" 2>&1 1>/dev/null)
+if [[ -z "${warn_empty_stderr}" ]]; then
+  pass "store_warn_if_unreadable: emits nothing for an EMPTY (cron-only) store"
+else
+  fail "store_warn_if_unreadable: expected silence for EMPTY store, got: ${warn_empty_stderr}"
+fi
+
+warn_readable_stderr=$(REVENIUM_SESSION_STORE="${DB3}" bash -c ". '${SESSION_STORE_SH}'; store_warn_if_unreadable" 2>&1 1>/dev/null)
+if [[ -z "${warn_readable_stderr}" ]]; then
+  pass "store_warn_if_unreadable: emits nothing for a READABLE store"
+else
+  fail "store_warn_if_unreadable: expected silence for READABLE store, got: ${warn_readable_stderr}"
+fi
+
+# read-path-status.json written for the rejected case: paths_tried contains
+# the rejected path, rejected_paths is non-empty.
+D_REJ_STATUS=$(new_tmp)
+REJ_STATUS_FILE="${D_REJ_STATUS}/read-path-status.json"
+REVENIUM_SESSION_STORE="${DB_REJ}" READ_PATH_STATUS_FILE="${REJ_STATUS_FILE}" bash -c ". '${SESSION_STORE_SH}'; store_probe; store_write_status \"\${STORE_STATE}\" \"\${STORE_PROBE_ERROR}\""
+if [[ -f "${REJ_STATUS_FILE}" ]]; then
+  rej_status_paths_tried_ok=$(python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+print('yes' if any('x?' in p for p in d.get('paths_tried', [])) else 'no')
+" "${REJ_STATUS_FILE}")
+  rej_status_rejected_len=$(python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(len(d.get('rejected_paths', [])))
+" "${REJ_STATUS_FILE}")
+  if [[ "${rej_status_paths_tried_ok}" == "yes" && "${rej_status_rejected_len}" -eq 1 ]]; then
+    pass "store_write_status: rejected case writes paths_tried containing the rejected path and rejected_paths length 1"
+  else
+    fail "store_write_status: rejected case wrong (paths_tried_ok=${rej_status_paths_tried_ok} rejected_len=${rej_status_rejected_len})"
+  fi
+else
+  fail "store_write_status: did not write ${REJ_STATUS_FILE} for rejected case"
+fi
+
 # =============================================================================
 # GROUP: store_completions (D-04 dedup adjacency)
 # =============================================================================

@@ -234,6 +234,9 @@ STORE_STATE=""
 STORE_PROBE_ERROR=""
 STORE_PATHS_TRIED=""
 STORE_SCHEMA_MISSING=""
+STORE_REJECTED_PATHS=""
+STORE_REJECTED_COUNT=0
+STORE_UNREADABLE_WARNED=""
 
 store_probe() {
   if [[ -n "${STORE_PROBE_DONE}" ]]; then
@@ -242,6 +245,8 @@ store_probe() {
   STORE_PROBE_DONE=1
   STORE_PROBE_ERROR=""
   STORE_SCHEMA_MISSING=""
+  STORE_REJECTED_PATHS=""
+  STORE_REJECTED_COUNT=0
 
   if ! command -v "${STUB_SQLITE3_BIN:-sqlite3}" >/dev/null 2>&1; then
     STORE_STATE="UNREADABLE"
@@ -250,13 +255,38 @@ store_probe() {
     return 0
   fi
 
-  local _ss_paths
-  _ss_paths="$(store_db_paths)"
-  STORE_PATHS_TRIED="${_ss_paths:-${SESSION_STORE_GLOB}}"
+  # STORE_PATHS_TRIED is sourced from the RAW candidate list, never the
+  # filtered one — a rejected path that disappeared from this audit trail
+  # would take the only operator-visible record of the rejection with it
+  # (T-19-29). Compute the rejected set here, in this parent-shell scope, by
+  # diffing raw against filtered — store_db_paths runs its own warn() inside
+  # a command-substitution subshell and cannot write back to the caller.
+  local _ss_raw _ss_filtered _ss_p _ss_rejected="" _ss_rejected_count=0
+  _ss_raw="$(store_db_paths_raw)"
+  _ss_filtered="$(store_db_paths)"
+  STORE_PATHS_TRIED="${_ss_raw:-${SESSION_STORE_GLOB}}"
 
-  if [[ -z "${_ss_paths}" ]]; then
+  if [[ -n "${_ss_raw}" ]]; then
+    while IFS= read -r _ss_p; do
+      [[ -z "${_ss_p}" ]] && continue
+      if ! printf '%s\n' "${_ss_filtered}" | grep -qxF "${_ss_p}"; then
+        _ss_rejected="${_ss_rejected}${_ss_p}"$'\n'
+        _ss_rejected_count=$(( _ss_rejected_count + 1 ))
+      fi
+    done <<< "${_ss_raw}"
+  fi
+  STORE_REJECTED_PATHS="${_ss_rejected%$'\n'}"
+  STORE_REJECTED_COUNT="${_ss_rejected_count}"
+
+  if [[ -z "${_ss_filtered}" ]]; then
     STORE_STATE="UNREADABLE"
-    STORE_PROBE_ERROR="No session store found under ${SESSION_STORE_GLOB} (or ${SESSION_STORE_OVERRIDE_VAR} override)."
+    if [[ "${STORE_REJECTED_COUNT}" -gt 0 ]]; then
+      local _ss_first_rejected
+      _ss_first_rejected="$(printf '%s\n' "${STORE_REJECTED_PATHS}" | head -1)"
+      STORE_PROBE_ERROR="${STORE_REJECTED_COUNT} candidate path(s) rejected for characters outside the safe path allowlist; first: ${_ss_first_rejected:0:64}"
+    else
+      STORE_PROBE_ERROR="No session store found under ${SESSION_STORE_GLOB} (or ${SESSION_STORE_OVERRIDE_VAR} override)."
+    fi
     return 0
   fi
 
@@ -301,12 +331,43 @@ store_probe() {
       return 0
     fi
     _ss_total=$(( _ss_total + ${_ss_cnt:-0} ))
-  done <<< "${_ss_paths}"
+  done <<< "${_ss_filtered}"
 
   if [[ "${_ss_total}" -eq 0 ]]; then
     STORE_STATE="EMPTY"
   else
     STORE_STATE="READABLE"
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# store_warn_if_unreadable [caller_label] — reusable once-per-process warn
+# for plan 19-10's four resolvers. Calls store_probe (already memoized),
+# emits exactly one `warn` per process — guarded by STORE_UNREADABLE_WARNED
+# — only when STORE_STATE is UNREADABLE. Silent for READABLE and EMPTY (a
+# fresh/legitimately-empty host must stay quiet — no false alarm). Never
+# returns non-zero and never exits: consumers include a script running
+# under `set -euo pipefail`.
+# ---------------------------------------------------------------------------
+store_warn_if_unreadable() {
+  local _ss_label="${1:-}"
+  store_probe
+  if [[ "${STORE_STATE}" != "UNREADABLE" ]]; then
+    return 0
+  fi
+  if [[ -n "${STORE_UNREADABLE_WARNED}" ]]; then
+    return 0
+  fi
+  STORE_UNREADABLE_WARNED=1
+  local _ss_paths_joined _ss_error_bounded _ss_label_bounded
+  _ss_paths_joined="$(printf '%s' "${STORE_PATHS_TRIED}" | tr '\n' ',' | sed 's/,$//')"
+  _ss_error_bounded="${STORE_PROBE_ERROR:0:64}"
+  _ss_label_bounded="${_ss_label:0:64}"
+  if [[ -n "${_ss_label_bounded}" ]]; then
+    warn "${_ss_label_bounded}: session store UNREADABLE (paths tried: ${_ss_paths_joined}) — ${_ss_error_bounded}"
+  else
+    warn "session store UNREADABLE (paths tried: ${_ss_paths_joined}) — ${_ss_error_bounded}"
   fi
   return 0
 }
@@ -671,6 +732,7 @@ store_write_status() {
   RP_ERROR="${error_text}" \
   RP_PATHS="${STORE_PATHS_TRIED:-}" \
   RP_SCHEMA_MISSING="${STORE_SCHEMA_MISSING:-}" \
+  RP_REJECTED="${STORE_REJECTED_PATHS:-}" \
   RP_STORE_COUNT="${store_count:-0}" \
   python3 - <<'PY' 2>/dev/null || true
 import json, os, tempfile
@@ -684,6 +746,7 @@ cleaned_error = ''.join(ch for ch in raw_error if ord(ch) >= 32 and ch != '\x7f'
 
 paths_tried = [p for p in os.environ.get('RP_PATHS', '').split('\n') if p]
 schema_missing = [c for c in os.environ.get('RP_SCHEMA_MISSING', '').split('\n') if c]
+rejected_paths = [p for p in os.environ.get('RP_REJECTED', '').split('\n') if p]
 
 data = {
     'state': os.environ.get('RP_STATE', ''),
@@ -691,6 +754,7 @@ data = {
     'paths_tried': paths_tried,
     'error_text': cleaned_error,
     'schema_missing': schema_missing,
+    'rejected_paths': rejected_paths,
     'store_count': int(os.environ.get('RP_STORE_COUNT', '0') or 0),
 }
 
