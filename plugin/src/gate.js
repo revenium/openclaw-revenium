@@ -9,7 +9,7 @@
  * plugin/src/index.ts imports this module and registers the handlers.
  */
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, rmSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, statSync, renameSync, rmSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 // ---------------------------------------------------------------------------
@@ -585,23 +585,57 @@ export function resolveSidecarPath() {
   return join(ocHome, "skills", "revenium", "subagent-edges.jsonl");
 }
 
+/** Byte cap for the live sidecar file before a single rotation to the `.1` sibling (T-19-05). */
+export const SIDECAR_MAX_BYTES = 2097152;
+
+// Session keys look like `agent:<agentId>:<scope...>` — e.g. `agent:dev:main`
+// or `agent:dev:subagent:<uuid>`. Both keys must match this shape before a
+// record is written (T-19-04): a traversal-shaped or separator-bearing key
+// must never enter the sidecar, since it directly determines which root
+// session a subagent's spend is attributed to and may later reach a path or
+// a log line.
+const SESSION_KEY_SHAPE = /^agent:[A-Za-z0-9._-]+:[A-Za-z0-9._:-]+$/;
+
 /**
- * Append one edge record to the sidecar.
+ * Append one edge record to the sidecar, rotating the live file to its `.1`
+ * sibling first when it is already at or past SIDECAR_MAX_BYTES (T-19-05,
+ * one rotation — not a ring; bounds on-disk cost at roughly 4 MiB while
+ * keeping enough history that a long-lived parent's edge is not lost the
+ * moment the file turns over).
  *
  * One appendFileSync call per edge is the concurrency guarantee (PLUG-04):
  * two subagents spawning at the same moment each issue a single append-mode
  * write of a short line, so neither can observe or produce a partial line.
  *
- * Fail-open: any error results in nothing being written, and this function
- * never throws — mirroring persistRunState's contract.
+ * A record whose childSessionKey or parentSessionKey does not match the
+ * `agent:<id>:<scope>` shape is rejected outright (T-19-04) — a malformed or
+ * injected key must not enter the sidecar.
+ *
+ * Fail-open: any error (including the shape-validation rejection) results in
+ * nothing being written, and this function never throws — mirroring
+ * persistRunState's contract.
  *
  * @param {{event: string, childSessionKey?: string, parentSessionKey?: string}} record
  */
 export function appendSidecarEdge(record) {
   try {
+    if (record && record.childSessionKey !== undefined && !SESSION_KEY_SHAPE.test(String(record.childSessionKey))) {
+      return; // malformed/injected key — reject the whole record (T-19-04)
+    }
+    if (record && record.parentSessionKey !== undefined && !SESSION_KEY_SHAPE.test(String(record.parentSessionKey))) {
+      return;
+    }
     const filePath = resolveSidecarPath();
     const dir = dirname(filePath);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try {
+      const st = statSync(filePath);
+      if (st.size >= SIDECAR_MAX_BYTES) {
+        renameSync(filePath, filePath + ".1");
+      }
+    } catch {
+      /* live file does not exist yet — nothing to rotate */
+    }
     appendFileSync(filePath, JSON.stringify(record) + "\n", { encoding: "utf8", mode: 0o600 });
   } catch {
     /* fail-open: a sidecar write failure must never change in-process behavior or throw */
