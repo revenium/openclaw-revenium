@@ -422,5 +422,140 @@ class TestCliContract(unittest.TestCase):
         self.assertEqual(proc.stdout.strip(), "")
 
 
+# ===========================================================================
+# Task 3: idempotency, concurrent-append/rotation tolerance, fail-open
+# ===========================================================================
+class TestProperties(unittest.TestCase):
+    def setUp(self):
+        self.fx = _Fixture()
+
+    def tearDown(self):
+        self.fx.cleanup()
+
+    def test_idempotent_ten_consecutive_resolutions(self):
+        child_sid, parent_sid = _sid("24"), _sid("25")
+        child_key, parent_key = "agent:main:subagent:child24", "agent:main:main"
+        self.fx.add_session(child_sid, child_key)
+        self.fx.add_session(parent_sid, parent_key)
+        self.fx.write_sidecar([(child_key, parent_key)])
+
+        results = [
+            get_root_session_id(child_sid, openclaw_home=self.fx.openclaw_home) for _ in range(10)
+        ]
+        self.assertEqual(len(set(results)), 1)
+        self.assertEqual(results[0], parent_sid)
+
+    def test_duplicate_sidecar_edge_resolves_identically_to_single_edge(self):
+        child_sid, parent_sid = _sid("26"), _sid("27")
+        child_key, parent_key = "agent:main:subagent:child26", "agent:main:main"
+        self.fx.add_session(child_sid, child_key)
+        self.fx.add_session(parent_sid, parent_key)
+        # The exact same edge written twice must resolve identically to
+        # writing it once (idempotency).
+        self.fx.write_sidecar([(child_key, parent_key), (child_key, parent_key)])
+
+        result = get_root_session_id(child_sid, openclaw_home=self.fx.openclaw_home)
+        self.assertEqual(result, parent_sid)
+
+    def test_truncated_final_sidecar_line_resolves_complete_edges(self):
+        child_sid, parent_sid = _sid("28"), _sid("29")
+        child_key, parent_key = "agent:main:subagent:child28", "agent:main:main"
+        self.fx.add_session(child_sid, child_key)
+        self.fx.add_session(parent_sid, parent_key)
+
+        complete_record = json.dumps(
+            {"event": "spawned", "childSessionKey": child_key, "parentSessionKey": parent_key}
+        )
+        # The first half of a second record with NO trailing newline -- the
+        # exact on-disk state a concurrent single-call append can leave for
+        # a reader mid-write.
+        partial_record = '{"event": "spawned", "childSessionKey": "agent:main:subagent:trun'
+        path = self.fx.sidecar_path()
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(complete_record + "\n")
+            fh.write(partial_record)
+
+        try:
+            result = get_root_session_id(child_sid, openclaw_home=self.fx.openclaw_home)
+        except Exception as e:  # pragma: no cover - failure path
+            self.fail(f"get_root_session_id raised on a truncated sidecar line: {e}")
+        self.assertEqual(result, parent_sid)
+
+    def test_edge_in_rotated_file_resolves_and_live_overrides(self):
+        # Edge A: present ONLY in the rotated `.1` file.
+        a_child_sid, a_parent_sid = _sid("30"), _sid("31")
+        a_child_key, a_parent_key = "agent:main:subagent:a-child", "agent:main:a-parent"
+        self.fx.add_session(a_child_sid, a_child_key)
+        self.fx.add_session(a_parent_sid, a_parent_key)
+
+        # Edge B: present in BOTH files with DIFFERENT parents -- the live
+        # file's value must win (last write wins).
+        b_child_sid = _sid("32")
+        b_rotated_parent_sid, b_live_parent_sid = _sid("33"), _sid("34")
+        b_child_key = "agent:main:subagent:b-child"
+        b_rotated_parent_key = "agent:main:b-rotated-parent"
+        b_live_parent_key = "agent:main:b-live-parent"
+        self.fx.add_session(b_child_sid, b_child_key)
+        self.fx.add_session(b_rotated_parent_sid, b_rotated_parent_key)
+        self.fx.add_session(b_live_parent_sid, b_live_parent_key)
+
+        self.fx.write_sidecar(
+            [(a_child_key, a_parent_key), (b_child_key, b_rotated_parent_key)], rotated=True
+        )
+        self.fx.write_sidecar([(b_child_key, b_live_parent_key)])
+
+        result_a = get_root_session_id(a_child_sid, openclaw_home=self.fx.openclaw_home)
+        self.assertEqual(result_a, a_parent_sid)
+
+        result_b = get_root_session_id(b_child_sid, openclaw_home=self.fx.openclaw_home)
+        self.assertEqual(result_b, b_live_parent_sid)
+
+    def test_unreadable_sidecar_file_fails_open(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("permission bits are not enforced for root")
+        plain_sid = _sid("35")
+        self.fx.add_session(plain_sid, "agent:main:main")
+        path = self.fx.write_sidecar([("agent:main:subagent:unused", "agent:main:main")])
+        os.chmod(path, 0o000)
+        try:
+            result = get_root_session_id(plain_sid, openclaw_home=self.fx.openclaw_home)
+        finally:
+            os.chmod(path, 0o644)  # restore so tearDown's rmtree can remove it
+        self.assertEqual(result, plain_sid)
+
+    def test_store_cli_nonzero_exit_fails_open(self):
+        sid = _sid("36")
+        stub_path = os.path.join(self.fx.tmpdir, "stub-nonzero.sh")
+        with open(stub_path, "w", encoding="utf-8") as fh:
+            fh.write("#!/usr/bin/env bash\nexit 7\n")
+        os.chmod(stub_path, 0o755)
+
+        os.environ[_mod._STORE_SCRIPT_OVERRIDE_ENV] = stub_path
+        try:
+            result = get_root_session_id(sid, openclaw_home=self.fx.openclaw_home)
+        finally:
+            del os.environ[_mod._STORE_SCRIPT_OVERRIDE_ENV]
+        self.assertEqual(result, sid)
+
+    def test_store_cli_hang_times_out_fails_open(self):
+        sid = _sid("37")
+        stub_path = os.path.join(self.fx.tmpdir, "stub-hang.sh")
+        with open(stub_path, "w", encoding="utf-8") as fh:
+            fh.write("#!/usr/bin/env bash\nsleep 5\n")
+        os.chmod(stub_path, 0o755)
+
+        os.environ[_mod._STORE_SCRIPT_OVERRIDE_ENV] = stub_path
+        os.environ[_mod._STORE_CLI_TIMEOUT_ENV] = "0.2"
+        started = time.monotonic()
+        try:
+            result = get_root_session_id(sid, openclaw_home=self.fx.openclaw_home)
+        finally:
+            del os.environ[_mod._STORE_SCRIPT_OVERRIDE_ENV]
+            del os.environ[_mod._STORE_CLI_TIMEOUT_ENV]
+        elapsed = time.monotonic() - started
+        self.assertEqual(result, sid)
+        self.assertLess(elapsed, 5.0)
+
+
 if __name__ == "__main__":
     unittest.main()
