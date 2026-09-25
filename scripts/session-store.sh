@@ -359,10 +359,314 @@ ORDER BY t.min_seq ASC;"
 }
 
 # ---------------------------------------------------------------------------
+# store_current_session_id — D-10's locked mechanism. One row per store:
+# "<updated_at>\x1f<session_key>\x1f<current_session_id>" for the newest
+# non-cron session (ORDER BY updated_at DESC, session_key ASC LIMIT 1); the
+# overall answer is picked across every store the same way, so a tie is
+# broken by session_key ascending and stays stable across calls. Emits an
+# empty string (exit 0) when nothing qualifies anywhere — fail-open, every
+# caller already has a fallback. Supersedes the previous "non-cron
+# transcript file whose last assistant completion is most recent" heuristic
+# (WR-03): session_nodes.updated_at is maintained by the store on every
+# append (a strictly better signal than file mtime), and created_via is a
+# schema-enforced enum rather than a key-prefix guess.
+# ---------------------------------------------------------------------------
+store_current_session_id() {
+  local _ss_db _ss_row
+  {
+    while IFS= read -r _ss_db; do
+      [[ -z "${_ss_db}" ]] && continue
+      _ss_row="$(store_sql "${_ss_db}" "SELECT updated_at || char(31) || session_key || char(31) || current_session_id FROM session_nodes WHERE created_via IS NULL OR created_via != 'cron' ORDER BY updated_at DESC, session_key ASC LIMIT 1;")"
+      [[ -n "${_ss_row}" ]] && printf '%s\n' "${_ss_row}"
+    done < <(store_db_paths)
+  } | LC_ALL=C sort -t $'\x1f' -k1,1nr -k2,2 | head -1 | awk -F$'\x1f' '{print $3}'
+}
+
+# ---------------------------------------------------------------------------
+# store_last_completion_id <sid> — the responseId of the highest-seq
+# usage-bearing assistant row in this session, or empty. MUST be the same
+# identifier store_completions emits as response_id — write-marker.sh (plan
+# 19-06) stamps this as completion_id, and report.sh's Phase A exact-match
+# correlation depends on the two values agreeing.
+# ---------------------------------------------------------------------------
+store_last_completion_id() {
+  local sid="$1"
+  if ! _store_valid_id "${sid}"; then
+    warn "store_last_completion_id: rejected invalid session id"
+    return 0
+  fi
+  local q_sid
+  q_sid="$(_store_sql_quote "${sid}")"
+  local _ss_db _ss_val
+  while IFS= read -r _ss_db; do
+    [[ -z "${_ss_db}" ]] && continue
+    _ss_val="$(store_sql "${_ss_db}" "SELECT json_extract(event_json,'\$.message.responseId') FROM transcript_events WHERE session_id = '${q_sid}' AND json_extract(event_json,'\$.message.role') = 'assistant' AND json_extract(event_json,'\$.message.usage') IS NOT NULL AND event_json IS NOT NULL ORDER BY seq DESC LIMIT 1;")"
+    if [[ -n "${_ss_val}" ]]; then
+      printf '%s\n' "${_ss_val}"
+      return 0
+    fi
+  done < <(store_db_paths)
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# store_tool_calls <sid> [after_seq] — one row per toolCall content item,
+# LEFT JOINed to its toolResult (a call with no result yet still emits a row
+# with an empty result side):
+#   "<tool_call_id>\x1f<tool_name>\x1f<call_ts>\x1f<duration_ms>\x1f<is_error>\x1f<error_msg>"
+# The call side ITERATES content items via json_each — never a fixed content
+# position, because the tool call is not always the second content item
+# (sample-rows.txt: content[1] in the observed live turn). error_msg is the
+# first text content item of an erroring result, truncated to 256 chars with
+# every newline/CR/tab/char(31) replaced by a space (matches the current
+# Python scan's sanitization — an unescaped separator byte shifts every
+# downstream field). Joined by exact structural equality on toolCallId/id
+# only — never a pattern-match operator, never a substring scan (D-19).
+# ---------------------------------------------------------------------------
+store_tool_calls() {
+  local sid="$1" after_seq="${2:--1}"
+  if ! _store_valid_id "${sid}"; then
+    warn "store_tool_calls: rejected invalid session id"
+    return 0
+  fi
+  _store_valid_seq "${after_seq}" || after_seq=-1
+  local q_sid
+  q_sid="$(_store_sql_quote "${sid}")"
+  local sql
+  sql="WITH calls AS (
+  SELECT json_extract(value,'\$.id') AS tool_call_id,
+         json_extract(value,'\$.name') AS tool_name,
+         json_extract(transcript_events.event_json,'\$.timestamp') AS call_ts,
+         seq AS call_seq
+  FROM transcript_events, json_each(transcript_events.event_json,'\$.message.content')
+  WHERE session_id = '${q_sid}'
+    AND json_extract(transcript_events.event_json,'\$.message.role') = 'assistant'
+    AND json_extract(value,'\$.type') = 'toolCall'
+    AND transcript_events.event_json IS NOT NULL
+    AND seq > ${after_seq}
+)
+SELECT calls.tool_call_id || char(31) || calls.tool_name || char(31) || coalesce(calls.call_ts,'') || char(31)
+  || coalesce(json_extract(res.event_json,'\$.message.details.durationMs'), 0) || char(31)
+  || CASE WHEN json_extract(res.event_json,'\$.message.isError') IN (1,'true') THEN 'true' ELSE 'false' END || char(31)
+  || coalesce(replace(replace(replace(replace(
+       substr((SELECT json_extract(v.value,'\$.text') FROM json_each(res.event_json,'\$.message.content') AS v
+                WHERE json_extract(v.value,'\$.type') = 'text' ORDER BY v.key LIMIT 1), 1, 256)
+     , char(10), ' '), char(13), ' '), char(9), ' '), char(31), ' '), '')
+FROM calls
+LEFT JOIN transcript_events AS res
+  ON res.session_id = '${q_sid}'
+  AND json_extract(res.event_json,'\$.message.role') = 'toolResult'
+  AND json_extract(res.event_json,'\$.message.toolCallId') = calls.tool_call_id
+ORDER BY calls.call_seq ASC;"
+  local _ss_db
+  while IFS= read -r _ss_db; do
+    [[ -z "${_ss_db}" ]] && continue
+    store_sql "${_ss_db}" "${sql}"
+  done < <(store_db_paths)
+}
+
+# ---------------------------------------------------------------------------
+# store_null_event_count <sid> [after_seq] — count of rows where
+# event_json IS NULL (RESEARCH Pitfall 3: a compacted row with event_zstd
+# populated instead). Callers log this at INFO when non-zero — never
+# silently drop it.
+# ---------------------------------------------------------------------------
+store_null_event_count() {
+  local sid="$1" after_seq="${2:--1}"
+  if ! _store_valid_id "${sid}"; then
+    warn "store_null_event_count: rejected invalid session id"
+    return 0
+  fi
+  _store_valid_seq "${after_seq}" || after_seq=-1
+  local q_sid
+  q_sid="$(_store_sql_quote "${sid}")"
+  local _ss_db _ss_val total=0
+  while IFS= read -r _ss_db; do
+    [[ -z "${_ss_db}" ]] && continue
+    _ss_val="$(store_sql "${_ss_db}" "SELECT count(*) FROM transcript_events WHERE session_id = '${q_sid}' AND seq > ${after_seq} AND event_json IS NULL;")"
+    [[ "${_ss_val}" =~ ^[0-9]+$ ]] && total=$(( total + _ss_val ))
+  done < <(store_db_paths)
+  printf '%s\n' "${total}"
+}
+
+# ---------------------------------------------------------------------------
+# store_session_key_for_id <session_id> — session_windows, NOT session_nodes:
+# session_nodes holds only the CURRENT session id per key, so a historical or
+# ended subagent window has no row there.
+# ---------------------------------------------------------------------------
+store_session_key_for_id() {
+  local sid="$1"
+  if ! _store_valid_id "${sid}"; then
+    warn "store_session_key_for_id: rejected invalid session id"
+    return 0
+  fi
+  local q_sid
+  q_sid="$(_store_sql_quote "${sid}")"
+  local _ss_db _ss_val
+  while IFS= read -r _ss_db; do
+    [[ -z "${_ss_db}" ]] && continue
+    _ss_val="$(store_sql "${_ss_db}" "SELECT session_key FROM session_windows WHERE session_id = '${q_sid}' LIMIT 1;")"
+    if [[ -n "${_ss_val}" ]]; then
+      printf '%s\n' "${_ss_val}"
+      return 0
+    fi
+  done < <(store_db_paths)
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# store_session_id_for_key <session_key> — session_nodes.current_session_id.
+# Together with store_session_key_for_id, closes the session-KEY vs
+# session-ID gap (RESEARCH Pitfall 2): hook payloads carry keys, this
+# project's resolver contract carries ids.
+# ---------------------------------------------------------------------------
+store_session_id_for_key() {
+  local skey="$1"
+  if ! _store_valid_key "${skey}"; then
+    warn "store_session_id_for_key: rejected invalid session key"
+    return 0
+  fi
+  local q_key
+  q_key="$(_store_sql_quote "${skey}")"
+  local _ss_db _ss_val
+  while IFS= read -r _ss_db; do
+    [[ -z "${_ss_db}" ]] && continue
+    _ss_val="$(store_sql "${_ss_db}" "SELECT current_session_id FROM session_nodes WHERE session_key = '${q_key}' LIMIT 1;")"
+    if [[ -n "${_ss_val}" ]]; then
+      printf '%s\n' "${_ss_val}"
+      return 0
+    fi
+  done < <(store_db_paths)
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# store_parent_session_id <sid> — ONE hop. Translates the id to its key, then
+# selects the first non-null of session_windows.parent_session_key/spawned_by
+# (queried by session_id — session_windows' own primary key), then
+# session_nodes.parent_session_key/spawned_by/fork_source_session_key
+# (queried by the translated key), then translates that parent key back to a
+# session id. Emits empty when no parent is recorded. These columns are
+# confirmed present in schema but NEVER confirmed populated with live data —
+# exactly why D-08 makes this the FALLBACK behind the subagent-hook sidecar.
+# ---------------------------------------------------------------------------
+store_parent_session_id() {
+  local sid="$1"
+  if ! _store_valid_id "${sid}"; then
+    warn "store_parent_session_id: rejected invalid session id"
+    return 0
+  fi
+  local key
+  key="$(store_session_key_for_id "${sid}")"
+  [[ -z "${key}" ]] && return 0
+  local q_sid q_key parent_key="" _ss_db
+  q_sid="$(_store_sql_quote "${sid}")"
+  q_key="$(_store_sql_quote "${key}")"
+  while IFS= read -r _ss_db; do
+    [[ -z "${_ss_db}" ]] && continue
+    parent_key="$(store_sql "${_ss_db}" "SELECT coalesce(
+      (SELECT parent_session_key FROM session_windows WHERE session_id = '${q_sid}' LIMIT 1),
+      (SELECT spawned_by FROM session_windows WHERE session_id = '${q_sid}' LIMIT 1),
+      (SELECT parent_session_key FROM session_nodes WHERE session_key = '${q_key}' LIMIT 1),
+      (SELECT spawned_by FROM session_nodes WHERE session_key = '${q_key}' LIMIT 1),
+      (SELECT fork_source_session_key FROM session_nodes WHERE session_key = '${q_key}' LIMIT 1)
+    );")"
+    [[ -n "${parent_key}" ]] && break
+  done < <(store_db_paths)
+  [[ -z "${parent_key}" ]] && return 0
+  store_session_id_for_key "${parent_key}"
+}
+
+# ---------------------------------------------------------------------------
+# store_root_session_id <sid> — the locked D-01 name. Walks
+# store_parent_session_id at most ten times (the same max_depth guard
+# get-root-session-id.py uses), emitting the last non-empty id reached, or
+# the input sid when the first hop is empty. Never emits nothing for a valid
+# input.
+# ---------------------------------------------------------------------------
+store_root_session_id() {
+  local sid="$1"
+  if ! _store_valid_id "${sid}"; then
+    warn "store_root_session_id: rejected invalid session id"
+    printf '%s\n' "${sid}"
+    return 0
+  fi
+  local current="${sid}" parent hop
+  for (( hop = 0; hop < 10; hop++ )); do
+    parent="$(store_parent_session_id "${current}")"
+    [[ -z "${parent}" ]] && break
+    current="${parent}"
+  done
+  printf '%s\n' "${current}"
+}
+
+# ---------------------------------------------------------------------------
+# store_write_status <state> <error_text> — writes READ_PATH_STATUS_FILE via
+# an env-passing python3 heredoc (never ${} interpolation — Bash 3.2 safety),
+# atomically (tempfile + os.replace in the same directory, mirroring
+# guardrail-check.sh's guardrail-status.json precedent, D-14). Before
+# writing error_text, strips every character whose code point is below 32
+# and every \x7f, then truncates to 512 characters — T-19-02: the raw
+# sqlite diagnostic can echo session-derived bytes into a durable file other
+# processes read.
+# ---------------------------------------------------------------------------
+store_write_status() {
+  local state="$1" error_text="${2:-}"
+  local store_count
+  store_count="$(store_db_paths | grep -c . || true)"
+  READ_PATH_STATUS_FILE="${READ_PATH_STATUS_FILE}" \
+  RP_STATE="${state}" \
+  RP_ERROR="${error_text}" \
+  RP_PATHS="${STORE_PATHS_TRIED:-}" \
+  RP_SCHEMA_MISSING="${STORE_SCHEMA_MISSING:-}" \
+  RP_STORE_COUNT="${store_count:-0}" \
+  python3 - <<'PY' 2>/dev/null || true
+import json, os, tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+status_file = Path(os.environ['READ_PATH_STATUS_FILE'])
+raw_error = os.environ.get('RP_ERROR', '')
+# T-19-02: strip control chars below 32 and 0x7f, then truncate to 512 chars.
+cleaned_error = ''.join(ch for ch in raw_error if ord(ch) >= 32 and ch != '\x7f')[:512]
+
+paths_tried = [p for p in os.environ.get('RP_PATHS', '').split('\n') if p]
+schema_missing = [c for c in os.environ.get('RP_SCHEMA_MISSING', '').split('\n') if c]
+
+data = {
+    'state': os.environ.get('RP_STATE', ''),
+    'timestamp': datetime.now(timezone.utc).isoformat(),
+    'paths_tried': paths_tried,
+    'error_text': cleaned_error,
+    'schema_missing': schema_missing,
+    'store_count': int(os.environ.get('RP_STORE_COUNT', '0') or 0),
+}
+
+status_file.parent.mkdir(parents=True, exist_ok=True)
+tmp_fd, tmp_path = tempfile.mkstemp(
+    dir=str(status_file.parent),
+    prefix='.read-path-status-',
+    suffix='.tmp',
+)
+try:
+    with os.fdopen(tmp_fd, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(data, indent=2) + '\n')
+    os.replace(tmp_path, str(status_file))
+finally:
+    try:
+        os.unlink(tmp_path)
+    except FileNotFoundError:
+        pass
+PY
+}
+
+# ---------------------------------------------------------------------------
 # Executed-mode CLI arm (D-02). Detects execution vs sourcing by comparing
-# BASH_SOURCE[0] to $0. Reachable verbs at this stage of the phase: db-paths,
-# probe, session-events, completions, max-seq. (The remaining verbs listed in
-# 19-01-PLAN.md's artifacts section are added by Task 2.)
+# BASH_SOURCE[0] to $0. This is how get-root-session-id.py (plan 19-05) and
+# the marker heredocs (plan 19-06) reach the store from Python without
+# sourcing bash. `probe` prints the resolved STORE_STATE on stdout and exits
+# 0 for READABLE/EMPTY, 2 for UNREADABLE. An unknown verb prints the verb
+# list to stderr and exits 64.
 # ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   _ss_verb="${1:-}"
@@ -380,6 +684,34 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         *) exit 2 ;;
       esac
       ;;
+    current-session-id)
+      store_current_session_id
+      exit 0
+      ;;
+    last-completion-id)
+      store_last_completion_id "$@"
+      exit 0
+      ;;
+    session-key-for-id)
+      store_session_key_for_id "$@"
+      exit 0
+      ;;
+    session-id-for-key)
+      store_session_id_for_key "$@"
+      exit 0
+      ;;
+    parent-session-id)
+      store_parent_session_id "$@"
+      exit 0
+      ;;
+    root-session-id)
+      store_root_session_id "$@"
+      exit 0
+      ;;
+    list-sessions)
+      store_list_sessions
+      exit 0
+      ;;
     session-events)
       store_session_events "$@"
       exit 0
@@ -388,8 +720,20 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       store_completions "$@"
       exit 0
       ;;
+    tool-calls)
+      store_tool_calls "$@"
+      exit 0
+      ;;
     max-seq)
       store_max_seq "$@"
+      exit 0
+      ;;
+    null-event-count)
+      store_null_event_count "$@"
+      exit 0
+      ;;
+    write-status)
+      store_write_status "$@"
       exit 0
       ;;
     *)

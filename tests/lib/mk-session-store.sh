@@ -214,6 +214,80 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# mk_compacted_event <db> <session_id> <seq> — inserts a row with event_json
+# NULL, event_zstd set to X'01', event_utf8_bytes set to 1, and
+# navigation_json set to the minimal single-line object satisfying the
+# table's navigation CHECK. Models RESEARCH Pitfall 3: a zstd-compacted row
+# that a naive query would silently skip AND fail to count.
+# ---------------------------------------------------------------------------
+mk_compacted_event() {
+  local db="$1" sid="$2" seq="$3"
+  local q_sid nav_json
+  q_sid="$(_mk_sql_quote "${sid}")"
+  nav_json='{"version":1,"report":{"kind":"canonical"},"navigation":{},"reset":{},"model":{},"modelBytes":0,"modelWithoutCheckpointBytes":0,"withoutCustomDataBytes":0}'
+  _mk_write "${db}" "INSERT INTO transcript_events (session_id, seq, event_json, created_at, event_zstd, event_utf8_bytes, navigation_json) VALUES ('${q_sid}', ${seq}, NULL, ${seq}, X'01', 1, '${nav_json}');"
+}
+
+# ---------------------------------------------------------------------------
+# mk_toolcall_pair <db> <session_id> <call_seq> <tool_call_id> <tool_name>
+#   <duration_ms> <is_error>
+# Inserts the assistant toolCall row (at call_seq) and the toolResult row (at
+# call_seq + 1), in the shape captured verbatim in sample-rows.txt: the call
+# row's content array holds a text item followed by the toolCall item (the
+# tool call is NOT always content[0]), and the result row carries
+# toolCallId/toolName/details.durationMs/isError/content.
+# ---------------------------------------------------------------------------
+mk_toolcall_pair() {
+  local db="$1" sid="$2" call_seq="$3" tool_call_id="$4" tool_name="$5" duration_ms="$6" is_error="$7"
+  local call_json result_json result_seq
+  result_seq=$((call_seq + 1))
+  call_json=$(
+    TCID="${tool_call_id}" TNAME="${tool_name}" SEQ="${call_seq}" python3 - <<'PY'
+import json, os
+seq = int(os.environ['SEQ'])
+doc = {
+    "type": "message",
+    "id": f"call-id-{seq}",
+    "parentId": f"parent-id-{seq}",
+    "timestamp": "2026-09-24T04:29:20.000Z",
+    "message": {
+        "role": "assistant",
+        "content": [
+            {"type": "text", "text": "running tool"},
+            {"type": "toolCall", "id": os.environ['TCID'], "name": os.environ['TNAME'], "arguments": {}},
+        ],
+    },
+}
+print(json.dumps(doc))
+PY
+  )
+  result_json=$(
+    TCID="${tool_call_id}" TNAME="${tool_name}" DUR="${duration_ms}" ISERR="${is_error}" SEQ="${result_seq}" python3 - <<'PY'
+import json, os
+seq = int(os.environ['SEQ'])
+is_error = os.environ['ISERR'] in ('1', 'true', 'True')
+doc = {
+    "type": "message",
+    "id": f"result-id-{seq}",
+    "parentId": f"call-id-{seq - 1}",
+    "timestamp": "2026-09-24T04:29:22.085Z",
+    "message": {
+        "role": "toolResult",
+        "toolCallId": os.environ['TCID'],
+        "toolName": os.environ['TNAME'],
+        "content": [{"type": "text", "text": "tool error text" if is_error else "tool output"}],
+        "details": {"status": "completed", "durationMs": int(os.environ['DUR'])},
+        "isError": is_error,
+    },
+}
+print(json.dumps(doc))
+PY
+  )
+  mk_event "${db}" "${sid}" "${call_seq}" "${call_json}"
+  mk_event "${db}" "${sid}" "${result_seq}" "${result_json}"
+}
+
+# ---------------------------------------------------------------------------
 # mk_mirror_jsonl_dir <db> <sessions_dir> — TEST-GLUE HELPER (not part of the
 # 19-01-PLAN.md artifact list). Rebuilds a fresh session store at <db>
 # mirroring every "*.jsonl" file already on disk under <sessions_dir> — one

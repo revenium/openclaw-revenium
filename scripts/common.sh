@@ -61,11 +61,33 @@ RULES_LOCK_FILE="${STATE_DIR}/rules.lock"
 # TAXONOMY_FILE: 8-label task vocabulary for write-marker.sh + setup-guardrails.sh.
 # JOB_TAXONOMY_FILE: 11-label job vocabulary for write-job-marker.sh (v1.1 / JOBDEC-01).
 # MARKERS_DIR: per-session marker JSONL files (appended by write-marker.sh).
-# SESSIONS_DIR: OpenClaw agent session JSONL directory (read by resolver + report.sh).
+# SESSIONS_DIR: LEGACY (Phase 19 / D-01) — the pre-2.0 transcript directory.
+#   Archive-only on a 2.0 host (OpenClaw no longer writes *.jsonl under
+#   agents/main/sessions/); no code added by Phase 19 reads it. Left in place
+#   only because other pre-2.0 code paths may still reference it; the SQLite
+#   read path uses SESSION_STORE_GLOB below instead.
 TAXONOMY_FILE="${STATE_DIR}/task-taxonomy.json"
 JOB_TAXONOMY_FILE="${STATE_DIR}/job-taxonomy.json"
 MARKERS_DIR="${STATE_DIR}/markers"
 SESSIONS_DIR="${OPENCLAW_HOME}/agents/main/sessions"
+
+# Phase 19 path constants (READ-01/READ-04, D-01/D-14) — scripts/session-store.sh
+# is the canonical consumer; declared here too so any caller that sources
+# common.sh before session-store.sh already has them, and so
+# session-store.sh's own defensive fallbacks are true no-ops in production.
+# SESSION_STORE_GLOB: every per-agent OpenClaw 2.0 SQLite session store on
+#   this host — <agentId> is a variable segment (confirmed live as both
+#   "main" and "dev" on the same host); skipping a second agent's store is
+#   silent unmetered spend.
+# SESSION_STORE_OVERRIDE_VAR: the name of the env var that overrides
+#   SESSION_STORE_GLOB with one explicit path (Phase 22 SSHFS parameterization
+#   point; also the hermetic test override).
+# READ_PATH_STATUS_FILE: durable read-path health snapshot, written each tick
+#   by store_write_status — the guardrail-status.json precedent (D-14).
+SESSION_STORE_GLOB="${OPENCLAW_HOME}/agents/*/agent/openclaw-agent.sqlite"
+SESSION_STORE_OVERRIDE_VAR="REVENIUM_SESSION_STORE"
+READ_PATH_STATUS_FILE="${STATE_DIR}/read-path-status.json"
+SQLITE_BUSY_TIMEOUT_MS="${SQLITE_BUSY_TIMEOUT_MS:-5000}"
 
 # Phase 9 path constants (GRDEV-01..05).
 # GUARDRAIL_LEDGER_FILE: append-only dedup ledger for guardrail event metering.
