@@ -504,6 +504,15 @@ touch "${GUARDRAIL_LEDGER_FILE}" 2>/dev/null || true
 # stop the tick.
 _guardrail_newest_session_id=""
 _guardrail_newest_session_id=$(store_current_session_id) || true
+if [[ -z "${_guardrail_newest_session_id}" ]]; then
+  # WR-03 (19-10): qualify the empty answer against store_probe before root
+  # resolution runs, so the warn fires whether or not get_root_session_id
+  # then also degrades. Mandatory `|| true`: this file runs under
+  # `set -euo pipefail` (T-19-21) and store_warn_if_unreadable always
+  # returns 0 by contract, but the guard is kept explicit here to match
+  # every other resolver line in this region.
+  store_warn_if_unreadable "guardrail-check" || true
+fi
 _guardrail_root_sid="${_guardrail_newest_session_id}"
 if [[ -n "${_guardrail_newest_session_id}" ]]; then
   _guardrail_root_sid=$(get_root_session_id "${_guardrail_newest_session_id}") || true

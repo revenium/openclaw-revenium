@@ -595,6 +595,76 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 21 (behavior, WR-03/19-10): unreadable-versus-empty invariant at the
+# job-marker call site. write-job-marker.sh sources common.sh, so `warn`
+# appends to LOG_FILE (${TMP_STATE}/revenium-metering.log) — this non-TTY
+# suite must assert against the log file.
+# ---------------------------------------------------------------------------
+LOG_FILE_TEST="${TMP_STATE}/revenium-metering.log"
+
+# --- UNREADABLE: store file exists but is not a valid SQLite database ---
+mk_store "${DB}"
+printf 'not a sqlite database\n' > "${DB}"
+rm -f "${LOG_FILE_TEST}"
+rm -f "${TMP_MARKERS}"/pseudo-*.jsonl
+
+output21=$(run_job_marker \
+  --job-id "unreadable-21aa" \
+  --job-name "Unreadable store" \
+  --job-type "testing" \
+  --status "SUCCESS" 2>&1)
+exit21=$?
+
+if [[ "${exit21}" -eq 0 ]] && echo "${output21}" | grep -q "job marker written:"; then
+  pass "21: UNREADABLE store — exits 0 and writes a job marker"
+else
+  fail "21: UNREADABLE store — expected exit 0 + marker written (exit=${exit21}, output: ${output21})"
+fi
+
+pseudo_files_21=("${TMP_MARKERS}"/pseudo-*.jsonl)
+if [[ -e "${pseudo_files_21[0]}" ]]; then
+  pass "21: UNREADABLE store — job marker filed under a pseudo-<timestamp> id"
+else
+  fail "21: UNREADABLE store — no pseudo-*.jsonl job marker file found"
+fi
+
+warn_lines_21=0
+[[ -f "${LOG_FILE_TEST}" ]] && warn_lines_21=$(grep -c "UNREADABLE" "${LOG_FILE_TEST}" || true)
+if [[ "${warn_lines_21}" -eq 1 ]]; then
+  pass "21: UNREADABLE store — exactly one log line names the unreadable state"
+else
+  fail "21: UNREADABLE store — expected exactly 1 log line naming UNREADABLE, got ${warn_lines_21}"
+fi
+
+# --- EMPTY: cron-only store (Test 20's fixture shape) — zero warn lines ---
+CRON_ONLY_SID22="bb100000-0022-0022-0022-00000000001c"
+mk_store "${DB}"
+mk_session "${DB}" "${CRON_ONLY_SID22}" "agent:main:cron:z" "cron" 100
+rm -f "${LOG_FILE_TEST}"
+rm -f "${TMP_MARKERS}"/pseudo-*.jsonl
+
+output22=$(run_job_marker \
+  --job-id "empty-22aa" \
+  --job-name "Empty store" \
+  --job-type "testing" \
+  --status "SUCCESS" 2>&1)
+exit22=$?
+
+if [[ "${exit22}" -eq 0 ]] && echo "${output22}" | grep -q "job marker written:"; then
+  pass "22: EMPTY (cron-only) store — exits 0 and writes a pseudo-id job marker"
+else
+  fail "22: EMPTY (cron-only) store — expected exit 0 + marker written (exit=${exit22}, output: ${output22})"
+fi
+
+warn_lines_22=0
+[[ -f "${LOG_FILE_TEST}" ]] && warn_lines_22=$(grep -c "UNREADABLE" "${LOG_FILE_TEST}" || true)
+if [[ "${warn_lines_22}" -eq 0 ]]; then
+  pass "22: EMPTY (cron-only) store — zero log lines name the unreadable state"
+else
+  fail "22: EMPTY (cron-only) store — expected zero UNREADABLE log lines, got ${warn_lines_22}"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

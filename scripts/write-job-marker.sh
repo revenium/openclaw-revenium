@@ -111,6 +111,11 @@ RESOLVED_SESSION_ID=$(store_current_session_id 2>/dev/null || true)
 RESOLVED_COMPLETION_ID=""
 if [[ -n "${RESOLVED_SESSION_ID}" ]]; then
   RESOLVED_COMPLETION_ID=$(store_last_completion_id "${RESOLVED_SESSION_ID}" 2>/dev/null || true)
+else
+  # WR-03 (19-10): qualify the empty answer against store_probe — silent on
+  # a fresh/legitimately-empty host, one bounded log line when the store is
+  # actually UNREADABLE. Same shape as write-marker.sh's Task 1 call site.
+  store_warn_if_unreadable "write-job-marker" || true
 fi
 
 JOB_ID="${JOB_ID_ARG}" \

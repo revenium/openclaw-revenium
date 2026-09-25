@@ -628,6 +628,100 @@ fi
 rm -rf "${TMP_HOME_K}"
 
 # ===========================================================================
+# GROUP L: WR-03 (19-10) — unreadable-versus-empty invariant at the
+# guardrail-attribution call site. guardrail-check.sh sources common.sh, so
+# `warn` appends to LOG_FILE (${TMP_HOME}/skills/revenium/revenium-metering.log)
+# — this non-TTY suite must assert against the log file. Additionally asserts
+# the fail-open contract explicitly per T-19-21: an unreadable store must not
+# change the tick's exit status or its guardrail-status.json durability.
+# ===========================================================================
+echo ""
+echo "--- GROUP L: WR-03 unreadable-versus-empty invariant (guardrail attribution) ---"
+
+# Baseline: healthy store — capture the reference exit code the UNREADABLE
+# and EMPTY cases below must match.
+TMP_HOME_L_BASE=$(make_openclaw_home)
+SESSION_ID_L_BASE="44444444-1010-1010-1010-000000000010"
+mk_guardrail_session "${TMP_HOME_L_BASE}" "${SESSION_ID_L_BASE}"
+> "${ARGV_FILE}"
+export STUB_REVENIUM_ENFORCEMENT_JSON="${HALT_ENFORCEMENT_JSON}"
+export STUB_REVENIUM_BUDGET_RULES_JSON="${HALT_BUDGET_RULES_JSON}"
+exit_code_l_base=0
+STUB_REVENIUM_ARGV_FILE="${ARGV_FILE}" \
+OPENCLAW_HOME="${TMP_HOME_L_BASE}" \
+HOME="${TMP_FAKE_HOME}" \
+bash "${GUARDRAIL_CHECK_SH}" >/dev/null 2>&1 || exit_code_l_base=$?
+rm -rf "${TMP_HOME_L_BASE}"
+
+# --- UNREADABLE: store file exists but is not a valid SQLite database ---
+TMP_HOME_L_UNREAD=$(make_openclaw_home)
+DB_L_UNREAD="${TMP_HOME_L_UNREAD}/agents/main/agent/openclaw-agent.sqlite"
+mk_store "${DB_L_UNREAD}"
+printf 'not a sqlite database\n' > "${DB_L_UNREAD}"
+LOG_FILE_L_UNREAD="${TMP_HOME_L_UNREAD}/skills/revenium/revenium-metering.log"
+> "${ARGV_FILE}"
+
+exit_code_l_unread=0
+STUB_REVENIUM_ARGV_FILE="${ARGV_FILE}" \
+OPENCLAW_HOME="${TMP_HOME_L_UNREAD}" \
+HOME="${TMP_FAKE_HOME}" \
+bash "${GUARDRAIL_CHECK_SH}" >/dev/null 2>&1 || exit_code_l_unread=$?
+
+if [[ "${exit_code_l_unread}" -eq "${exit_code_l_base}" ]]; then
+  pass "L: UNREADABLE store — exit status unchanged from healthy-store value (${exit_code_l_base})"
+else
+  fail "L: UNREADABLE store — exit ${exit_code_l_unread} differs from healthy-store baseline ${exit_code_l_base}"
+fi
+
+if [[ -f "${TMP_HOME_L_UNREAD}/skills/revenium/guardrail-status.json" ]]; then
+  pass "L: UNREADABLE store — guardrail-status.json still written"
+else
+  fail "L: UNREADABLE store — guardrail-status.json NOT written"
+fi
+
+warn_lines_l_unread=0
+[[ -f "${LOG_FILE_L_UNREAD}" ]] && warn_lines_l_unread=$(count_grep "UNREADABLE" "${LOG_FILE_L_UNREAD}")
+if [[ "${warn_lines_l_unread}" -eq 1 ]]; then
+  pass "L: UNREADABLE store — exactly one log line names the unreadable state"
+else
+  fail "L: UNREADABLE store — expected exactly 1 log line naming UNREADABLE, got ${warn_lines_l_unread}"
+fi
+
+rm -rf "${TMP_HOME_L_UNREAD}"
+
+# --- EMPTY: cron-only store — zero warn lines, keeping the signal meaningful ---
+TMP_HOME_L_EMPTY=$(make_openclaw_home)
+DB_L_EMPTY="${TMP_HOME_L_EMPTY}/agents/main/agent/openclaw-agent.sqlite"
+mk_store "${DB_L_EMPTY}"
+mk_session "${DB_L_EMPTY}" "cc100000-1011-1011-1011-000000000011" "agent:main:cron:l" "cron" 100
+LOG_FILE_L_EMPTY="${TMP_HOME_L_EMPTY}/skills/revenium/revenium-metering.log"
+> "${ARGV_FILE}"
+
+exit_code_l_empty=0
+STUB_REVENIUM_ARGV_FILE="${ARGV_FILE}" \
+OPENCLAW_HOME="${TMP_HOME_L_EMPTY}" \
+HOME="${TMP_FAKE_HOME}" \
+bash "${GUARDRAIL_CHECK_SH}" >/dev/null 2>&1 || exit_code_l_empty=$?
+
+if [[ "${exit_code_l_empty}" -eq "${exit_code_l_base}" ]]; then
+  pass "L: EMPTY (cron-only) store — exit status unchanged from healthy-store value (${exit_code_l_base})"
+else
+  fail "L: EMPTY (cron-only) store — exit ${exit_code_l_empty} differs from healthy-store baseline ${exit_code_l_base}"
+fi
+
+warn_lines_l_empty=0
+[[ -f "${LOG_FILE_L_EMPTY}" ]] && warn_lines_l_empty=$(count_grep "UNREADABLE" "${LOG_FILE_L_EMPTY}")
+if [[ "${warn_lines_l_empty}" -eq 0 ]]; then
+  pass "L: EMPTY (cron-only) store — zero log lines name the unreadable state"
+else
+  fail "L: EMPTY (cron-only) store — expected zero UNREADABLE log lines, got ${warn_lines_l_empty}"
+fi
+
+rm -rf "${TMP_HOME_L_EMPTY}"
+
+unset STUB_REVENIUM_ENFORCEMENT_JSON STUB_REVENIUM_BUDGET_RULES_JSON
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
