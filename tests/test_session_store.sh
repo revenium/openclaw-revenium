@@ -185,6 +185,80 @@ else
   fail "read-only connection: INSERT not rejected as expected: ${write_err}"
 fi
 
+# An allowlist-clean path is unaffected by the new gate — still emitted.
+db8_paths_out=$(REVENIUM_SESSION_STORE="${DB8}" store_db_paths)
+if [[ "${db8_paths_out}" == "${DB8}" ]]; then
+  pass "read-only connection: allowlist-clean path is still emitted by store_db_paths"
+else
+  fail "read-only connection: allowlist-clean path not emitted (got: ${db8_paths_out})"
+fi
+
+# --- CR-01 / T-19-27..29: URI-metacharacter and relative-path rejection ---
+# A candidate whose agents/<id> segment carries a URI metacharacter must be
+# rejected BEFORE any sqlite connection is built: store_db_paths emits
+# nothing for it, store_sql returns non-zero without invoking the binary,
+# and the filesystem under the fixture root is byte-for-byte unchanged (no
+# truncated-prefix file created by a misparsed URI).
+_assert_rejected_path() {
+  local label="$1" root="$2" bad_path="$3"
+  local before after db_paths_out sql_rc
+  before=$(find "${root}" | LC_ALL=C sort)
+  db_paths_out=$(REVENIUM_SESSION_STORE="${bad_path}" bash -c ". '${SESSION_STORE_SH}'; store_db_paths")
+  REVENIUM_SESSION_STORE="${bad_path}" bash -c ". '${SESSION_STORE_SH}'; store_sql \"\${REVENIUM_SESSION_STORE}\" 'SELECT 1;'" >/dev/null 2>&1
+  sql_rc=$?
+  after=$(find "${root}" | LC_ALL=C sort)
+  if [[ "${before}" == "${after}" ]]; then
+    pass "${label}: filesystem under fixture root is byte-for-byte unchanged"
+  else
+    fail "${label}: filesystem changed after rejected-path attempt (before != after)"
+  fi
+  if [[ -z "${db_paths_out}" ]]; then
+    pass "${label}: store_db_paths emits nothing for the rejected candidate"
+  else
+    fail "${label}: store_db_paths emitted '${db_paths_out}' for the rejected candidate"
+  fi
+  if [[ "${sql_rc}" -ne 0 ]]; then
+    pass "${label}: store_sql returns non-zero for the rejected candidate"
+  else
+    fail "${label}: store_sql returned 0 for the rejected candidate (expected non-zero)"
+  fi
+}
+
+D_URI_Q=$(new_tmp)
+DB_URI_Q="${D_URI_Q}/agents/mai?n/agent/openclaw-agent.sqlite"
+mk_store "${DB_URI_Q}"
+mk_session "${DB_URI_Q}" "aaaaaaaa-0000-0000-0000-00000000000q" "agent:main:main" "" 100
+_assert_rejected_path "URI metacharacter '?'" "${D_URI_Q}" "${DB_URI_Q}"
+
+D_URI_H=$(new_tmp)
+DB_URI_H="${D_URI_H}/agents/mai#n/agent/openclaw-agent.sqlite"
+mk_store "${DB_URI_H}"
+mk_session "${DB_URI_H}" "aaaaaaaa-0000-0000-0000-00000000000h" "agent:main:main" "" 100
+_assert_rejected_path "URI metacharacter '#'" "${D_URI_H}" "${DB_URI_H}"
+
+D_URI_P=$(new_tmp)
+DB_URI_P="${D_URI_P}/agents/mai%n/agent/openclaw-agent.sqlite"
+mk_store "${DB_URI_P}"
+mk_session "${DB_URI_P}" "aaaaaaaa-0000-0000-0000-00000000000p" "agent:main:main" "" 100
+_assert_rejected_path "URI metacharacter '%'" "${D_URI_P}" "${DB_URI_P}"
+
+# Relative (non-absolute) path — no fixture root to snapshot, just the
+# emptiness/non-zero assertions.
+rel_path="relative/openclaw-agent.sqlite"
+rel_db_paths_out=$(REVENIUM_SESSION_STORE="${rel_path}" bash -c ". '${SESSION_STORE_SH}'; store_db_paths")
+if [[ -z "${rel_db_paths_out}" ]]; then
+  pass "relative path: store_db_paths emits nothing for a non-absolute candidate"
+else
+  fail "relative path: store_db_paths emitted '${rel_db_paths_out}' for a non-absolute candidate"
+fi
+REVENIUM_SESSION_STORE="${rel_path}" bash -c ". '${SESSION_STORE_SH}'; store_sql \"\${REVENIUM_SESSION_STORE}\" 'SELECT 1;'" >/dev/null 2>&1
+rel_sql_rc=$?
+if [[ "${rel_sql_rc}" -ne 0 ]]; then
+  pass "relative path: store_sql returns non-zero for a non-absolute candidate"
+else
+  fail "relative path: store_sql returned 0 for a non-absolute candidate (expected non-zero)"
+fi
+
 grep_count=$(grep -v '^#' "${SESSION_STORE_SH}" | grep -c 'mode=ro' || true)
 if [[ "${grep_count}" -eq 1 ]]; then
   pass "exactly one connection URI (mode=ro) in session-store.sh"
