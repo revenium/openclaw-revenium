@@ -28,6 +28,12 @@
 #   GROUP4  — a store missing a required schema column (READ-04 UNREADABLE):
 #             the tick exits non-zero and the missing column name is recorded
 #             in read-path-status.json.
+#   GROUP5  — WR-01 blast radius: a two-agent host where agents/main is
+#             healthy and agents/dev is schema-drifted. The healthy store's
+#             completion is still metered (exit 0), the log names the
+#             drifted store, and read-path-status.json records READABLE with
+#             unhealthy_paths naming agents/dev. A second sub-case with BOTH
+#             agents drifted still classifies UNREADABLE and exits non-zero.
 #
 # Fixture construction note: the sidecar file in every GROUP is written BY
 # HAND, in exactly the shape plan 19-03 pinned (plugin/src/gate.js ::
@@ -476,6 +482,111 @@ if [[ "${TX_COUNT_D}" -eq 0 ]]; then
   pass "GROUP4: no completion is metered when the store is unreadable"
 else
   fail "GROUP4: expected 0 TX ledger lines against an unreadable store, got ${TX_COUNT_D}"
+fi
+
+# ===========================================================================
+# GROUP5: two-agent host, one healthy + one drifted — WR-01 blast-radius fix
+# ===========================================================================
+echo ""
+echo "--- GROUP5: two-agent host — a drifted agents/dev store no longer blacks out agents/main ---"
+
+ROOT_SID_E="e5000000-aaaa-aaaa-aaaa-e50000000001"
+
+HOME_E=$(make_e2e_home)
+TMP_HOMES+=("${HOME_E}")
+DB_E_MAIN=$(db_for "${HOME_E}")
+mk_store "${DB_E_MAIN}"
+mk_session "${DB_E_MAIN}" "${ROOT_SID_E}" "agent:main:root-e" "" 100
+mk_assistant_event "${DB_E_MAIN}" "${ROOT_SID_E}" 0 "resp-e-001" "run-e" 111 "claude-sonnet-4-6" "2026-09-25T01:00:00.000Z" "stop"
+
+DB_E_DEV="${HOME_E}/agents/dev/agent/openclaw-agent.sqlite"
+build_broken_store "${DB_E_DEV}"
+
+ARGV_E=$(mktemp "${TMPDIR:-/tmp}/test-e2e-argv-e.XXXXXX")
+TMP_ARGV_FILES+=("${ARGV_E}")
+run_tick "${HOME_E}" "${ARGV_E}"
+RC_E=$?
+
+if [[ "${RC_E}" -eq 0 ]]; then
+  pass "GROUP5: tick exits 0 with a drifted sibling store present"
+else
+  fail "GROUP5: tick exited ${RC_E} (expected 0) — see ${HOME_E}/.tick-out.log"
+fi
+
+TX_COUNT_E=$(count_grep '^TX:' "${HOME_E}/revenium-reported.ledger")
+if [[ "${TX_COUNT_E}" -eq 1 ]]; then
+  pass "GROUP5: exactly one metered completion from the healthy agents/main store"
+else
+  fail "GROUP5: expected 1 TX ledger line, got ${TX_COUNT_E}"
+fi
+
+REAL_COMPLETIONS_E=$(real_calls "meter" "completion" "${ARGV_E}")
+if [[ "${REAL_COMPLETIONS_E}" -eq 1 ]]; then
+  pass "GROUP5: exactly one real 'meter completion' call (capability probe excluded)"
+else
+  fail "GROUP5: expected 1 real meter-completion call, got ${REAL_COMPLETIONS_E}"
+fi
+
+if grep -q "agents/dev" "${HOME_E}/.tick-out.log"; then
+  pass "GROUP5: the tick's log output names the drifted agents/dev store"
+else
+  fail "GROUP5: the drifted store's path was not named in the tick log"
+fi
+
+STATUS_E="${HOME_E}/skills/revenium/read-path-status.json"
+if [[ -f "${STATUS_E}" ]] && grep -qF '"state": "READABLE"' "${STATUS_E}"; then
+  pass "GROUP5: read-path-status.json records READABLE despite the drifted sibling"
+else
+  fail "GROUP5: read-path-status.json missing or not READABLE (${STATUS_E})"
+fi
+
+UNHEALTHY_LEN_E=$(python3 -c "
+import json
+d = json.load(open('${STATUS_E}'))
+print(len(d.get('unhealthy_paths', [])))
+" 2>/dev/null || echo "-1")
+UNHEALTHY_HAS_DEV_E=$(python3 -c "
+import json
+d = json.load(open('${STATUS_E}'))
+print('yes' if any('agents/dev' in p for p in d.get('unhealthy_paths', [])) else 'no')
+" 2>/dev/null || echo "no")
+if [[ "${UNHEALTHY_LEN_E}" -eq 1 && "${UNHEALTHY_HAS_DEV_E}" == "yes" ]]; then
+  pass "GROUP5: read-path-status.json's unhealthy_paths has length 1 and names the drifted agents/dev store"
+else
+  fail "GROUP5: unhealthy_paths wrong (len=${UNHEALTHY_LEN_E} has_dev=${UNHEALTHY_HAS_DEV_E})"
+fi
+
+# --- Both agents drifted: still classifies UNREADABLE, still exits non-zero ---
+HOME_F=$(make_e2e_home)
+TMP_HOMES+=("${HOME_F}")
+DB_F_MAIN=$(db_for "${HOME_F}")
+build_broken_store "${DB_F_MAIN}"
+DB_F_DEV="${HOME_F}/agents/dev/agent/openclaw-agent.sqlite"
+build_broken_store "${DB_F_DEV}"
+
+ARGV_F=$(mktemp "${TMPDIR:-/tmp}/test-e2e-argv-f.XXXXXX")
+TMP_ARGV_FILES+=("${ARGV_F}")
+run_tick "${HOME_F}" "${ARGV_F}"
+RC_F=$?
+
+if [[ "${RC_F}" -ne 0 ]]; then
+  pass "GROUP5: both-agents-drifted host still exits non-zero"
+else
+  fail "GROUP5: both-agents-drifted host exited 0 (expected non-zero)"
+fi
+
+STATUS_F="${HOME_F}/skills/revenium/read-path-status.json"
+if [[ -f "${STATUS_F}" ]] && grep -qF '"state": "UNREADABLE"' "${STATUS_F}"; then
+  pass "GROUP5: both-agents-drifted host's read-path-status.json still records UNREADABLE"
+else
+  fail "GROUP5: both-agents-drifted status not UNREADABLE (${STATUS_F})"
+fi
+
+TX_COUNT_F=$(count_grep '^TX:' "${HOME_F}/revenium-reported.ledger")
+if [[ "${TX_COUNT_F}" -eq 0 ]]; then
+  pass "GROUP5: both-agents-drifted host meters nothing"
+else
+  fail "GROUP5: expected 0 TX ledger lines for both-agents-drifted, got ${TX_COUNT_F}"
 fi
 
 # ===========================================================================

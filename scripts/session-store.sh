@@ -224,10 +224,78 @@ store_db_paths() {
 }
 
 # ---------------------------------------------------------------------------
+# _store_probe_one <db_path> — evaluates exactly ONE candidate store (WR-01).
+# Runs the same four checks in the same order the pre-WR-01 inline loop ran
+# them: the transcript_events.event_json presence check, the four
+# session_nodes columns, and the non-cron count query. On success, echoes
+# the non-cron session count on stdout and returns 0. On any failure, echoes
+# nothing and returns non-zero — the caller MUST invoke this via stdout
+# redirection to a file/variable-by-read rather than `$(...)` command
+# substitution if it also needs the side-effect globals below, since a
+# command-substitution subshell cannot write globals back to the caller
+# (same hazard store_db_paths' own callers already work around).
+# Sets (never resets across calls other than at entry):
+#   _STORE_PROBE_ONE_REASON  — human-readable diagnostic for this candidate
+#   _STORE_PROBE_ONE_MISSING — newline-separated missing-column list, only
+#                              set for the schema-drift failure class
+# ---------------------------------------------------------------------------
+_STORE_PROBE_ONE_REASON=""
+_STORE_PROBE_ONE_MISSING=""
+_store_probe_one() {
+  local _sp1_db="$1"
+  local _sp1_info _sp1_missing="" _sp1_col _sp1_cnt
+  _STORE_PROBE_ONE_REASON=""
+  _STORE_PROBE_ONE_MISSING=""
+
+  _sp1_info="$(store_sql "${_sp1_db}" "PRAGMA table_info(transcript_events);")"
+  if [[ $? -ne 0 ]]; then
+    _STORE_PROBE_ONE_REASON="${STORE_LAST_SQL_ERROR}"
+    return 1
+  fi
+  if ! printf '%s\n' "${_sp1_info}" | grep -q 'event_json'; then
+    _sp1_missing="${_sp1_missing}transcript_events.event_json"$'\n'
+  fi
+
+  _sp1_info="$(store_sql "${_sp1_db}" "PRAGMA table_info(session_nodes);")"
+  if [[ $? -ne 0 ]]; then
+    _STORE_PROBE_ONE_REASON="${STORE_LAST_SQL_ERROR}"
+    return 1
+  fi
+  for _sp1_col in created_via updated_at current_session_id session_key; do
+    if ! printf '%s\n' "${_sp1_info}" | grep -q "${_sp1_col}"; then
+      _sp1_missing="${_sp1_missing}session_nodes.${_sp1_col}"$'\n'
+    fi
+  done
+
+  if [[ -n "${_sp1_missing}" ]]; then
+    _STORE_PROBE_ONE_MISSING="${_sp1_missing%$'\n'}"
+    _STORE_PROBE_ONE_REASON="Schema drift detected on ${_sp1_db} — missing columns: ${_STORE_PROBE_ONE_MISSING//$'\n'/, }"
+    return 1
+  fi
+
+  _sp1_cnt="$(store_sql "${_sp1_db}" "SELECT count(*) FROM session_nodes WHERE created_via IS NULL OR created_via != 'cron';")"
+  if [[ $? -ne 0 ]]; then
+    _STORE_PROBE_ONE_REASON="${STORE_LAST_SQL_ERROR}"
+    return 1
+  fi
+  printf '%s\n' "${_sp1_cnt:-0}"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # store_probe — runs at most once per process (STORE_PROBE_DONE guard) and
 # sets STORE_STATE (READABLE|EMPTY|UNREADABLE), STORE_PROBE_ERROR,
-# STORE_PATHS_TRIED, STORE_SCHEMA_MISSING. Modeled on report.sh's
-# JOBS_CLI_CAPABLE probe-once-and-cache shape (D-15's schema-drift probe).
+# STORE_PATHS_TRIED, STORE_SCHEMA_MISSING, STORE_HEALTHY_PATHS,
+# STORE_UNHEALTHY_PATHS. Modeled on report.sh's JOBS_CLI_CAPABLE
+# probe-once-and-cache shape (D-15's schema-drift probe).
+#
+# WR-01: every candidate store is probed independently via
+# _store_probe_one — a broken store no longer short-circuits the whole tick.
+# UNREADABLE is reached only when NO candidate is healthy; EMPTY only when
+# every healthy candidate holds zero non-cron sessions. A single-candidate
+# host's STORE_PROBE_ERROR wording is unchanged from the pre-WR-01 shape
+# (the representative reason is emitted verbatim, with no "N candidate(s)
+# failed" wrapper, whenever exactly one candidate was probed and failed).
 # ---------------------------------------------------------------------------
 STORE_PROBE_DONE=""
 STORE_STATE=""
@@ -237,6 +305,9 @@ STORE_SCHEMA_MISSING=""
 STORE_REJECTED_PATHS=""
 STORE_REJECTED_COUNT=0
 STORE_UNREADABLE_WARNED=""
+STORE_HEALTHY_PATHS=""
+STORE_UNHEALTHY_PATHS=""
+STORE_UNHEALTHY_WARNED=""
 
 store_probe() {
   if [[ -n "${STORE_PROBE_DONE}" ]]; then
@@ -247,6 +318,8 @@ store_probe() {
   STORE_SCHEMA_MISSING=""
   STORE_REJECTED_PATHS=""
   STORE_REJECTED_COUNT=0
+  STORE_HEALTHY_PATHS=""
+  STORE_UNHEALTHY_PATHS=""
 
   if ! command -v "${STUB_SQLITE3_BIN:-sqlite3}" >/dev/null 2>&1; then
     STORE_STATE="UNREADABLE"
@@ -290,54 +363,64 @@ store_probe() {
     return 0
   fi
 
-  local _ss_db _ss_info _ss_missing _ss_total=0 _ss_cnt _ss_col
-  _ss_missing=""
+  # Per-candidate independent probe (WR-01). _store_probe_one is invoked via
+  # stdout redirection to a scratch file — NOT `$(...)` — so its
+  # _STORE_PROBE_ONE_REASON/_STORE_PROBE_ONE_MISSING globals are visible in
+  # THIS shell (a command-substitution subshell cannot write them back).
+  local _ss_db _ss_cnt _ss_total=0 _ss_tmp
+  local _ss_unhealthy_count=0 _ss_first_unhealthy_reason="" _ss_missing_union="" _ss_unhealthy_detail="" _ss_col
+  _ss_tmp="$(mktemp "${TMPDIR:-/tmp}/store-probe-one.XXXXXX")"
   while IFS= read -r _ss_db; do
     [[ -z "${_ss_db}" ]] && continue
-
-    _ss_info="$(store_sql "${_ss_db}" "PRAGMA table_info(transcript_events);")"
-    if [[ $? -ne 0 ]]; then
-      STORE_STATE="UNREADABLE"
-      STORE_PROBE_ERROR="${STORE_LAST_SQL_ERROR}"
-      return 0
-    fi
-    if ! printf '%s\n' "${_ss_info}" | grep -q 'event_json'; then
-      _ss_missing="${_ss_missing}transcript_events.event_json"$'\n'
-    fi
-
-    _ss_info="$(store_sql "${_ss_db}" "PRAGMA table_info(session_nodes);")"
-    if [[ $? -ne 0 ]]; then
-      STORE_STATE="UNREADABLE"
-      STORE_PROBE_ERROR="${STORE_LAST_SQL_ERROR}"
-      return 0
-    fi
-    for _ss_col in created_via updated_at current_session_id session_key; do
-      if ! printf '%s\n' "${_ss_info}" | grep -q "${_ss_col}"; then
-        _ss_missing="${_ss_missing}session_nodes.${_ss_col}"$'\n'
+    if _store_probe_one "${_ss_db}" > "${_ss_tmp}"; then
+      _ss_cnt="$(cat "${_ss_tmp}")"
+      STORE_HEALTHY_PATHS="${STORE_HEALTHY_PATHS}${_ss_db}"$'\n'
+      _ss_total=$(( _ss_total + ${_ss_cnt:-0} ))
+    else
+      STORE_UNHEALTHY_PATHS="${STORE_UNHEALTHY_PATHS}${_ss_db}"$'\n'
+      _ss_unhealthy_count=$(( _ss_unhealthy_count + 1 ))
+      [[ -z "${_ss_first_unhealthy_reason}" ]] && _ss_first_unhealthy_reason="${_STORE_PROBE_ONE_REASON}"
+      _ss_unhealthy_detail="${_ss_unhealthy_detail}${_ss_db}: ${_STORE_PROBE_ONE_REASON:0:64}; "
+      if [[ -n "${_STORE_PROBE_ONE_MISSING}" ]]; then
+        while IFS= read -r _ss_col; do
+          [[ -z "${_ss_col}" ]] && continue
+          printf '%s\n' "${_ss_missing_union}" | grep -qxF "${_ss_col}" || _ss_missing_union="${_ss_missing_union}${_ss_col}"$'\n'
+        done <<< "${_STORE_PROBE_ONE_MISSING}"
       fi
-    done
-
-    if [[ -n "${_ss_missing}" ]]; then
-      STORE_STATE="UNREADABLE"
-      STORE_SCHEMA_MISSING="${_ss_missing%$'\n'}"
-      STORE_PROBE_ERROR="Schema drift detected on ${_ss_db} — missing columns: ${STORE_SCHEMA_MISSING//$'\n'/, }"
-      return 0
     fi
-
-    _ss_cnt="$(store_sql "${_ss_db}" "SELECT count(*) FROM session_nodes WHERE created_via IS NULL OR created_via != 'cron';")"
-    if [[ $? -ne 0 ]]; then
-      STORE_STATE="UNREADABLE"
-      STORE_PROBE_ERROR="${STORE_LAST_SQL_ERROR}"
-      return 0
-    fi
-    _ss_total=$(( _ss_total + ${_ss_cnt:-0} ))
   done <<< "${_ss_filtered}"
+  rm -f "${_ss_tmp}"
+
+  STORE_HEALTHY_PATHS="${STORE_HEALTHY_PATHS%$'\n'}"
+  STORE_UNHEALTHY_PATHS="${STORE_UNHEALTHY_PATHS%$'\n'}"
+  STORE_SCHEMA_MISSING="${_ss_missing_union%$'\n'}"
+
+  if [[ -z "${STORE_HEALTHY_PATHS}" ]]; then
+    STORE_STATE="UNREADABLE"
+    if [[ "${_ss_unhealthy_count}" -gt 1 ]]; then
+      STORE_PROBE_ERROR="${_ss_unhealthy_count} candidate store(s) failed probe; first: ${_ss_first_unhealthy_reason}"
+    else
+      # Exactly one candidate was probed and failed — keep the original,
+      # unwrapped wording a single-store host has always produced.
+      STORE_PROBE_ERROR="${_ss_first_unhealthy_reason}"
+    fi
+    return 0
+  fi
 
   if [[ "${_ss_total}" -eq 0 ]]; then
     STORE_STATE="EMPTY"
   else
     STORE_STATE="READABLE"
   fi
+
+  # T-19-33: a partial-degradation warn — exactly once per process — so a
+  # broken sibling store stays operator-visible even though this tick still
+  # meters every healthy store and exits 0.
+  if [[ -n "${STORE_UNHEALTHY_PATHS}" && -z "${STORE_UNHEALTHY_WARNED}" ]]; then
+    STORE_UNHEALTHY_WARNED=1
+    warn "${_ss_unhealthy_count} candidate store(s) unhealthy this tick (metering continues for the remaining healthy store(s)): ${_ss_unhealthy_detail%; }"
+  fi
+
   return 0
 }
 
@@ -739,6 +822,7 @@ store_write_status() {
   RP_PATHS="${STORE_PATHS_TRIED:-}" \
   RP_SCHEMA_MISSING="${STORE_SCHEMA_MISSING:-}" \
   RP_REJECTED="${STORE_REJECTED_PATHS:-}" \
+  RP_UNHEALTHY="${STORE_UNHEALTHY_PATHS:-}" \
   RP_STORE_COUNT="${store_count:-0}" \
   python3 - <<'PY' 2>/dev/null || true
 import json, os, tempfile
@@ -754,6 +838,7 @@ cleaned_error = ''.join(ch for ch in raw_error if ord(ch) >= 32 and ch != '\x7f'
 paths_tried = [p for p in os.environ.get('RP_PATHS', '').split('\n') if p]
 schema_missing = [c for c in os.environ.get('RP_SCHEMA_MISSING', '').split('\n') if c]
 rejected_paths = [p for p in os.environ.get('RP_REJECTED', '').split('\n') if p]
+unhealthy_paths = [p for p in os.environ.get('RP_UNHEALTHY', '').split('\n') if p]
 
 data = {
     'state': os.environ.get('RP_STATE', ''),
@@ -762,6 +847,7 @@ data = {
     'error_text': cleaned_error,
     'schema_missing': schema_missing,
     'rejected_paths': rejected_paths,
+    'unhealthy_paths': unhealthy_paths,
     'store_count': int(os.environ.get('RP_STORE_COUNT', '0') or 0),
 }
 
