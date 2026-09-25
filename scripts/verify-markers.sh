@@ -57,6 +57,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MARKERS_DIR="${STATE_DIR}/markers"
 
 # ---------------------------------------------------------------------------
+# WR-03 (19-10): probe the store once, before enumeration, and print the
+# probed state as the FIRST line of the report — printed here, from the
+# enclosing bash, before the python heredoc runs, so no new value has to
+# cross the heredoc boundary. An operator reading a zero-session report can
+# then tell immediately whether the store was READABLE, EMPTY or UNREADABLE
+# when the numbers below were computed — a zero-session report from an
+# unreadable store can no longer be misread as a zero-coverage finding.
+# store_probe is read-only and creates nothing (no mkdir), preserving this
+# script's no-side-effect contract.
+# ---------------------------------------------------------------------------
+store_probe
+printf 'store: %s\n' "${STORE_STATE}"
+
+# ---------------------------------------------------------------------------
 # Enumerate non-cron sessions from the store (D-10) and count each one's
 # completions in the metered unit (D-04), entirely in bash — no Python
 # subprocess needed for this part, since store_list_sessions/store_completions
@@ -73,6 +87,16 @@ while IFS=$'\x1f' read -r _vm_sid _vm_skey _vm_created_via _vm_updated_at; do
   [[ -z "${_vm_sid}" ]] && continue
   _vm_sids+=("${_vm_sid}")
 done < <(store_list_sessions)
+
+if [[ "${#_vm_sids[@]}" -eq 0 ]]; then
+  # WR-03: qualify the zero-session answer against the probe already run
+  # above — silent for a legitimately empty/fresh store (STORE_STATE=EMPTY),
+  # one bounded warn on stderr when the store is actually UNREADABLE. `warn`
+  # here is session-store.sh's fallback (this file does not source
+  # common.sh), so it writes to stderr — the report's stdout stays
+  # uncontaminated.
+  store_warn_if_unreadable "verify-markers" || true
+fi
 
 if [[ "${#_vm_sids[@]}" -gt 0 ]]; then
   for _vm_sid in "${_vm_sids[@]}"; do

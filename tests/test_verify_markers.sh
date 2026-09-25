@@ -339,6 +339,110 @@ fi
 rm -rf "${TMP_HOME9}"
 
 # ---------------------------------------------------------------------------
+# Test 10 (behavior, WR-03/19-10): unreadable-versus-empty invariant in the
+# coverage report's store-state line. verify-markers.sh does not source
+# common.sh, so its `warn` is session-store.sh's fallback — writes to
+# stderr, keeping stdout (the report) uncontaminated.
+# ---------------------------------------------------------------------------
+
+# --- UNREADABLE: store file exists but is not a valid SQLite database ---
+TMP_HOME10U=$(mktemp -d "${TMPDIR:-/tmp}/test-vm-home10u.XXXXXX")
+DB10U="${TMP_HOME10U}/agents/main/agent/openclaw-agent.sqlite"
+mk_store "${DB10U}"
+printf 'not a sqlite database\n' > "${DB10U}"
+
+exit10u=0
+STDOUT10U=$(mktemp "${TMPDIR:-/tmp}/test-vm-stdout10u.XXXXXX")
+STDERR10U=$(mktemp "${TMPDIR:-/tmp}/test-vm-stderr10u.XXXXXX")
+OPENCLAW_HOME="${TMP_HOME10U}" bash "${VERIFY_MARKERS}" > "${STDOUT10U}" 2> "${STDERR10U}" || exit10u=$?
+
+if [[ "${exit10u}" -eq 0 ]]; then
+  pass "10: UNREADABLE store — verify-markers.sh exits 0"
+else
+  fail "10: UNREADABLE store — exited ${exit10u}"
+fi
+
+if head -1 "${STDOUT10U}" | grep -q "UNREADABLE"; then
+  pass "10: UNREADABLE store — stdout's first line names the unreadable state"
+else
+  fail "10: UNREADABLE store — stdout's first line does not name UNREADABLE: '$(head -1 "${STDOUT10U}")'"
+fi
+
+warn_lines_10u=$(grep -c "UNREADABLE" "${STDERR10U}" || true)
+if [[ "${warn_lines_10u}" -eq 1 ]]; then
+  pass "10: UNREADABLE store — stderr holds exactly one warn naming it"
+else
+  fail "10: UNREADABLE store — expected exactly 1 stderr warn, got ${warn_lines_10u}"
+fi
+
+stdout_warn_text_10u=$(grep -c "session store UNREADABLE" "${STDOUT10U}" || true)
+if [[ "${stdout_warn_text_10u}" -eq 0 ]]; then
+  pass "10: UNREADABLE store — stdout holds no warn text"
+else
+  fail "10: UNREADABLE store — warn text leaked into stdout"
+fi
+
+rm -f "${STDOUT10U}" "${STDERR10U}"
+rm -rf "${TMP_HOME10U}"
+
+# --- EMPTY: cron-only store — first line names empty state, zero stderr warns ---
+TMP_HOME10E=$(mktemp -d "${TMPDIR:-/tmp}/test-vm-home10e.XXXXXX")
+DB10E="${TMP_HOME10E}/agents/main/agent/openclaw-agent.sqlite"
+mk_store "${DB10E}"
+mk_session "${DB10E}" "cc100000-0010-0010-0010-000000000010" "agent:main:cron:ten" "cron" 100
+
+exit10e=0
+STDOUT10E=$(mktemp "${TMPDIR:-/tmp}/test-vm-stdout10e.XXXXXX")
+STDERR10E=$(mktemp "${TMPDIR:-/tmp}/test-vm-stderr10e.XXXXXX")
+OPENCLAW_HOME="${TMP_HOME10E}" bash "${VERIFY_MARKERS}" > "${STDOUT10E}" 2> "${STDERR10E}" || exit10e=$?
+
+if [[ "${exit10e}" -eq 0 ]]; then
+  pass "10: EMPTY (cron-only) store — verify-markers.sh exits 0"
+else
+  fail "10: EMPTY (cron-only) store — exited ${exit10e}"
+fi
+
+if head -1 "${STDOUT10E}" | grep -q "EMPTY"; then
+  pass "10: EMPTY (cron-only) store — stdout's first line names the empty state"
+else
+  fail "10: EMPTY (cron-only) store — stdout's first line does not name EMPTY: '$(head -1 "${STDOUT10E}")'"
+fi
+
+warn_lines_10e=$(grep -c "UNREADABLE" "${STDERR10E}" || true)
+if [[ "${warn_lines_10e}" -eq 0 ]]; then
+  pass "10: EMPTY (cron-only) store — stderr holds zero warn lines"
+else
+  fail "10: EMPTY (cron-only) store — expected zero stderr warns, got ${warn_lines_10e}"
+fi
+
+rm -f "${STDOUT10E}" "${STDERR10E}"
+rm -rf "${TMP_HOME10E}"
+
+# --- Healthy: first line names readable state, every pre-existing assertion
+# in this suite (Test 1's run against ${TMP_HOME}) still passes above. ---
+if echo "${OUTPUT}" | head -1 | grep -q "READABLE"; then
+  pass "10: Healthy store — stdout's first line names the readable state"
+else
+  fail "10: Healthy store — stdout's first line does not name READABLE: '$(echo "${OUTPUT}" | head -1)'"
+fi
+
+# --- No-side-effect contract, asserted directly against a fixture home with
+# no skills/revenium directory (same property Test 8 already covers; this
+# case is authored fresh for the new UNREADABLE probe/warn code path). ---
+TMP_HOME10N=$(mktemp -d "${TMPDIR:-/tmp}/test-vm-home10n.XXXXXX")
+DB10N="${TMP_HOME10N}/agents/main/agent/openclaw-agent.sqlite"
+mk_store "${DB10N}"
+printf 'not a sqlite database\n' > "${DB10N}"
+run_verify "${TMP_HOME10N}" >/dev/null 2>&1
+
+if [[ ! -d "${TMP_HOME10N}/skills" ]]; then
+  pass "10: UNREADABLE store — no skills/revenium directory created as a side effect"
+else
+  fail "10: UNREADABLE store — skills/ directory was created: $(find "${TMP_HOME10N}/skills" 2>/dev/null | tr '\n' ' ')"
+fi
+rm -rf "${TMP_HOME10N}"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
