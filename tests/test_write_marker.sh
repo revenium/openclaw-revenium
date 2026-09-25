@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
 # =============================================================================
-# test_write_marker.sh — Integration tests for write-marker.sh (METER-02)
+# test_write_marker.sh — Integration tests for write-marker.sh (METER-02, D-10)
+#
+# Rebuilt on the SQLite session-store fixture harness (tests/lib/mk-session-store.sh)
+# for Phase 19 plan 19-06, which ports write-marker.sh's current-session
+# resolution off the transcript-filename glob onto
+# scripts/session-store.sh :: store_current_session_id / store_last_completion_id.
 #
 # Tests:
-#   1. Valid taxonomy label appends an ISO8601 marker line and exits 0
+#   1. Valid taxonomy label appends an ISO8601 marker line and exits 0;
+#      session with no completions omits the completion_id field
 #   2. Unknown label exits non-zero and writes no marker line
 #   3. Two rapid invocations yield two lines (flock + O_APPEND, no corruption)
-#   4. Session with an assistant completion: marker includes completion_id
-#   5. Session with no assistant completion: marker omits completion_id field
+#   4. Session with two completions: marker's completion_id is the responseId
+#      of the LATEST usage-bearing assistant event (highest seq)
+#   5. A cron session newer than a chat session: marker files under the chat
+#      (non-cron) session, never the cron session
+#   6. No non-cron session anywhere in the store: pseudo-id fallback fires
+#   7. Unknown task-type is still rejected even when store resolution would
+#      otherwise succeed (no marker escapes under any session)
+#   8. Path-traversal guard rejects a resolved id that does not match the
+#      permitted id/pseudo-id shape
 # =============================================================================
 
 set -uo pipefail
@@ -15,6 +28,10 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WRITE_MARKER="${REPO_ROOT}/scripts/write-marker.sh"
+MK_LIB="${SCRIPT_DIR}/lib/mk-session-store.sh"
+
+# shellcheck source=lib/mk-session-store.sh
+. "${MK_LIB}"
 
 PASS=0
 FAIL=0
@@ -23,25 +40,19 @@ pass() { echo "PASS: $1"; ((PASS++)) || true; }
 fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 
 # ---------------------------------------------------------------------------
-# Test setup: build a minimal tmp OPENCLAW_HOME tree
+# Test setup: build a minimal tmp OPENCLAW_HOME tree with a SQLite store at
+# the real agents/<agentId>/agent/openclaw-agent.sqlite layout.
 # ---------------------------------------------------------------------------
 TMP_HOME=$(mktemp -d "${TMPDIR:-/tmp}/test-wm-home.XXXXXX")
-TMP_SESSIONS="${TMP_HOME}/agents/main/sessions"
 TMP_STATE="${TMP_HOME}/skills/revenium"
 TMP_MARKERS="${TMP_STATE}/markers"
 TMP_TAXONOMY="${TMP_STATE}/task-taxonomy.json"
+DB="${TMP_HOME}/agents/main/agent/openclaw-agent.sqlite"
 
-mkdir -p "${TMP_SESSIONS}" "${TMP_STATE}"
+mkdir -p "${TMP_STATE}"
 
 # Seed taxonomy (copy from repo root)
 cp "${REPO_ROOT}/task-taxonomy.json" "${TMP_TAXONOMY}"
-
-# Create a fake interactive session file (UUID-named)
-FAKE_SID="aabbccdd-0001-0001-0001-000000000001"
-FAKE_SESSION="${TMP_SESSIONS}/${FAKE_SID}.jsonl"
-echo '{"type":"session","id":"aabbccdd-0001-0001-0001-000000000001","timestamp":"2026-01-01T00:00:00.000Z"}' \
-  > "${FAKE_SESSION}"
-touch "${FAKE_SESSION}"  # set mtime to now (freshest file)
 
 cleanup() {
   rm -rf "${TMP_HOME}"
@@ -54,16 +65,20 @@ run_marker() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 1: Valid label — exits 0, prints "marker written: <path>",
-#         appends one ISO8601 line to markers/<sid>.jsonl
+# Test 1: Valid label, session with no completions yet — exits 0, prints
+# "marker written: <path>", appends one ISO8601 line omitting completion_id.
 # ---------------------------------------------------------------------------
+SID1="aabbccdd-0001-0001-0001-000000000001"
+mk_store "${DB}"
+mk_session "${DB}" "${SID1}" "agent:main:main" "" 100
+
 output=$(run_marker "research" 2>&1)
 exit_code=$?
 
 if [[ "${exit_code}" -eq 0 ]]; then
   pass "valid label (research) exits 0"
 else
-  fail "valid label (research) exits non-zero (got ${exit_code})"
+  fail "valid label (research) exits non-zero (got ${exit_code}, output: ${output})"
 fi
 
 if echo "${output}" | grep -q "marker written:"; then
@@ -72,9 +87,9 @@ else
   fail "valid label output missing 'marker written:' (got: ${output})"
 fi
 
-MARKER_FILE="${TMP_MARKERS}/${FAKE_SID}.jsonl"
+MARKER_FILE="${TMP_MARKERS}/${SID1}.jsonl"
 if [[ -f "${MARKER_FILE}" ]]; then
-  pass "marker file created at expected path"
+  pass "marker file created at expected path (store-resolved session id)"
 else
   fail "marker file not found at ${MARKER_FILE}"
 fi
@@ -88,15 +103,15 @@ if [[ -f "${MARKER_FILE}" ]]; then
   fi
 
   marker_line=$(head -1 "${MARKER_FILE}")
-  # Validate ISO8601 ts field
   if echo "${marker_line}" | python3 -c "
 import json, sys, re
 line = sys.stdin.read().strip()
 rec = json.loads(line)
 assert rec.get('task_type') == 'research', f'bad task_type: {rec}'
 assert re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$', rec.get('ts','')), f'bad ts: {rec}'
+assert 'completion_id' not in rec, f'completion_id should be absent (no completions in store): {rec}'
 " 2>/dev/null; then
-    pass "marker line has ISO8601 ts and task_type=research"
+    pass "marker line has ISO8601 ts, task_type=research, and no completion_id"
   else
     fail "marker line malformed: ${marker_line}"
   fi
@@ -121,7 +136,7 @@ if [[ -f "${MARKER_FILE}" ]]; then
 fi
 
 bad_exit=0
-run_marker "bogus_label_not_in_taxonomy" 2>&1 && bad_exit=$? || bad_exit=$?
+run_marker "bogus_label_not_in_taxonomy" >/dev/null 2>&1 && bad_exit=$? || bad_exit=$?
 
 if [[ "${bad_exit}" -ne 0 ]]; then
   pass "unknown label exits non-zero (exit ${bad_exit})"
@@ -143,11 +158,10 @@ fi
 # ---------------------------------------------------------------------------
 # Test 3: Two rapid invocations — two lines in the marker file, no corruption
 # ---------------------------------------------------------------------------
-# Reset marker file
 rm -f "${MARKER_FILE}"
 
-run_marker "generation" 2>&1 >/dev/null
-run_marker "analysis" 2>&1 >/dev/null
+run_marker "generation" >/dev/null 2>&1
+run_marker "analysis" >/dev/null 2>&1
 
 two_count=$(wc -l < "${MARKER_FILE}" | tr -d ' ')
 if [[ "${two_count}" -eq 2 ]]; then
@@ -156,7 +170,6 @@ else
   fail "two invocations yielded ${two_count} lines (expected 2)"
 fi
 
-# Each line must be valid JSON
 if [[ "${two_count}" -ge 1 ]]; then
   valid_lines=0
   while IFS= read -r ml; do
@@ -173,92 +186,126 @@ if [[ "${two_count}" -ge 1 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Test 4: Session with an assistant completion — marker includes completion_id
-#
-# The real OpenClaw lifecycle: write-marker.sh is called AFTER the turn's LLM
-# completion is appended to the session JSONL. The marker should record the
-# .id of that completion so report.sh can do an exact id-keyed match (Phase A).
+# Test 4 (behavior): session with TWO completions — marker's completion_id
+# equals the responseId of the LATEST usage-bearing assistant event (highest
+# seq), resolved via store_last_completion_id.
 # ---------------------------------------------------------------------------
-SID_WITH_COMP="ccddee11-0002-0002-0002-000000000002"
-SESSION_WITH_COMP="${TMP_SESSIONS}/${SID_WITH_COMP}.jsonl"
+SID4="ccddee11-0002-0002-0002-000000000002"
+mk_store "${DB}"
+mk_session "${DB}" "${SID4}" "agent:main:main" "" 100
+mk_assistant_event "${DB}" "${SID4}" 0 "msg_wm_001" "run-4" 10
+mk_assistant_event "${DB}" "${SID4}" 1 "msg_wm_002" "run-4" 20
 
-# Append a session header and an assistant completion with a known .id.
-# The session must also have a more recent mtime than FAKE_SESSION so that
-# write-marker.sh picks this session as the active one.
-EXPECTED_COMP_ID="comp-id-abcdef-123456"
-printf '%s\n' \
-  '{"type":"session","id":"ccddee11-0002-0002-0002-000000000002","timestamp":"2026-06-01T00:00:00.000Z"}' \
-  '{"type":"message","id":"user-001","parentId":"","timestamp":"2026-06-01T12:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}' \
-  "{\"type\":\"message\",\"id\":\"${EXPECTED_COMP_ID}\",\"parentId\":\"user-001\",\"timestamp\":\"2026-06-01T12:01:00.000Z\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"stopReason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"usage\":{\"input\":10,\"output\":5,\"totalTokens\":15}}}" \
-  > "${SESSION_WITH_COMP}"
-# Touch with a newer timestamp so last_completion_info selects this session
-touch "${SESSION_WITH_COMP}"
+MARKER_FILE_4="${TMP_MARKERS}/${SID4}.jsonl"
+rm -f "${MARKER_FILE_4}"
 
-MARKER_FILE_C="${TMP_MARKERS}/${SID_WITH_COMP}.jsonl"
-rm -f "${MARKER_FILE_C}"
+run_marker "generation" >/dev/null 2>&1
 
-run_marker "generation" 2>&1 >/dev/null
-
-if [[ -f "${MARKER_FILE_C}" ]]; then
-  marker_line_c=$(head -1 "${MARKER_FILE_C}")
-  if echo "${marker_line_c}" | python3 -c "
+if [[ -f "${MARKER_FILE_4}" ]]; then
+  marker_line_4=$(head -1 "${MARKER_FILE_4}")
+  if echo "${marker_line_4}" | python3 -c "
 import json, sys
 rec = json.loads(sys.stdin.read().strip())
-assert rec.get('completion_id') == '${EXPECTED_COMP_ID}', f'completion_id mismatch: {rec}'
+assert rec.get('completion_id') == 'msg_wm_002', f'completion_id mismatch: {rec}'
 assert rec.get('task_type') == 'generation', f'task_type mismatch: {rec}'
 " 2>/dev/null; then
-    pass "marker includes correct completion_id when session has an assistant completion"
+    pass "marker's completion_id is the responseId of the latest of two completions (msg_wm_002)"
   else
-    fail "marker missing or wrong completion_id (line: ${marker_line_c})"
+    fail "marker missing or wrong completion_id (line: ${marker_line_4})"
   fi
 else
-  fail "no marker file written for session-with-completion test"
+  fail "no marker file written for two-completions session test"
 fi
 
 # ---------------------------------------------------------------------------
-# Test 5: Session with no assistant completion — marker omits completion_id
-#
-# When there is no assistant completion yet (e.g., the agent is still in the
-# first turn), write-marker.sh must not emit an empty string for completion_id.
-# The field must be absent entirely so report.sh applies Phase D fallback.
+# Test 5 (behavior): a cron session newer than a chat session — the marker
+# files under the chat (non-cron) session, never the cron session.
 # ---------------------------------------------------------------------------
-SID_NO_COMP="eeff2233-0003-0003-0003-000000000003"
-SESSION_NO_COMP="${TMP_SESSIONS}/${SID_NO_COMP}.jsonl"
+CHAT_SID5="aa000000-0005-0005-0005-000000000005"
+CRON_SID5="bb000000-0005-0005-0005-000000000006"
+mk_store "${DB}"
+mk_session "${DB}" "${CHAT_SID5}" "agent:main:chat" "" 100
+mk_session "${DB}" "${CRON_SID5}" "agent:main:cron:x" "cron" 999
 
-# Session file with only a session header and a user message (no assistant reply yet).
-# Newer mtime than SESSION_WITH_COMP so write-marker.sh would pick it IF it were
-# the one with most-recent assistant completion — but it has none, so mtime tie-
-# breaking applies among files with no completion. To force selection of this
-# session, we delete the older sessions and leave only this one.
-rm -f "${FAKE_SESSION}" "${SESSION_WITH_COMP}"
-# Also remove any earlier marker for WITH_COMP session to avoid cross-contamination.
-rm -f "${MARKER_FILE_C}"
+MARKER_FILE_CHAT5="${TMP_MARKERS}/${CHAT_SID5}.jsonl"
+MARKER_FILE_CRON5="${TMP_MARKERS}/${CRON_SID5}.jsonl"
+rm -f "${MARKER_FILE_CHAT5}" "${MARKER_FILE_CRON5}"
 
-printf '%s\n' \
-  '{"type":"session","id":"eeff2233-0003-0003-0003-000000000003","timestamp":"2026-06-02T00:00:00.000Z"}' \
-  '{"type":"message","id":"user-only-001","parentId":"","timestamp":"2026-06-02T09:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"task"}]}}' \
-  > "${SESSION_NO_COMP}"
-touch "${SESSION_NO_COMP}"
+run_marker "research" >/dev/null 2>&1
 
-MARKER_FILE_NC="${TMP_MARKERS}/${SID_NO_COMP}.jsonl"
-rm -f "${MARKER_FILE_NC}"
-
-run_marker "research" 2>&1 >/dev/null
-
-if [[ -f "${MARKER_FILE_NC}" ]]; then
-  marker_line_nc=$(head -1 "${MARKER_FILE_NC}")
-  if echo "${marker_line_nc}" | python3 -c "
-import json, sys
-rec = json.loads(sys.stdin.read().strip())
-assert 'completion_id' not in rec, f'completion_id should be absent: {rec}'
-assert rec.get('task_type') == 'research', f'task_type mismatch: {rec}'
-" 2>/dev/null; then
-    pass "marker omits completion_id when session has no assistant completion"
-  else
-    fail "marker should not have completion_id field (line: ${marker_line_nc})"
-  fi
+if [[ -f "${MARKER_FILE_CHAT5}" && ! -f "${MARKER_FILE_CRON5}" ]]; then
+  pass "marker files under the chat session, never the newer cron session"
 else
-  fail "no marker file written for session-without-completion test"
+  fail "expected marker under ${CHAT_SID5} only (chat=$([ -f "${MARKER_FILE_CHAT5}" ] && echo yes || echo no), cron=$([ -f "${MARKER_FILE_CRON5}" ] && echo yes || echo no))"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 6 (behavior): no non-cron session anywhere in the store — the
+# pseudo-id fallback still fires and the marker is still written.
+# ---------------------------------------------------------------------------
+CRON_ONLY_SID6="cc000000-0006-0006-0006-000000000007"
+mk_store "${DB}"
+mk_session "${DB}" "${CRON_ONLY_SID6}" "agent:main:cron:y" "cron" 100
+
+# Clear any previously-written pseudo-* markers from earlier runs.
+rm -f "${TMP_MARKERS}"/pseudo-*.jsonl
+
+output6=$(run_marker "research" 2>&1)
+exit6=$?
+
+if [[ "${exit6}" -eq 0 ]] && echo "${output6}" | grep -q "marker written:"; then
+  pass "pseudo-id fallback still writes a marker when no non-cron session exists"
+else
+  fail "pseudo-id fallback did not write a marker (exit=${exit6}, output: ${output6})"
+fi
+
+pseudo_files=("${TMP_MARKERS}"/pseudo-*.jsonl)
+if [[ -e "${pseudo_files[0]}" ]]; then
+  pass "marker filed under a pseudo-<timestamp> id, not the cron session"
+else
+  fail "no pseudo-*.jsonl marker file found"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 7 (behavior): unknown task-type is still rejected even when store
+# resolution would otherwise succeed — no marker escapes under any session.
+# ---------------------------------------------------------------------------
+SID7="dd000000-0007-0007-0007-000000000008"
+mk_store "${DB}"
+mk_session "${DB}" "${SID7}" "agent:main:main" "" 100
+MARKER_FILE_7="${TMP_MARKERS}/${SID7}.jsonl"
+rm -f "${MARKER_FILE_7}"
+
+bad_exit7=0
+run_marker "another_bogus_label" >/dev/null 2>&1 && bad_exit7=$? || bad_exit7=$?
+
+if [[ "${bad_exit7}" -ne 0 && ! -f "${MARKER_FILE_7}" ]]; then
+  pass "unknown task_type rejected — no marker written under the resolved session"
+else
+  fail "unknown task_type should reject with no marker (exit=${bad_exit7}, marker exists: $([ -f "${MARKER_FILE_7}" ] && echo yes || echo no))"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 8 (behavior): path-traversal guard rejects a resolved id that does not
+# match the permitted id/pseudo-id shape (T-19-19). Simulates a compromised
+# store row rather than trusting store_current_session_id's output blindly.
+# ---------------------------------------------------------------------------
+mk_store "${DB}"
+mk_session "${DB}" "../../etc/passwd" "agent:main:evil" "" 100
+
+output8=$(run_marker "research" 2>&1)
+exit8=$?
+
+if [[ "${exit8}" -ne 0 ]] && echo "${output8}" | grep -qi "unsafe sid"; then
+  pass "path-traversal guard rejects an unsafe resolved session id"
+else
+  fail "path-traversal guard did not reject unsafe sid (exit=${exit8}, output: ${output8})"
+fi
+
+if [[ ! -e "${TMP_MARKERS}/../../etc/passwd.jsonl" ]] && ! find "${TMP_MARKERS}/.." -name "passwd.jsonl" 2>/dev/null | grep -q .; then
+  pass "no marker file written for the unsafe resolved id"
+else
+  fail "a marker file was written despite the unsafe resolved id"
 fi
 
 # ---------------------------------------------------------------------------

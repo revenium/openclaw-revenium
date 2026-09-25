@@ -3,11 +3,13 @@
 # write-marker.sh — Validate task_type and append an ISO8601 marker entry.
 #
 # Called by SKILL.md TASK CLASSIFICATION section. Validates <task_type> against
-# the taxonomy allowlist, resolves the current session id (newest non-cron
-# session file), and appends {"ts":"<ISO8601Z>","task_type":"<label>","completion_id":"<id>"}
-# under fcntl.LOCK_EX + O_APPEND. completion_id is the .id of the most recent
-# assistant completion in the session; omitted if not resolvable (so report.sh
-# falls back to Approach D timestamp correlation).
+# the taxonomy allowlist, resolves the current session id via
+# scripts/session-store.sh's SQLite-backed store_current_session_id (D-10), and
+# appends {"ts":"<ISO8601Z>","task_type":"<label>","completion_id":"<id>"}
+# under fcntl.LOCK_EX + O_APPEND. completion_id is the responseId (D-05) of the
+# most recent usage-bearing assistant completion in the session, resolved via
+# store_last_completion_id; omitted if not resolvable (so report.sh falls back
+# to Approach D timestamp correlation).
 #
 # Usage:
 #   bash ~/.openclaw/skills/revenium/scripts/write-marker.sh <task_type>
@@ -24,6 +26,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/common.sh"
+. "${SCRIPT_DIR}/session-store.sh"
 
 if [[ $# -lt 1 || -z "${1:-}" ]]; then
   warn "write-marker.sh: usage: write-marker.sh <task_type>"
@@ -37,11 +40,25 @@ TASK_TYPE_LOG="${TASK_TYPE_ARG:0:64}"
 
 info "write-marker: writing marker for task_type='${TASK_TYPE_LOG}'"
 
+# --- D-10: resolve the current session id (and its last completion id) from
+# the SQLite store, in the enclosing bash — never inside the Python heredoc,
+# which cannot source bash. Both store_* functions already fail open (they
+# emit an empty string and return 0 on any unresolvable case), so a plain
+# command substitution is the project's fail-open idiom here: on failure the
+# variable is simply empty, never aborting this script.
+RESOLVED_SESSION_ID=$(store_current_session_id 2>/dev/null || true)
+RESOLVED_COMPLETION_ID=""
+if [[ -n "${RESOLVED_SESSION_ID}" ]]; then
+  RESOLVED_COMPLETION_ID=$(store_last_completion_id "${RESOLVED_SESSION_ID}" 2>/dev/null || true)
+fi
+
 TASK_TYPE="${TASK_TYPE_ARG}" \
 TAXONOMY_FILE="${TAXONOMY_FILE}" \
 MARKERS_DIR="${MARKERS_DIR}" \
 SESSIONS_DIR="${SESSIONS_DIR}" \
 OPENCLAW_HOME="${OPENCLAW_HOME}" \
+RESOLVED_SESSION_ID="${RESOLVED_SESSION_ID}" \
+RESOLVED_COMPLETION_ID="${RESOLVED_COMPLETION_ID}" \
 python3 - <<'PY'
 import json, os, time, fcntl, re, sys
 
@@ -51,6 +68,8 @@ tax_file    = os.environ['TAXONOMY_FILE']
 markers_dir = os.environ['MARKERS_DIR']
 sessions_dir = os.environ['SESSIONS_DIR']
 openclaw_home = os.environ.get('OPENCLAW_HOME', '')
+resolved_session_id = os.environ.get('RESOLVED_SESSION_ID', '')
+resolved_completion_id = os.environ.get('RESOLVED_COMPLETION_ID', '')
 
 # --- Taxonomy allowlist validation (ASVS V5 / T-04-04) ---
 try:
@@ -63,108 +82,31 @@ except Exception as exc:
 if tt not in labels:
     raise SystemExit(f"unknown task_type: {tt}")
 
-# --- Resolve current session id: newest non-cron *.jsonl in SESSIONS_DIR ---
-# Pitfall 5: exclude cron sessions (keyed agent:main:cron:* in sessions.json)
-cron_sids = set()
-sessions_json = os.path.join(sessions_dir, 'sessions.json')
-if os.path.exists(sessions_json):
-    try:
-        with open(sessions_json, encoding='utf-8') as fh:
-            smap = json.load(fh)
-        if isinstance(smap, dict):
-            for key, val in smap.items():
-                if key.startswith('agent:main:cron:'):
-                    # val may be the sid string or a dict with a sid field
-                    if isinstance(val, str):
-                        cron_sids.add(val.split('/')[-1] if '/' in val else val)
-                    elif isinstance(val, dict):
-                        sid_val = val.get('id') or val.get('sessionId') or ''
-                        if sid_val:
-                            cron_sids.add(sid_val)
-    except Exception:
-        pass  # fail-open: if sessions.json unreadable, don't exclude anything
-
-# List all *.jsonl files in sessions_dir, excluding cron sessions
-try:
-    all_files = [f for f in os.listdir(sessions_dir) if f.endswith('.jsonl')]
-except OSError:
-    all_files = []
-
-# Remove cron-session files
-non_cron = [f for f in all_files if f[:-len('.jsonl')] not in cron_sids]
-
-
-# WR-03: raw mtime is a fragile signal — any concurrent/subagent session that
-# touched its JSONL more recently steals attribution, and report.sh correlates
-# markers strictly within the same session id, so a misfiled marker is silently
-# lost to `unclassified`. Prefer the non-cron session that most recently
-# appended an assistant *completion* (the conversation this marker describes);
-# fall back to non-cron mtime. Never fall back to cron sessions.
+# --- Resolve current session id (D-10) ---
+# The bash-side scripts/session-store.sh :: store_current_session_id already
+# picked the newest non-cron session across the SQLite store (ORDER BY
+# session_nodes.updated_at DESC, tie-broken by session_key). This supersedes
+# the old "newest non-cron *.jsonl in SESSIONS_DIR" heuristic: session_nodes
+# maintains updated_at on every append, a strictly better signal than file
+# mtime, which a concurrent/subagent session could steal (WR-03) — and
+# created_via is a schema-enforced enum rather than a key-prefix guess parsed
+# out of sessions.json. The resolved value crossed from bash into this
+# heredoc through the environment (never interpolated into the heredoc body).
 #
-# Also capture the .id of the most recent assistant completion so report.sh can
-# correlate by exact id match (Approach A) before falling back to timestamp
-# ordering (Approach D). The id is the top-level .id field on the JSONL record,
-# NOT the nested message id.
-def last_completion_info(fname):
-    """Return (ts, completion_id) of the last assistant-message line, or (None, None).
-    Reads only the tail to stay cheap on large session logs."""
-    path = os.path.join(sessions_dir, fname)
-    try:
-        with open(path, 'rb') as fh:
-            fh.seek(0, os.SEEK_END)
-            size = fh.tell()
-            # Read up to the last 64 KiB; enough for the final few lines.
-            window = min(size, 65536)
-            fh.seek(size - window)
-            chunk = fh.read().decode('utf-8', 'replace')
-    except OSError:
-        return None, None
-    best_ts = None
-    best_id = None
-    for line in chunk.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            rec = json.loads(line)
-        except Exception:
-            continue
-        if not isinstance(rec, dict):
-            continue
-        msg = rec.get('message')
-        if rec.get('type') == 'message' and isinstance(msg, dict) and msg.get('role') == 'assistant':
-            ts = rec.get('timestamp') or ''
-            if ts and (best_ts is None or ts > best_ts):
-                best_ts = ts
-                # .id at the top-level record is the stable completion identifier
-                best_id = rec.get('id') or None
-    return best_ts, best_id
-
-# Keep backward-compatible helper for session selection (uses ts only)
-def last_completion_ts(fname):
-    ts, _ = last_completion_info(fname)
-    return ts
-
-sid = None
-completion_id = None
-if non_cron:
-    # First choice: session with the most recent assistant completion.
-    annotated = [(f, last_completion_info(f)) for f in non_cron]
-    with_completion = [(f, ts, cid) for f, (ts, cid) in annotated if ts is not None]
-    if with_completion:
-        newest_entry = max(with_completion, key=lambda t: t[1])
-        newest = newest_entry[0]
-        completion_id = newest_entry[2]  # may be None if .id absent on that record
-    else:
-        # No completions yet in any non-cron session — fall back to mtime,
-        # still restricted to non-cron files.
-        newest = max(non_cron, key=lambda f: os.path.getmtime(os.path.join(sessions_dir, f)))
-        completion_id = None
-    sid = newest[:-len('.jsonl')]
+# Identifier change (D-05): the marker's completion identifier used to be the
+# transcript record's top-level .id; it is now the responseId, resolved via
+# store_last_completion_id, because report.sh's Phase A exact-match
+# correlation compares the marker's value against the transaction id, which
+# IS the responseId. If these two values ever drift apart, nothing errors —
+# the correlation silently falls through to the Phase D timestamp path and
+# produces plausible but wrong labels.
+if resolved_session_id:
+    sid = resolved_session_id
+    completion_id = resolved_completion_id or None
 else:
-    # No non-cron session files at all — use a pseudo sid. We deliberately do
-    # NOT fall back to cron sessions: filing a marker under a cron session id
-    # guarantees it is never correlated to a real user turn.
+    # No non-cron session found anywhere in the store — use a pseudo sid. We
+    # deliberately do NOT fall back to cron sessions: filing a marker under a
+    # cron session id guarantees it is never correlated to a real user turn.
     sid = f"pseudo-{int(time.time())}"
     completion_id = None
 
