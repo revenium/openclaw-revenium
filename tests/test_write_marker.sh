@@ -309,6 +309,118 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 9 (behavior, WR-03/19-10): unreadable-versus-empty invariant at the
+# marker-writing call site. write-marker.sh sources common.sh, so `warn`
+# appends to LOG_FILE (${TMP_STATE}/revenium-metering.log) and only mirrors
+# to stderr on a TTY — this non-TTY suite must assert against the log file.
+# ---------------------------------------------------------------------------
+LOG_FILE_TEST="${TMP_STATE}/revenium-metering.log"
+
+# --- UNREADABLE case A: store file exists but is not a valid SQLite database ---
+mk_store "${DB}"
+printf 'not a sqlite database\n' > "${DB}"
+rm -f "${LOG_FILE_TEST}"
+rm -f "${TMP_MARKERS}"/pseudo-*.jsonl
+
+output9a=$(run_marker "research" 2>&1)
+exit9a=$?
+
+if [[ "${exit9a}" -eq 0 ]] && echo "${output9a}" | grep -q "marker written:"; then
+  pass "UNREADABLE (corrupt file): exits 0 and writes a marker"
+else
+  fail "UNREADABLE (corrupt file): expected exit 0 + marker written (exit=${exit9a}, output: ${output9a})"
+fi
+
+pseudo_files_9a=("${TMP_MARKERS}"/pseudo-*.jsonl)
+if [[ -e "${pseudo_files_9a[0]}" ]]; then
+  pass "UNREADABLE (corrupt file): marker filed under a pseudo-<timestamp> id"
+else
+  fail "UNREADABLE (corrupt file): no pseudo-*.jsonl marker file found"
+fi
+
+warn_lines_9a=0
+[[ -f "${LOG_FILE_TEST}" ]] && warn_lines_9a=$(grep -c "UNREADABLE" "${LOG_FILE_TEST}" || true)
+if [[ "${warn_lines_9a}" -eq 1 ]]; then
+  pass "UNREADABLE (corrupt file): exactly one log line names the unreadable state"
+else
+  fail "UNREADABLE (corrupt file): expected exactly 1 log line naming UNREADABLE, got ${warn_lines_9a}"
+fi
+
+# --- UNREADABLE case B: store file absent entirely (different store_probe branch) ---
+mk_store "${DB}"
+rm -f "${DB}"
+rm -f "${LOG_FILE_TEST}"
+rm -f "${TMP_MARKERS}"/pseudo-*.jsonl
+
+output9b=$(run_marker "research" 2>&1)
+exit9b=$?
+
+if [[ "${exit9b}" -eq 0 ]] && echo "${output9b}" | grep -q "marker written:"; then
+  pass "UNREADABLE (absent file): exits 0 and writes a marker"
+else
+  fail "UNREADABLE (absent file): expected exit 0 + marker written (exit=${exit9b}, output: ${output9b})"
+fi
+
+warn_lines_9b=0
+[[ -f "${LOG_FILE_TEST}" ]] && warn_lines_9b=$(grep -c "UNREADABLE" "${LOG_FILE_TEST}" || true)
+if [[ "${warn_lines_9b}" -eq 1 ]]; then
+  pass "UNREADABLE (absent file): exactly one log line names the unreadable state"
+else
+  fail "UNREADABLE (absent file): expected exactly 1 log line naming UNREADABLE, got ${warn_lines_9b}"
+fi
+
+# --- EMPTY case: cron-only store (Test 6's fixture shape) — zero warn lines,
+# keeping the new signal meaningful on a legitimately empty/fresh host.
+# ---------------------------------------------------------------------------
+CRON_ONLY_SID9="cc000000-0009-0009-0009-000000000009"
+mk_store "${DB}"
+mk_session "${DB}" "${CRON_ONLY_SID9}" "agent:main:cron:z" "cron" 100
+rm -f "${LOG_FILE_TEST}"
+rm -f "${TMP_MARKERS}"/pseudo-*.jsonl
+
+output9c=$(run_marker "research" 2>&1)
+exit9c=$?
+
+if [[ "${exit9c}" -eq 0 ]] && echo "${output9c}" | grep -q "marker written:"; then
+  pass "EMPTY (cron-only store): exits 0 and writes a pseudo-id marker"
+else
+  fail "EMPTY (cron-only store): expected exit 0 + marker written (exit=${exit9c}, output: ${output9c})"
+fi
+
+warn_lines_9c=0
+[[ -f "${LOG_FILE_TEST}" ]] && warn_lines_9c=$(grep -c "UNREADABLE" "${LOG_FILE_TEST}" || true)
+if [[ "${warn_lines_9c}" -eq 0 ]]; then
+  pass "EMPTY (cron-only store): zero log lines name the unreadable state"
+else
+  fail "EMPTY (cron-only store): expected zero UNREADABLE log lines, got ${warn_lines_9c}"
+fi
+
+# --- Healthy case: a populated store — happy path untouched, zero warn lines ---
+SID9D="ee000000-0009-0009-0009-00000000000a"
+mk_store "${DB}"
+mk_session "${DB}" "${SID9D}" "agent:main:main9d" "" 100
+rm -f "${LOG_FILE_TEST}"
+MARKER_FILE_9D="${TMP_MARKERS}/${SID9D}.jsonl"
+rm -f "${MARKER_FILE_9D}"
+
+output9d=$(run_marker "research" 2>&1)
+exit9d=$?
+
+if [[ "${exit9d}" -eq 0 && -f "${MARKER_FILE_9D}" ]]; then
+  pass "Healthy store: marker still files under the real session id"
+else
+  fail "Healthy store: expected marker under ${SID9D} (exit=${exit9d}, exists=$([ -f "${MARKER_FILE_9D}" ] && echo yes || echo no))"
+fi
+
+warn_lines_9d=0
+[[ -f "${LOG_FILE_TEST}" ]] && warn_lines_9d=$(grep -c "UNREADABLE" "${LOG_FILE_TEST}" || true)
+if [[ "${warn_lines_9d}" -eq 0 ]]; then
+  pass "Healthy store: zero log lines name the unreadable state — happy path untouched"
+else
+  fail "Healthy store: expected zero UNREADABLE log lines, got ${warn_lines_9d}"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

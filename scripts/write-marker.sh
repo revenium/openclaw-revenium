@@ -46,10 +46,22 @@ info "write-marker: writing marker for task_type='${TASK_TYPE_LOG}'"
 # emit an empty string and return 0 on any unresolvable case), so a plain
 # command substitution is the project's fail-open idiom here: on failure the
 # variable is simply empty, never aborting this script.
+#
+# WR-03: an empty RESOLVED_SESSION_ID is ambiguous on its own — it means
+# either "the store legitimately has no non-cron session yet" (a fresh host)
+# or "the store could not be read at all" (permission denied, corrupt file,
+# locked past busy_timeout). Both degrade to the same pseudo-<epoch> fallback
+# below with no visible difference. Qualifying the empty answer against
+# store_probe — ONLY on this empty-answer path, so the happy path costs
+# nothing — distinguishes the two and gives an operator debugging repeated
+# pseudo-id attribution a log line pointing at the real cause. This must
+# never abort: store_warn_if_unreadable always returns 0.
 RESOLVED_SESSION_ID=$(store_current_session_id 2>/dev/null || true)
 RESOLVED_COMPLETION_ID=""
 if [[ -n "${RESOLVED_SESSION_ID}" ]]; then
   RESOLVED_COMPLETION_ID=$(store_last_completion_id "${RESOLVED_SESSION_ID}" 2>/dev/null || true)
+else
+  store_warn_if_unreadable "write-marker" || true
 fi
 
 TASK_TYPE="${TASK_TYPE_ARG}" \
