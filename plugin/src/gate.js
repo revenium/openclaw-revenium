@@ -9,8 +9,8 @@
  * plugin/src/index.ts imports this module and registers the handlers.
  */
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, rmSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Run-state persistence (B-05 / NCENF-02)
@@ -254,7 +254,7 @@ export function handleBeforeToolCall(runId, toolName, params, opts = {}) {
 // an openclaw:core:exec invocation.
 //
 // Schema confirmed live (15-B05-SCHEMA-PROBE.md, session 524a4a76,
-// host 34.224.27.67, 2026-06-10):
+// a live test host, 2026-06-10):
 //   event.messages[N].message.role === "assistant"
 //   event.messages[N].message.content[M].type === "toolCall"
 //   event.messages[N].message.content[M].name === "tool_search_code"
@@ -533,4 +533,224 @@ export function safeAgentEnd(runId, impl = handleAgentEnd) {
   try {
     impl(runId);
   } catch { /* fail-open */ }
+}
+
+// ---------------------------------------------------------------------------
+// Subagent parentage sidecar (PLUG-04 / READ-03 D-08).
+//
+// Neither plugin/ nor plugin-nemoclaw/ registers subagent_spawned or
+// subagent_ended today, and OpenClaw's plugin SDK offers no other way to
+// observe session parentage on a 2.0 host (the SQL parentage columns are
+// present in schema but unconfirmed to populate — this is the primary path,
+// SQL is the fallback per D-08). Both handlers append one JSON line per
+// event to a durable sidecar file that scripts/get-root-session-id.py (plan
+// 19-05) reads to resolve a subagent's root session.
+//
+// Sidecar record schema (pinned here, consumed verbatim by plan 19-05):
+//   spawn record: { event: "spawned", childSessionKey, parentSessionKey, runId, capturedAt }
+//   end record:   { event: "ended", childSessionKey, parentSessionKey, runId, outcome, capturedAt }
+// One JSON object per line, newline-terminated, UTF-8. Unknown keys are
+// ignored by readers; a spawn record missing parentSessionKey is unusable
+// and is not written at all (a half-edge is worse than no edge).
+//
+// Path lives under the skill's state directory (${OPENCLAW_HOME}/skills/revenium/),
+// NOT the plugin's run-state directory, because the consumer
+// (scripts/get-root-session-id.py) resolves its paths from the skill's
+// STATE_DIR, mirroring resolveRunStateDir's env-override discovery exactly.
+// ---------------------------------------------------------------------------
+
+/** @type {string|null} Injectable sidecar path for tests (null = use env-derived default). */
+let _sidecarPathOverride = null;
+
+/**
+ * Set the sidecar file path (used by tests to inject a tmp file).
+ * Pass null to revert to the default env-derived path.
+ *
+ * @param {string|null} path
+ */
+export function setSidecarPath(path) {
+  _sidecarPathOverride = path;
+}
+
+/**
+ * Resolve the sidecar file path.
+ * Mirrors resolveRunStateDir's OPENCLAW_HOME discovery, but rooted at the
+ * skill's state directory (skills/revenium/), not the plugin's run-state dir.
+ *
+ * @returns {string}
+ */
+export function resolveSidecarPath() {
+  if (_sidecarPathOverride !== null) return _sidecarPathOverride;
+  const ocHome = process.env.OPENCLAW_HOME || (process.env.HOME + "/.openclaw");
+  return join(ocHome, "skills", "revenium", "subagent-edges.jsonl");
+}
+
+/**
+ * Append one edge record to the sidecar.
+ *
+ * One appendFileSync call per edge is the concurrency guarantee (PLUG-04):
+ * two subagents spawning at the same moment each issue a single append-mode
+ * write of a short line, so neither can observe or produce a partial line.
+ *
+ * Fail-open: any error results in nothing being written, and this function
+ * never throws — mirroring persistRunState's contract.
+ *
+ * @param {{event: string, childSessionKey?: string, parentSessionKey?: string}} record
+ */
+export function appendSidecarEdge(record) {
+  try {
+    const filePath = resolveSidecarPath();
+    const dir = dirname(filePath);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    appendFileSync(filePath, JSON.stringify(record) + "\n", { encoding: "utf8", mode: 0o600 });
+  } catch {
+    /* fail-open: a sidecar write failure must never change in-process behavior or throw */
+  }
+}
+
+/**
+ * Handle a subagent_spawned event: append one "spawned" edge recording the
+ * direct child-to-parent session-key link.
+ *
+ * childSessionKey is read from the event, falling back to ctx.childSessionKey.
+ * parentSessionKey is read from ctx.requesterSessionKey (the direct parent
+ * link the hook payload carries at spawn time), falling back to
+ * event.requester. Returns without writing when either key is missing or is
+ * not a non-empty string — a half-edge is worse than no edge because it
+ * looks like data to the reader.
+ *
+ * @param {{childSessionKey?: string, requester?: string, runId?: string}|undefined} event
+ * @param {{requesterSessionKey?: string, childSessionKey?: string, runId?: string}|undefined} ctx
+ */
+export function handleSubagentSpawned(event, ctx) {
+  const childSessionKey = event?.childSessionKey ?? ctx?.childSessionKey;
+  const parentSessionKey = ctx?.requesterSessionKey ?? event?.requester;
+  if (typeof childSessionKey !== "string" || childSessionKey.length === 0) return;
+  if (typeof parentSessionKey !== "string" || parentSessionKey.length === 0) return;
+  const runId = ctx?.runId ?? event?.runId;
+  appendSidecarEdge({
+    event: "spawned",
+    childSessionKey,
+    parentSessionKey,
+    runId,
+    capturedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Handle a subagent_ended event: append one "ended" record for the child
+ * session, so a resolver can tell a still-running child from a completed one
+ * without re-querying the store.
+ *
+ * The child key comes from event.targetSessionKey (NOT event.childSessionKey
+ * — confirmed verbatim in the captured payload; the event key differs from
+ * the spawn side), falling back to ctx.childSessionKey. parentSessionKey is
+ * NOT required here: an end record is useful for lifecycle even without it,
+ * and readSidecarEdges ignores end records when building the parent map.
+ *
+ * @param {{targetSessionKey?: string, outcome?: string, runId?: string}|undefined} event
+ * @param {{requesterSessionKey?: string, childSessionKey?: string, runId?: string}|undefined} ctx
+ */
+export function handleSubagentEnded(event, ctx) {
+  const childSessionKey = event?.targetSessionKey ?? ctx?.childSessionKey;
+  if (typeof childSessionKey !== "string" || childSessionKey.length === 0) return;
+  const parentSessionKey = ctx?.requesterSessionKey;
+  const runId = ctx?.runId ?? event?.runId;
+  const outcome = event?.outcome ?? "";
+  appendSidecarEdge({
+    event: "ended",
+    childSessionKey,
+    parentSessionKey,
+    runId,
+    outcome,
+    capturedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Read all sidecar edges and build a childSessionKey -> parentSessionKey map.
+ *
+ * Reads the rotated `.1` file first, then the live file, so later edges win
+ * (last write wins on duplicate childSessionKey — idempotency). Each file is
+ * split on newlines; blank lines are skipped, and any line that fails to
+ * JSON.parse is skipped (a concurrent append can leave the final line
+ * mid-write for a reader). Only records whose `event` is "spawned" and which
+ * carry both keys populate the map — end records never do.
+ *
+ * This is the single authoritative JavaScript reader for the sidecar schema,
+ * which plan 19-05's Python reader is written to match. Returns an empty
+ * object on any error (fail-open).
+ *
+ * @returns {Record<string, string>}
+ */
+export function readSidecarEdges() {
+  const result = {};
+  try {
+    const filePath = resolveSidecarPath();
+    const candidates = [filePath + ".1", filePath];
+    for (const p of candidates) {
+      let content;
+      try {
+        content = readFileSync(p, "utf8");
+      } catch {
+        continue; // file may not exist — skip
+      }
+      const lines = content.split("\n");
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let rec;
+        try {
+          rec = JSON.parse(line);
+        } catch {
+          continue; // skip unparseable/partial lines
+        }
+        if (rec && rec.event === "spawned" && rec.childSessionKey && rec.parentSessionKey) {
+          result[rec.childSessionKey] = rec.parentSessionKey;
+        }
+      }
+    }
+  } catch {
+    return {};
+  }
+  return result;
+}
+
+/**
+ * Fail-open wrapper for subagent_spawned (observation is best-effort).
+ *
+ * @param {unknown} event
+ * @param {unknown} ctx
+ * @param {{ log?: (msg: string) => void }} [opts]
+ * @param {(event: unknown, ctx: unknown) => void} [impl]
+ */
+export function safeSubagentSpawned(event, ctx, opts = {}, impl = handleSubagentSpawned) {
+  try {
+    impl(event, ctx);
+  } catch (err) {
+    try {
+      if (opts && typeof opts.log === "function") {
+        opts.log(`[revenium-marker-gate] subagent_spawned error (fail-open): ${err}`);
+      }
+    } catch { /* logging must never break fail-open */ }
+  }
+}
+
+/**
+ * Fail-open wrapper for subagent_ended (observation is best-effort).
+ *
+ * @param {unknown} event
+ * @param {unknown} ctx
+ * @param {{ log?: (msg: string) => void }} [opts]
+ * @param {(event: unknown, ctx: unknown) => void} [impl]
+ */
+export function safeSubagentEnded(event, ctx, opts = {}, impl = handleSubagentEnded) {
+  try {
+    impl(event, ctx);
+  } catch (err) {
+    try {
+      if (opts && typeof opts.log === "function") {
+        opts.log(`[revenium-marker-gate] subagent_ended error (fail-open): ${err}`);
+      }
+    } catch { /* logging must never break fail-open */ }
+  }
 }
