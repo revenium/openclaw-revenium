@@ -36,6 +36,7 @@ import {
   setSidecarPath,
   resolveSidecarPath,
   readSidecarEdges,
+  SIDECAR_MAX_BYTES,
 } from "./gate.js";
 
 // Shared runIds for tests
@@ -927,5 +928,106 @@ describe("readSidecarEdges", () => {
   test("ignores ended records when building the parent map", () => {
     appendSidecarEdge({ event: "ended", childSessionKey: CHILD_SESSION_KEY, parentSessionKey: PARENT_SESSION_KEY, runId: SPAWN_RUN_ID, outcome: "ok", capturedAt: new Date().toISOString() });
     assert.deepStrictEqual(readSidecarEdges(), {}, "ended records never populate the resolver's parent map");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sidecar hardening — byte cap + rotation, session-key shape validation,
+// concurrency and idempotency proofs (Task 2, 19-03).
+// ---------------------------------------------------------------------------
+
+describe("sidecar hardening (bounds, shape validation, idempotency)", () => {
+  test("appending the same spawn edge twice leaves two lines on disk but readSidecarEdges resolves one unchanged entry", () => {
+    const rec = { event: "spawned", childSessionKey: CHILD_SESSION_KEY, parentSessionKey: PARENT_SESSION_KEY, runId: SPAWN_RUN_ID, capturedAt: new Date().toISOString() };
+    appendSidecarEdge(rec);
+    appendSidecarEdge(rec);
+    assert.strictEqual(readSidecarLines().length, 2, "two lines written to disk");
+    const edges = readSidecarEdges();
+    assert.strictEqual(Object.keys(edges).length, 1, "one resolved mapping entry");
+    assert.strictEqual(edges[CHILD_SESSION_KEY], PARENT_SESSION_KEY, "value is unchanged by the duplicate");
+  });
+
+  test("50 sequential handler invocations yield a file with 50 lines and zero parse failures", () => {
+    for (let i = 0; i < 50; i++) {
+      handleSubagentSpawned(
+        { childSessionKey: `agent:dev:subagent:concurrent-${i}` },
+        { requesterSessionKey: PARENT_SESSION_KEY }
+      );
+    }
+    const lines = readSidecarLines();
+    assert.strictEqual(lines.length, 50, "50 complete lines on disk");
+    for (const line of lines) {
+      assert.doesNotThrow(() => JSON.parse(line), "every line parses (no partial/interleaved line)");
+    }
+  });
+
+  test("live file pre-filled past SIDECAR_MAX_BYTES rotates to .1 on the next append, leaving one line live", () => {
+    const preRecord = JSON.stringify({
+      event: "spawned",
+      childSessionKey: "agent:dev:subagent:pre-rotation",
+      parentSessionKey: PARENT_SESSION_KEY,
+      runId: "pre-rot-run",
+      capturedAt: new Date().toISOString(),
+    }) + "\n";
+    const filler = "x".repeat(SIDECAR_MAX_BYTES); // pad the live file past the cap without writing real edges
+    writeFileSync(SIDECAR_TEST_PATH, preRecord + filler + "\n");
+
+    appendSidecarEdge({
+      event: "spawned",
+      childSessionKey: "agent:dev:subagent:post-rotation",
+      parentSessionKey: PARENT_SESSION_KEY,
+      runId: "post-rot-run",
+      capturedAt: new Date().toISOString(),
+    });
+
+    assert.ok(existsSync(SIDECAR_TEST_PATH + ".1"), "rotated .1 sibling exists");
+    const liveLines = readSidecarLines();
+    assert.strictEqual(liveLines.length, 1, "live file contains exactly the new edge");
+    assert.strictEqual(JSON.parse(liveLines[0]).childSessionKey, "agent:dev:subagent:post-rotation");
+  });
+
+  test("readSidecarEdges resolves edges from before AND after a rotation; a post-rotation rewrite overrides the pre-rotation value", () => {
+    const preRecord = JSON.stringify({
+      event: "spawned",
+      childSessionKey: "agent:dev:subagent:pre-rotation",
+      parentSessionKey: PARENT_SESSION_KEY,
+      runId: "pre-rot-run",
+      capturedAt: new Date().toISOString(),
+    }) + "\n";
+    const filler = "x".repeat(SIDECAR_MAX_BYTES);
+    writeFileSync(SIDECAR_TEST_PATH, preRecord + filler + "\n");
+
+    appendSidecarEdge({
+      event: "spawned",
+      childSessionKey: "agent:dev:subagent:post-rotation",
+      parentSessionKey: PARENT_SESSION_KEY,
+      runId: "post-rot-run",
+      capturedAt: new Date().toISOString(),
+    });
+
+    let edges = readSidecarEdges();
+    assert.strictEqual(edges["agent:dev:subagent:pre-rotation"], PARENT_SESSION_KEY, "pre-rotation edge still resolvable via .1");
+    assert.strictEqual(edges["agent:dev:subagent:post-rotation"], PARENT_SESSION_KEY, "post-rotation edge resolvable via live file");
+
+    // A rewrite landing in the (now small) live file must override the .1 value.
+    appendSidecarEdge({
+      event: "spawned",
+      childSessionKey: "agent:dev:subagent:pre-rotation",
+      parentSessionKey: "agent:dev:overridden",
+      runId: "rewrite-run",
+      capturedAt: new Date().toISOString(),
+    });
+    edges = readSidecarEdges();
+    assert.strictEqual(edges["agent:dev:subagent:pre-rotation"], "agent:dev:overridden", "live file write wins over the rotated .1 value");
+  });
+
+  test("a spawn payload whose childSessionKey is a path-traversal string writes nothing", () => {
+    handleSubagentSpawned({ childSessionKey: "../../etc/passwd" }, { requesterSessionKey: PARENT_SESSION_KEY });
+    assert.strictEqual(readSidecarLines().length, 0, "malformed/traversal-shaped key must be rejected (T-19-04)");
+  });
+
+  test("a spawn payload whose parentSessionKey is a path-traversal string writes nothing", () => {
+    handleSubagentSpawned({ childSessionKey: CHILD_SESSION_KEY }, { requesterSessionKey: "../../etc/passwd" });
+    assert.strictEqual(readSidecarLines().length, 0, "malformed/traversal-shaped parent key must be rejected (T-19-04)");
   });
 });
