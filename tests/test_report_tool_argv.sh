@@ -151,18 +151,48 @@ run_report() {
 }
 
 # ---------------------------------------------------------------------------
+# mk_user_event <db> <sid> <seq> <text> — a bare user-message event, matching
+# the shape report.sh's system_prompt/user_msgs_file jq filters expect
+# (top-level type=="message", .message.role=="user",
+# .message.content[].type=="text"). No convenience wrapper exists in
+# mk-session-store.sh for this shape yet (Task 1/3 only needed assistant
+# events); built inline via mk_event, same technique as GROUP TR-5's custom
+# toolResult event below.
+# ---------------------------------------------------------------------------
+mk_user_event() {
+  local db="$1" sid="$2" seq="$3" text="$4"
+  local doc
+  doc=$(SEQ="${seq}" TEXT="${text}" python3 - <<'PY'
+import json, os
+seq = os.environ['SEQ']
+print(json.dumps({
+    "type": "message",
+    "id": f"user-id-{seq}",
+    "parentId": "00000000",
+    "timestamp": "2026-01-01T10:01:00.000Z",
+    "message": {"role": "user", "content": [{"type": "text", "text": os.environ['TEXT']}]},
+}))
+PY
+)
+  mk_event "${db}" "${sid}" "${seq}" "${doc}"
+}
+
+# ---------------------------------------------------------------------------
 # build_canonical_fixture <db> <sid>
-#   One TOOL_CALL completion + one toolCall/toolResult pair (read,
-#   toolu_test001, 250ms) + one CHAT completion. Mirrors the pre-2.0
-#   FIXTURE_JSONL shape used by GROUPs T/I/X/P.
+#   One user message + one TOOL_CALL completion + one toolCall/toolResult
+#   pair (read, toolu_test001, 250ms) + one CHAT completion. Mirrors the
+#   pre-2.0 FIXTURE_JSONL shape used by GROUPs T/I/X/P — the user message
+#   exists so the Task 2 system-prompt behavior case has a first user
+#   message to capture.
 # ---------------------------------------------------------------------------
 build_canonical_fixture() {
   local db="$1" sid="$2"
   mk_store "${db}"
   mk_session "${db}" "${sid}" "agent:main:${sid}" "" 100
-  mk_assistant_event "${db}" "${sid}" 0 "resp-001-${sid}" "run-1" 150 "claude-sonnet-4-6" "2026-01-01T10:01:05.000Z" "toolUse"
-  mk_toolcall_pair "${db}" "${sid}" 1 "toolu_test001" "read" 250 "false"
-  mk_assistant_event "${db}" "${sid}" 3 "resp-002-${sid}" "run-1" 380 "claude-sonnet-4-6" "2026-01-01T10:01:06.000Z" "stop"
+  mk_user_event "${db}" "${sid}" 0 "Use the read tool"
+  mk_assistant_event "${db}" "${sid}" 1 "resp-001-${sid}" "run-1" 150 "claude-sonnet-4-6" "2026-01-01T10:01:05.000Z" "toolUse"
+  mk_toolcall_pair "${db}" "${sid}" 2 "toolu_test001" "read" 250 "false"
+  mk_assistant_event "${db}" "${sid}" 4 "resp-002-${sid}" "run-1" 380 "claude-sonnet-4-6" "2026-01-01T10:01:06.000Z" "stop"
 }
 
 # ===========================================================================
@@ -289,6 +319,17 @@ if [[ -z "${unexpected_optypes}" ]]; then
   pass "TOOLEV-03: no unexpected --operation-type values (completion path not contaminated by tool-event)"
 else
   fail "TOOLEV-03: unexpected --operation-type values found: ${unexpected_optypes} (RED)"
+fi
+
+# ---------------------------------------------------------------------------
+# Task 2 behavior: the completion path's system prompt is populated from the
+# session_events_tmp full-history seam (not empty, not offset-truncated) —
+# the fixture's first (and only) user message text must appear.
+# ---------------------------------------------------------------------------
+if argv_vals "--system-prompt" "${ARGV_FILE_T}" | grep -q "Use the read tool"; then
+  pass "Task 2: --system-prompt carries the fixture's first user-message text"
+else
+  fail "Task 2: --system-prompt did NOT carry the fixture's first user-message text"
 fi
 
 rm -f "${ARGV_FILE_T}"
