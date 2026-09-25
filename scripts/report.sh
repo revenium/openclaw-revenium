@@ -71,6 +71,19 @@ warn()  { log "WARN " "$@"; }
 error() { log "ERROR" "$@"; }
 
 # ---------------------------------------------------------------------------
+# session-store.sh — the single owner of every read of the OpenClaw 2.0
+# SQLite session store (D-01/D-02). SCRIPT_DIR-relative, NOT
+# ${SKILL_DIR}/scripts/-relative: the test harness never populates
+# ${SKILL_DIR}/scripts/, so a SKILL_DIR-relative source would silently no-op
+# under every test. info()/warn()/error() above are already defined, so
+# session-store.sh's diagnostics route through report.sh's own LOG_FILE
+# writer rather than its hermetic-sourcing fallback.
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./session-store.sh
+. "${SCRIPT_DIR}/session-store.sh"
+
+# ---------------------------------------------------------------------------
 # PATH — ensure revenium/jq are discoverable (cron and sandbox have minimal PATH)
 # ---------------------------------------------------------------------------
 BREW_PREFIX=""
@@ -448,9 +461,7 @@ post_to_revenium() {
 # Process a single session JSONL file
 # ---------------------------------------------------------------------------
 process_session() {
-  local session_file="$1"
-  local session_id
-  session_id=$(basename "${session_file}" .jsonl)
+  local session_id="$1"
 
   # Change 2 (TRACE-01/02): resolve root session id ONCE per session file.
   # Fail-open to own sid (D-05); belt-and-suspenders fallback via :-.
@@ -526,8 +537,24 @@ PY
   local markers_cache_file jobs_cache_file msg_meta_file="" user_msgs_file=""
   markers_cache_file=$(mktemp "${TMPDIR:-/tmp}/rv-markers.XXXXXX")
   jobs_cache_file=$(mktemp "${TMPDIR:-/tmp}/rv-jobs.XXXXXX")
+
+  # D-01 seam: session_file is now a tempfile of this session's raw
+  # transcript_events.event_json rows (store_session_events), NOT a path on
+  # disk. Every existing consumer below (system_prompt / msg_meta_file /
+  # user_msgs_file jq filters, the offset/total_lines gate, and the toolCall
+  # scan's SESSION_FILE env assignment) reads "${session_file}" unchanged —
+  # event_json preserves the byte-identical record shape the old JSONL lines
+  # carried (RESEARCH Pitfall 1), so nothing downstream needed to change.
+  # Task 3 replaces the total_lines/offset semantics with store_max_seq; this
+  # tempfile's line count is left as the interim high-water bound until then.
+  local session_file completions_tmp
+  session_file=$(mktemp "${TMPDIR:-/tmp}/rv-events.XXXXXX")
+  store_session_events "${session_id}" "-1" > "${session_file}"
+  completions_tmp=$(mktemp "${TMPDIR:-/tmp}/rv-completions.XXXXXX")
+
   _cleanup_session_tmp() {
-    rm -f "${markers_cache_file}" "${jobs_cache_file}" "${msg_meta_file}" "${user_msgs_file}"
+    rm -f "${markers_cache_file}" "${jobs_cache_file}" "${msg_meta_file}" "${user_msgs_file}" \
+          "${session_file}" "${completions_tmp}"
   }
   local marker_file="${MARKERS_DIR}/${session_id}.jsonl"
   if [[ -f "${marker_file}" ]]; then
@@ -732,6 +759,12 @@ PY
   # but the offset arithmetic itself must be correct.)
   total_lines=$(grep -c '' "${session_file}" 2>/dev/null || echo 0)
 
+  # D-01/D-04: fetch this tick's usage-bearing completions (deduped by
+  # responseId) into a tempfile, read via `while IFS=$'\x1f' read -r ...`
+  # below — the same \x1f-row-stream discipline the toolCall scan already
+  # uses (tab collapses empty fields; \x1f does not).
+  store_completions "${session_id}" "${offset}" > "${completions_tmp}"
+
   # Nothing new to process — replaces the old DONE: skip
   if [[ "${offset}" -ge "${total_lines}" ]]; then
     _cleanup_session_tmp
@@ -780,7 +813,7 @@ PY
   local reported_count=0
   local failed_count=0
 
-  while IFS= read -r line; do
+  while IFS=$'\x1f' read -r _rc_response_id _rc_run_id _rc_seq line; do
     # Only process assistant message lines with usage data
     if ! echo "${line}" | jq -e 'select(.type=="message") | .message | select(.role=="assistant") | .usage' &>/dev/null 2>&1; then
       continue
@@ -832,7 +865,10 @@ PY
               + ($u.cacheRead // $u.cache_read_input_tokens // 0)
               + ($u.cacheWrite // $u.cache_creation_input_tokens // 0)))))')
     timestamp=$(echo "${line}" | jq -r '.timestamp // empty' 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
-    tx_id=$(echo "${line}" | jq -r '.id // empty' 2>/dev/null || echo "${session_id}-$(date +%s%N)")
+    # D-05: transaction id is now the completion's responseId (store_completions'
+    # own dedup key), not the record's top-level .id. _rc_response_id comes
+    # from the \x1f-tuple read at this loop's top.
+    tx_id="${_rc_response_id}"
     stop_reason=$(map_stop_reason "$(echo "${line}" | jq -r '.message.stopReason // "stop"')")
 
     # Change 3 (METER-03 / NP-1 fix): two-phase task_type lookup.
@@ -1297,7 +1333,7 @@ PY
       fi
     fi
 
-  done < <(tail -n +$((offset + 1)) "${session_file}")
+  done < "${completions_tmp}"
 
   if [[ "${reported_count}" -gt 0 ]]; then
     info "Session ${session_id}: reported ${reported_count} events, ${failed_count} failures"
@@ -1621,21 +1657,31 @@ PY
 main() {
   info "=== Revenium Metering Reporter starting ==="
 
-  if [[ ! -d "${SESSIONS_DIR}" ]]; then
-    SESSIONS_DIR=$(find "${OPENCLAW_HOME}" -name "*.jsonl" -path "*/sessions/*" \
-      -exec dirname {} \; 2>/dev/null | sort -u | head -1 || true)
-    if [[ -z "${SESSIONS_DIR}" ]]; then
-      warn "No session files found. OpenClaw may not have run yet."
-      exit 0
-    fi
-    info "Found sessions at: ${SESSIONS_DIR}"
-  fi
+  # D-13/D-14 (READ-04): three-state store classification replaces the old
+  # "no SESSIONS_DIR -> warn + exit 0" fail-open collapse of EMPTY and
+  # UNREADABLE (the fail-open blackout this milestone exists to close).
+  # store_probe caches its result for the rest of this process.
+  store_probe
+  case "${STORE_STATE}" in
+    UNREADABLE)
+      error "Session store unreadable — metering skipped this tick. Paths tried: ${STORE_PATHS_TRIED//$'\n'/, }. ${STORE_PROBE_ERROR}"
+      return 1
+      ;;
+    EMPTY)
+      info "Session store is readable but holds zero non-cron sessions (fresh host) — nothing to meter this tick."
+      return 0
+      ;;
+    READABLE)
+      : # continue below
+      ;;
+  esac
 
   local total_files=0
-  while IFS= read -r -d '' session_file; do
+  while IFS=$'\x1f' read -r session_id _sl_session_key _sl_created_via _sl_updated_at; do
+    [[ -z "${session_id}" ]] && continue
     ((total_files++)) || true
-    process_session "${session_file}"
-  done < <(find "${SESSIONS_DIR}" -name "*.jsonl" -print0 2>/dev/null)
+    process_session "${session_id}"
+  done < <(store_list_sessions)
 
   # Account-level halt handler (Phase 8 / D-02): runs once per tick, after the
   # per-session loop. Non-fatal: any error is warn-logged; main() continues.

@@ -32,6 +32,14 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPORT_SH="${REPO_ROOT}/scripts/report.sh"
 STUB_SH="${SCRIPT_DIR}/stub-revenium.sh"
 
+# Phase 19 (D-01): report.sh's session discovery is now SQL-only (session-store.sh)
+# rather than a *.jsonl glob. This test's fixtures are still built as JSONL (kept
+# byte-identical to avoid rewriting ~20 fixture groups against mk_session/mk_event
+# individually); mk_mirror_jsonl_dir mirrors them into a synthetic SQLite store so
+# report.sh's new discovery path finds the same sessions/events as before.
+# shellcheck source=lib/mk-session-store.sh
+. "${SCRIPT_DIR}/lib/mk-session-store.sh"
+
 PASS=0
 FAIL=0
 
@@ -100,6 +108,8 @@ run_report() {
   local _argv_file="$2"
   shift 2
   local -a extra_env=("$@")
+  mk_mirror_jsonl_dir "${openclaw_home}/agents/main/agent/openclaw-agent.sqlite" \
+    "${openclaw_home}/agents/main/sessions"
   STUB_REVENIUM_ARGV_FILE="${_argv_file}" \
   OPENCLAW_HOME="${openclaw_home}" \
   HOME="${TMP_FAKE_HOME}" \
@@ -357,6 +367,7 @@ MARKER_B1="${TMP_HOME_B}/skills/revenium/markers/${SID_B1}.jsonl"
 printf '%s\n' '{"kind":"job","ts":"2026-02-02T10:03:00Z","sid":"'"${SID_B1}"'","agentic_job_id":"'"${JOB_ID_B1}"'","job_name":"Fail Open","job_type":"feature_development","status":"SUCCESS","completion_id":"comp-B1-001"}' > "${MARKER_B1}"
 
 # Run with STUB_REVENIUM_NO_JOBS=1 — probe fails → JOBS_CLI_CAPABLE=false
+mk_mirror_jsonl_dir "${TMP_HOME_B}/agents/main/agent/openclaw-agent.sqlite" "${TMP_HOME_B}/agents/main/sessions"
 STUB_REVENIUM_NO_JOBS=1 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_B}" \
   OPENCLAW_HOME="${TMP_HOME_B}" HOME="${TMP_FAKE_HOME}" \
   bash "${REPORT_SH}" 2>&1 || true
@@ -419,6 +430,7 @@ MARKER_C1="${TMP_HOME_C}/skills/revenium/markers/${SID_J1}.jsonl"
 printf '%s\n' '{"kind":"job","ts":"2026-02-01T10:03:00Z","sid":"'"${SID_J1}"'","agentic_job_id":"'"${JOB_ID_J1}"'","job_name":"'"${JOB_NAME_J1}"'","job_type":"'"${JOB_TYPE_J1}"'","status":"SUCCESS","completion_id":"comp-J1-001"}' > "${MARKER_C1}"
 
 # Run with 409 stub for J1
+mk_mirror_jsonl_dir "${TMP_HOME_C}/agents/main/agent/openclaw-agent.sqlite" "${TMP_HOME_C}/agents/main/sessions"
 STUB_REVENIUM_409_FOR="${JOB_ID_J1}" STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_C}" \
   OPENCLAW_HOME="${TMP_HOME_C}" HOME="${TMP_FAKE_HOME}" \
   bash "${REPORT_SH}" 2>&1 || true
@@ -463,6 +475,7 @@ printf '%s\n' '{"kind":"job","ts":"2026-02-03T10:03:00Z","sid":"'"${SID_D1}"'","
 
 # First run with STUB_REVENIUM_JOBS_FAIL=1 — jobs CLI fails, meter completion succeeds
 report_rc_d=0
+mk_mirror_jsonl_dir "${TMP_HOME_D}/agents/main/agent/openclaw-agent.sqlite" "${TMP_HOME_D}/agents/main/sessions"
 STUB_REVENIUM_JOBS_FAIL=1 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_D1}" \
   OPENCLAW_HOME="${TMP_HOME_D}" HOME="${TMP_FAKE_HOME}" \
   bash "${REPORT_SH}" 2>&1 || report_rc_d=$?
@@ -495,6 +508,7 @@ fi
 
 # (b) Second run — offset should be advanced, no re-metering of comp-D1-001
 ARGV_FILE_D2=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-d2.XXXXXX")
+mk_mirror_jsonl_dir "${TMP_HOME_D}/agents/main/agent/openclaw-agent.sqlite" "${TMP_HOME_D}/agents/main/sessions"
 STUB_REVENIUM_JOBS_FAIL=1 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_D2}" \
   OPENCLAW_HOME="${TMP_HOME_D}" HOME="${TMP_FAKE_HOME}" \
   bash "${REPORT_SH}" 2>&1 || true
@@ -704,8 +718,8 @@ rm -f "${ARGV_FILE_F}"
 #     - 0 ^outcome$ tokens (no job outcome)
 #     - completion IS reported (a TX: line exists in revenium-reported.ledger)
 # ===========================================================================
-ROOT_UUID_G="g0000000-aaaa-aaaa-aaaa-000000000001"
-CHILD_UUID_G="g0000000-cccc-cccc-cccc-000000000002"
+ROOT_UUID_G="a7000000-aaaa-aaaa-aaaa-000000000001"
+CHILD_UUID_G="a7000000-cccc-cccc-cccc-000000000002"
 
 TMP_HOME_G=$(make_openclaw_home)
 ARGV_FILE_G=$(mktemp "${TMPDIR:-/tmp}/test-rpt-jobs-argv-g.XXXXXX")
@@ -796,8 +810,8 @@ rm -f "${ARGV_FILE_G}"
 #     - child completion ships --agentic-job-id == root-job-5e6f (JROLL-01)
 #     - --agentic-job-id never resolves to sub-job-3c4d
 # ===========================================================================
-ROOT_UUID_H="h0000000-aaaa-aaaa-aaaa-000000000001"
-CHILD_UUID_H="h0000000-cccc-cccc-cccc-000000000002"
+ROOT_UUID_H="b7000000-aaaa-aaaa-aaaa-000000000001"
+CHILD_UUID_H="b7000000-cccc-cccc-cccc-000000000002"
 JOB_ID_ROOT_H="root-job-5e6f"
 JOB_NAME_ROOT_H="Root H Job"
 JOB_TYPE_ROOT_H="bug_fix"
@@ -1235,6 +1249,7 @@ write_halt_fixture "${TMP_HOME_M1}" "${HALTED_AT_M1}"
 # Run with STUB_REVENIUM_NO_JOBS=1 — probe fails → JOBS_CLI_CAPABLE=false
 # Capture exit code using GROUP D pattern
 report_rc_m1=0
+mk_mirror_jsonl_dir "${TMP_HOME_M1}/agents/main/agent/openclaw-agent.sqlite" "${TMP_HOME_M1}/agents/main/sessions"
 STUB_REVENIUM_NO_JOBS=1 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_M1}" \
   OPENCLAW_HOME="${TMP_HOME_M1}" HOME="${TMP_FAKE_HOME}" \
   bash "${REPORT_SH}" 2>&1 || report_rc_m1=$?
@@ -1287,6 +1302,7 @@ write_halt_fixture "${TMP_HOME_M2}" "${HALTED_AT_M2}"
 # Run with STUB_REVENIUM_HALT_JOBS_FAIL=1 — halt jobs calls fail, normal jobs pass.
 # Use GROUP D exit-code-capture pattern (NOT "|| true") so exit-0 assertion is reachable.
 report_rc_m2=0
+mk_mirror_jsonl_dir "${TMP_HOME_M2}/agents/main/agent/openclaw-agent.sqlite" "${TMP_HOME_M2}/agents/main/sessions"
 STUB_REVENIUM_HALT_JOBS_FAIL=1 STUB_REVENIUM_ARGV_FILE="${ARGV_FILE_M2}" \
   OPENCLAW_HOME="${TMP_HOME_M2}" HOME="${TMP_FAKE_HOME}" \
   bash "${REPORT_SH}" 2>&1 || report_rc_m2=$?
