@@ -243,26 +243,36 @@ _STORE_PROBE_ONE_REASON=""
 _STORE_PROBE_ONE_MISSING=""
 _store_probe_one() {
   local _sp1_db="$1"
-  local _sp1_info _sp1_missing="" _sp1_col _sp1_cnt
+  local _sp1_missing="" _sp1_col _sp1_cnt _sp1_rc _sp1_tmp
   _STORE_PROBE_ONE_REASON=""
   _STORE_PROBE_ONE_MISSING=""
+  # store_sql is invoked via STDOUT REDIRECTION here, never `$(...)` command
+  # substitution: a command-substitution subshell would run store_sql in a
+  # forked child, and the child's STORE_LAST_SQL_ERROR assignment would be
+  # lost when the subshell exits — silently leaving this function's own
+  # error reason empty on the exact failure classes it exists to report.
+  _sp1_tmp="$(mktemp "${TMPDIR:-/tmp}/store-probe-one-sql.XXXXXX")"
 
-  _sp1_info="$(store_sql "${_sp1_db}" "PRAGMA table_info(transcript_events);")"
-  if [[ $? -ne 0 ]]; then
+  store_sql "${_sp1_db}" "PRAGMA table_info(transcript_events);" > "${_sp1_tmp}"
+  _sp1_rc=$?
+  if [[ "${_sp1_rc}" -ne 0 ]]; then
     _STORE_PROBE_ONE_REASON="${STORE_LAST_SQL_ERROR}"
+    rm -f "${_sp1_tmp}"
     return 1
   fi
-  if ! printf '%s\n' "${_sp1_info}" | grep -q 'event_json'; then
+  if ! grep -q 'event_json' "${_sp1_tmp}"; then
     _sp1_missing="${_sp1_missing}transcript_events.event_json"$'\n'
   fi
 
-  _sp1_info="$(store_sql "${_sp1_db}" "PRAGMA table_info(session_nodes);")"
-  if [[ $? -ne 0 ]]; then
+  store_sql "${_sp1_db}" "PRAGMA table_info(session_nodes);" > "${_sp1_tmp}"
+  _sp1_rc=$?
+  if [[ "${_sp1_rc}" -ne 0 ]]; then
     _STORE_PROBE_ONE_REASON="${STORE_LAST_SQL_ERROR}"
+    rm -f "${_sp1_tmp}"
     return 1
   fi
   for _sp1_col in created_via updated_at current_session_id session_key; do
-    if ! printf '%s\n' "${_sp1_info}" | grep -q "${_sp1_col}"; then
+    if ! grep -q "${_sp1_col}" "${_sp1_tmp}"; then
       _sp1_missing="${_sp1_missing}session_nodes.${_sp1_col}"$'\n'
     fi
   done
@@ -270,14 +280,19 @@ _store_probe_one() {
   if [[ -n "${_sp1_missing}" ]]; then
     _STORE_PROBE_ONE_MISSING="${_sp1_missing%$'\n'}"
     _STORE_PROBE_ONE_REASON="Schema drift detected on ${_sp1_db} — missing columns: ${_STORE_PROBE_ONE_MISSING//$'\n'/, }"
+    rm -f "${_sp1_tmp}"
     return 1
   fi
 
-  _sp1_cnt="$(store_sql "${_sp1_db}" "SELECT count(*) FROM session_nodes WHERE created_via IS NULL OR created_via != 'cron';")"
-  if [[ $? -ne 0 ]]; then
+  store_sql "${_sp1_db}" "SELECT count(*) FROM session_nodes WHERE created_via IS NULL OR created_via != 'cron';" > "${_sp1_tmp}"
+  _sp1_rc=$?
+  if [[ "${_sp1_rc}" -ne 0 ]]; then
     _STORE_PROBE_ONE_REASON="${STORE_LAST_SQL_ERROR}"
+    rm -f "${_sp1_tmp}"
     return 1
   fi
+  _sp1_cnt="$(cat "${_sp1_tmp}")"
+  rm -f "${_sp1_tmp}"
   printf '%s\n' "${_sp1_cnt:-0}"
   return 0
 }

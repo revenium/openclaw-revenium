@@ -197,6 +197,153 @@ else
   fail "store_write_status: did not write ${REJ_STATUS_FILE} for rejected case"
 fi
 
+# -----------------------------------------------------------------------
+# WR-01 aggregation matrix — multi-store store_probe cases. Each case
+# builds a fixture OPENCLAW_HOME with TWO agent directories and runs a
+# fresh library-sourcing subshell (SESSION_STORE_GLOB is fixed at source
+# time, per the store_db_paths group's convention at the top of this file).
+# -----------------------------------------------------------------------
+_agg_db() {
+  # _agg_db <home> <agent_id>
+  echo "$1/agents/$2/agent/openclaw-agent.sqlite"
+}
+
+_agg_drifted_store() {
+  # _agg_drifted_store <db> — schema-drifted (missing session_nodes.session_key),
+  # the same single-column drift D5 above uses.
+  local db="$1"
+  mkdir -p "$(dirname "${db}")"
+  sqlite3 "${db}" "CREATE TABLE session_nodes (session_key TEXT PRIMARY KEY, current_session_id TEXT, updated_at INTEGER, created_via TEXT); CREATE TABLE transcript_events (session_id TEXT, seq INTEGER, created_at INTEGER);"
+}
+
+_agg_drifted_store_col() {
+  # _agg_drifted_store_col <db> <missing_col> — schema-drifted missing ONE
+  # specific session_nodes column (created_via|updated_at|current_session_id|
+  # session_key), so two stores can drift on DIFFERENT columns.
+  local db="$1" missing="$2" cols=""
+  mkdir -p "$(dirname "${db}")"
+  [[ "${missing}" != "session_key" ]] && cols="${cols}session_key TEXT, "
+  [[ "${missing}" != "current_session_id" ]] && cols="${cols}current_session_id TEXT, "
+  [[ "${missing}" != "updated_at" ]] && cols="${cols}updated_at INTEGER, "
+  [[ "${missing}" != "created_via" ]] && cols="${cols}created_via TEXT, "
+  cols="${cols%, }"
+  sqlite3 "${db}" "CREATE TABLE session_nodes (${cols}); CREATE TABLE transcript_events (session_id TEXT, seq INTEGER, event_json TEXT, created_at INTEGER);"
+}
+
+# --- healthy + drifted -> READABLE, healthy/unhealthy sets each hold exactly one path ---
+AGG1=$(new_tmp)
+AGG1_MAIN="$(_agg_db "${AGG1}" main)"
+mk_store "${AGG1_MAIN}"
+mk_session "${AGG1_MAIN}" "aaaaaaaa-1000-0000-0000-000000000101" "agent:main:main" "" 100
+AGG1_DEV="$(_agg_db "${AGG1}" dev)"
+_agg_drifted_store "${AGG1_DEV}"
+
+agg1_out=$(OPENCLAW_HOME="${AGG1}" bash -c "unset REVENIUM_SESSION_STORE; . '${SESSION_STORE_SH}'; store_probe; printf '%s\n%s\n%s\n' \"\${STORE_STATE}\" \"\${STORE_HEALTHY_PATHS}\" \"\${STORE_UNHEALTHY_PATHS}\"")
+agg1_state=$(printf '%s\n' "${agg1_out}" | sed -n '1p')
+agg1_healthy=$(printf '%s\n' "${agg1_out}" | sed -n '2p')
+agg1_unhealthy=$(printf '%s\n' "${agg1_out}" | sed -n '3p')
+if [[ "${agg1_state}" == "READABLE" && "${agg1_healthy}" == "${AGG1_MAIN}" && "${agg1_unhealthy}" == "${AGG1_DEV}" ]]; then
+  pass "store_probe: healthy + drifted aggregates READABLE; STORE_HEALTHY_PATHS/STORE_UNHEALTHY_PATHS each hold exactly one path"
+else
+  fail "store_probe: healthy+drifted aggregation wrong (state=${agg1_state} healthy=${agg1_healthy} unhealthy=${agg1_unhealthy})"
+fi
+
+# --- healthy + corrupted-file candidate -> READABLE (unhealthy, not fatal) ---
+AGG2=$(new_tmp)
+AGG2_MAIN="$(_agg_db "${AGG2}" main)"
+mk_store "${AGG2_MAIN}"
+mk_session "${AGG2_MAIN}" "aaaaaaaa-1000-0000-0000-000000000102" "agent:main:main" "" 100
+AGG2_DEV="$(_agg_db "${AGG2}" dev)"
+mkdir -p "$(dirname "${AGG2_DEV}")"
+printf 'not a valid sqlite database\n' > "${AGG2_DEV}"
+
+agg2_state=$(OPENCLAW_HOME="${AGG2}" bash -c "unset REVENIUM_SESSION_STORE; . '${SESSION_STORE_SH}'; store_probe; printf '%s' \"\${STORE_STATE}\"")
+if [[ "${agg2_state}" == "READABLE" ]]; then
+  pass "store_probe: healthy + corrupted-file candidate aggregates READABLE (the broken candidate is unhealthy, not fatal)"
+else
+  fail "store_probe: expected READABLE for healthy+corrupted-file aggregation, got ${agg2_state}"
+fi
+
+# --- drifted + drifted -> UNREADABLE, STORE_PROBE_ERROR non-empty ---
+AGG3=$(new_tmp)
+AGG3_MAIN="$(_agg_db "${AGG3}" main)"
+_agg_drifted_store "${AGG3_MAIN}"
+AGG3_DEV="$(_agg_db "${AGG3}" dev)"
+_agg_drifted_store "${AGG3_DEV}"
+
+agg3_out=$(OPENCLAW_HOME="${AGG3}" bash -c "unset REVENIUM_SESSION_STORE; . '${SESSION_STORE_SH}'; store_probe; printf '%s\n%s\n' \"\${STORE_STATE}\" \"\${STORE_PROBE_ERROR}\"")
+agg3_state=$(printf '%s\n' "${agg3_out}" | sed -n '1p')
+agg3_error=$(printf '%s\n' "${agg3_out}" | sed -n '2p')
+if [[ "${agg3_state}" == "UNREADABLE" && -n "${agg3_error}" ]]; then
+  pass "store_probe: drifted + drifted aggregates UNREADABLE with a non-empty STORE_PROBE_ERROR"
+else
+  fail "store_probe: drifted+drifted wrong (state=${agg3_state} error='${agg3_error}')"
+fi
+
+# --- cron-only + cron-only (both healthy, zero non-cron each) -> EMPTY ---
+AGG4=$(new_tmp)
+AGG4_MAIN="$(_agg_db "${AGG4}" main)"
+mk_store "${AGG4_MAIN}"
+mk_session "${AGG4_MAIN}" "aaaaaaaa-1000-0000-0000-000000000104" "agent:main:cron:x" "cron" 100
+AGG4_DEV="$(_agg_db "${AGG4}" dev)"
+mk_store "${AGG4_DEV}"
+mk_session "${AGG4_DEV}" "aaaaaaaa-1000-0000-0000-000000000105" "agent:dev:cron:y" "cron" 100
+
+agg4_state=$(OPENCLAW_HOME="${AGG4}" bash -c "unset REVENIUM_SESSION_STORE; . '${SESSION_STORE_SH}'; store_probe; printf '%s' \"\${STORE_STATE}\"")
+if [[ "${agg4_state}" == "EMPTY" ]]; then
+  pass "store_probe: cron-only + cron-only (both healthy, zero non-cron sessions) aggregates EMPTY"
+else
+  fail "store_probe: expected EMPTY for cron-only+cron-only aggregation, got ${agg4_state}"
+fi
+
+# --- cron-only + populated -> READABLE (the SUMMED count decides, not the first store) ---
+AGG5=$(new_tmp)
+AGG5_MAIN="$(_agg_db "${AGG5}" main)"
+mk_store "${AGG5_MAIN}"
+mk_session "${AGG5_MAIN}" "aaaaaaaa-1000-0000-0000-000000000106" "agent:main:cron:x" "cron" 100
+AGG5_DEV="$(_agg_db "${AGG5}" dev)"
+mk_store "${AGG5_DEV}"
+mk_session "${AGG5_DEV}" "aaaaaaaa-1000-0000-0000-000000000107" "agent:dev:main" "" 100
+
+agg5_state=$(OPENCLAW_HOME="${AGG5}" bash -c "unset REVENIUM_SESSION_STORE; . '${SESSION_STORE_SH}'; store_probe; printf '%s' \"\${STORE_STATE}\"")
+if [[ "${agg5_state}" == "READABLE" ]]; then
+  pass "store_probe: cron-only + populated aggregates READABLE (summed non-cron count decides)"
+else
+  fail "store_probe: expected READABLE for cron-only+populated aggregation, got ${agg5_state}"
+fi
+
+# --- two stores drifted on DIFFERENT columns -> STORE_SCHEMA_MISSING names both, no duplicates ---
+AGG6=$(new_tmp)
+AGG6_MAIN="$(_agg_db "${AGG6}" main)"
+_agg_drifted_store_col "${AGG6_MAIN}" session_key
+AGG6_DEV="$(_agg_db "${AGG6}" dev)"
+_agg_drifted_store_col "${AGG6_DEV}" created_via
+
+agg6_missing=$(OPENCLAW_HOME="${AGG6}" bash -c "unset REVENIUM_SESSION_STORE; . '${SESSION_STORE_SH}'; store_probe; printf '%s' \"\${STORE_SCHEMA_MISSING}\"")
+agg6_dup_count=$(printf '%s\n' "${agg6_missing}" | sort | uniq -d | grep -c . || true)
+if printf '%s' "${agg6_missing}" | grep -q "session_nodes.session_key" \
+  && printf '%s' "${agg6_missing}" | grep -q "session_nodes.created_via" \
+  && [[ "${agg6_dup_count}" -eq 0 ]]; then
+  pass "store_probe: two stores drifted on DIFFERENT columns — STORE_SCHEMA_MISSING names both, no duplicate entries"
+else
+  fail "store_probe: schema_missing union wrong (missing='${agg6_missing}' dup_count=${agg6_dup_count})"
+fi
+
+# --- Single-store no-regression: STORE_PROBE_ERROR wording is unchanged ---
+d5_error=$(REVENIUM_SESSION_STORE="${DB5}" bash -c ". '${SESSION_STORE_SH}'; store_probe; printf '%s' \"\${STORE_PROBE_ERROR}\"")
+if [[ "${d5_error}" == *"Schema drift detected on ${DB5}"* ]]; then
+  pass "store_probe: single-store schema-drift STORE_PROBE_ERROR still names the drift (unchanged wording)"
+else
+  fail "store_probe: single-store schema-drift wording changed: ${d5_error}"
+fi
+
+d4_absent_error=$(REVENIUM_SESSION_STORE="${D4}/does-not-exist.sqlite" bash -c ". '${SESSION_STORE_SH}'; store_probe; printf '%s' \"\${STORE_PROBE_ERROR}\"")
+if [[ -n "${d4_absent_error}" && "${d4_absent_error}" != *"candidate store(s) failed probe"* ]]; then
+  pass "store_probe: single-store absent-file STORE_PROBE_ERROR keeps the unwrapped sqlite error (no 'N candidate(s)' wrapper)"
+else
+  fail "store_probe: single-store absent-file wording wrapped/changed: ${d4_absent_error}"
+fi
+
 # =============================================================================
 # GROUP: store_completions (D-04 dedup adjacency)
 # =============================================================================
