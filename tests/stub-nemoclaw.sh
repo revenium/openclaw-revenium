@@ -78,7 +78,7 @@
 #
 #   STUB_NEMOCLAW_DOCTOR_RC (default "0")
 #     Exit code for the `openclaw doctor` exec payload. Set to "124" to
-#     simulate the wedged-gateway hang observed live on a live test host.
+#     simulate the wedged-gateway hang observed live on a test host.
 #
 #   STUB_NEMOCLAW_DOCTOR_OUTPUT (default "Doctor: no findings.")
 #     Output echoed for the `openclaw doctor` exec payload.
@@ -291,7 +291,7 @@ if [[ "${2:-}" == "exec" ]]; then
 
   # --- openclaw doctor --fix --non-interactive (in-sandbox health check, GATE-03) ---
   # Pattern: payload contains "openclaw doctor". STUB_NEMOCLAW_DOCTOR_RC=124
-  # simulates the wedged-gateway hang observed live on a live test host
+  # simulates the wedged-gateway hang observed live on a test host
   # (~/sandbox-doctor-out.txt recorded EXIT=124).
   # SECURITY: string-compare only, never eval (T-16-SC).
   if grep -qF "openclaw doctor" "${_payload_file}"; then

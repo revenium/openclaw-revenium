@@ -816,8 +816,8 @@ gate_sandbox_runtime_versions() {
 # run_sandbox_openclaw_doctor — runs `openclaw doctor --fix --non-interactive`
 # INSIDE the sandbox and prints its combined output to the operator before
 # Phase 13 provisioning begins (GATE-03). Never blocks provisioning on the
-# doctor's exit code — a hung gateway (exit 124, observed live on host
-# a live test host, recorded in ~/sandbox-doctor-out.txt) warns and continues
+# doctor's exit code — a hung gateway (exit 124, observed live on a test
+# host) warns and continues
 # instead of wedging the install indefinitely. The shadowing nemoclaw()
 # wrapper's default 120s ceiling for exec one-shots already bounds this
 # call — no second timeout mechanism is added here.
