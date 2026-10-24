@@ -107,17 +107,21 @@ if [[ "${INTERVAL}" -eq 1 ]]; then INTERVAL_LABEL="every minute"; else INTERVAL_
 # Step 3: Host-env write (D-02, T-14-03).
 #   Write REVENIUM_API_KEY (and optional team/tenant/owner IDs) to
 #   ~/.nemoclaw/revenium-host.env using printf — key never on a CLI flag.
-#   chmod 600 immediately. Key must NOT appear in the crontab line or logs.
+#   umask 077 so the file is never readable by others, even briefly.
+#   Key must NOT appear in the crontab line or logs.
 # ---------------------------------------------------------------------------
 HOST_ENV_DIR="${HOME}/.nemoclaw"
 HOST_ENV_FILE="${HOST_ENV_DIR}/revenium-host.env"
 mkdir -p "${HOST_ENV_DIR}"
+ORIGINAL_UMASK=$(umask)
+umask 077
 {
   printf 'REVENIUM_API_KEY=%s\n' "${REVENIUM_API_KEY:-}"
   [[ -n "${REVENIUM_TEAM_ID:-}" ]]   && printf 'REVENIUM_TEAM_ID=%s\n'   "${REVENIUM_TEAM_ID}"
   [[ -n "${REVENIUM_TENANT_ID:-}" ]] && printf 'REVENIUM_TENANT_ID=%s\n' "${REVENIUM_TENANT_ID}"
   [[ -n "${REVENIUM_OWNER_ID:-}" ]]  && printf 'REVENIUM_OWNER_ID=%s\n'  "${REVENIUM_OWNER_ID}"
 } > "${HOST_ENV_FILE}"
+umask "${ORIGINAL_UMASK}"
 chmod 600 "${HOST_ENV_FILE}"
 
 # ---------------------------------------------------------------------------

@@ -83,6 +83,10 @@
 #   STUB_NEMOCLAW_DOCTOR_OUTPUT (default "Doctor: no findings.")
 #     Output echoed for the `openclaw doctor` exec payload.
 #
+#   STUB_NEMOCLAW_STDIN_FILE (default /dev/null)
+#     Where the credentials-write exec payload's stdin (the config.yaml body)
+#     is captured, so tests can assert its content without it touching argv.
+#
 #   STUB_NEMOCLAW_SLEEP_SECONDS (default empty = no sleep)
 #     When set to a non-empty value, sleeps that many seconds before the
 #     `node --version` arm (GATE-04) and the `openclaw doctor` arm (GATE-03)
@@ -379,6 +383,13 @@ if [[ "${2:-}" == "exec" ]]; then
       echo '{"id":"stub-00000000-0000-0000-0000-000000000000","label":"metered-event","resourceType":"metered-event","signature":"stubsig00000000","created":"2026-01-01T00:00:00.000Z","updated":"2026-01-01T00:00:00.000Z"}'
       exit 0
     fi
+  fi
+
+  # --- Credentials write (config.yaml arrives on stdin) ---
+  if grep -qF "cat > /sandbox/.config/revenium/config.yaml" "${_payload_file}"; then
+    rm -f "${_payload_file}"
+    cat > "${STUB_NEMOCLAW_STDIN_FILE:-/dev/null}"
+    exit 0
   fi
 
   rm -f "${_payload_file}"

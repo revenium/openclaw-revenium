@@ -676,7 +676,7 @@ write_revenium_creds() {
     #
     # Each value is emitted as a double-quoted YAML scalar (backslash + quote
     # escaped) so a value containing `: ` (mapping ambiguity) or ` #` (comment
-    # truncation) cannot corrupt the field — base64 transport guards shell
+    # truncation) cannot corrupt the field — stdin transport guards shell
     # injection but not YAML structure (WR-02).
     local config_content
     config_content="api-key: $(yaml_dquote "${REVENIUM_API_KEY}")"
@@ -687,17 +687,15 @@ tenant-id: $(yaml_dquote "${REVENIUM_TENANT_ID}")"
     [[ -n "${REVENIUM_OWNER_ID:-}"  ]] && config_content="${config_content}
 owner-id: $(yaml_dquote "${REVENIUM_OWNER_ID}")"
 
-    # Encode the (possibly multi-line) YAML into a single-line base64 blob on the
-    # host, then decode it in-sandbox. Real NemoClaw gRPC exec REJECTS any argv
-    # element containing a newline/CR (InvalidArgument), so a heredoc payload —
-    # which embeds newlines in the single `sh -lc` argument — cannot be used here
-    # (Phase 13 live-smoke finding). base64 -d writes raw bytes, so no in-sandbox
-    # shell expansion of operator-supplied values occurs (T-13-INJ, V5). The key
-    # lands only in the chmod-600 file, never as a revenium CLI flag (T-13-KEY,
-    # Pitfall 5). In-sandbox HOME = /sandbox; config path /sandbox/.config/revenium/ (Pitfall 6).
-    local config_b64
-    config_b64=$(printf '%s\n' "${config_content}" | base64 | tr -d '\n')
-    nemoclaw "${SANDBOX_NAME}" exec -- sh -lc "mkdir -p /sandbox/.config/revenium && printf '%s' '${config_b64}' | base64 -d > /sandbox/.config/revenium/config.yaml && chmod 600 /sandbox/.config/revenium/config.yaml"
+    # The YAML travels on stdin, never argv: any argv element is visible in the
+    # host process list, and real NemoClaw gRPC exec REJECTS argv elements
+    # containing a newline/CR (Phase 13 live-smoke finding). stdin is written
+    # verbatim by `cat`, so no in-sandbox shell expansion of operator-supplied
+    # values occurs (T-13-INJ, V5, T-13-KEY). umask 077 creates the file 600
+    # from the start instead of chmod-ing it after the key is already on disk.
+    # In-sandbox HOME = /sandbox; config path /sandbox/.config/revenium/ (Pitfall 6).
+    printf '%s\n' "${config_content}" \
+        | nemoclaw "${SANDBOX_NAME}" exec --no-tty -- sh -lc "umask 077 && mkdir -p /sandbox/.config/revenium && cat > /sandbox/.config/revenium/config.yaml && chmod 600 /sandbox/.config/revenium/config.yaml"
 
     ledger_set "creds-written" "1"
     info "Credentials written to /sandbox/.config/revenium/config.yaml"
