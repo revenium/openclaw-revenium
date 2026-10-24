@@ -367,11 +367,19 @@ fi
 echo ""
 echo "--- GROUP H: NCCLI-02 creds use api-key: field (read from exec stdin) ---"
 
+argv_decoded_tokens() {
+  local token
+  grep -aoE '[A-Za-z0-9+/]{16,}={0,2}' "$1" 2>/dev/null | while IFS= read -r token; do
+    printf '%s' "${token}" | base64 -d 2>/dev/null
+    printf '\n'
+  done
+}
+
 if grep -aqF 'argv-leak-probe-key' "${ARGV_G}" 2>/dev/null \
-  || grep -aqF "$(printf '%s' 'argv-leak-probe-key' | base64)" "${ARGV_G}" 2>/dev/null; then
-  fail "GROUP-H: API key appears in nemoclaw argv (visible in the host process list)"
+  || argv_decoded_tokens "${ARGV_G}" | grep -aqF 'argv-leak-probe-key'; then
+  fail "GROUP-H: API key appears in nemoclaw argv, plain or base64-encoded (visible in the host process list)"
 else
-  pass "GROUP-H: API key does not appear in nemoclaw argv"
+  pass "GROUP-H: API key does not appear in nemoclaw argv, plain or base64-encoded"
 fi
 
 creds_decoded=$(cat "${STDIN_G}" 2>/dev/null)

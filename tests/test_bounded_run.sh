@@ -163,6 +163,17 @@ fi
 # GROUP BR-F: notice stream + once-per-process.
 # ===========================================================================
 echo ""
+echo "--- GROUP BR-G: portable path forwards piped stdin ---"
+
+out_g=$(printf 'BR_G_LINE_1\nBR_G_LINE_2: "x"\n' \
+  | BOUNDED_RUN_FORCE_PORTABLE=1 bash -c ". '${BOUNDED_RUN_SH}'; bounded_run 30 cat 2>/dev/null")
+if [[ "${out_g}" == $'BR_G_LINE_1\nBR_G_LINE_2: "x"' ]]; then
+  pass "BR-G: piped stdin reached the bounded command byte-for-byte"
+else
+  fail "BR-G: piped stdin was not forwarded (got: '${out_g}')"
+fi
+
+echo ""
 echo "--- GROUP BR-F: notice stream and once-per-process ---"
 
 _br_f_stdout="$(mktemp "${TMPDIR:-/tmp}/test-br-f-stdout.XXXXXX")"
@@ -200,7 +211,7 @@ fi
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 echo ""
-echo "NOTE: GROUPs BR-A..BR-F. BR-A groups SKIP on hosts without GNU 'timeout'"
+echo "NOTE: GROUPs BR-A..BR-G. BR-A groups SKIP on hosts without GNU 'timeout'"
 echo "      on PATH (e.g. stock macOS) — this is expected, not a failure."
 if [[ "${FAIL}" -gt 0 ]]; then
   exit 1

@@ -691,11 +691,12 @@ owner-id: $(yaml_dquote "${REVENIUM_OWNER_ID}")"
     # host process list, and real NemoClaw gRPC exec REJECTS argv elements
     # containing a newline/CR (Phase 13 live-smoke finding). stdin is written
     # verbatim by `cat`, so no in-sandbox shell expansion of operator-supplied
-    # values occurs (T-13-INJ, V5, T-13-KEY). umask 077 creates the file 600
-    # from the start instead of chmod-ing it after the key is already on disk.
+    # values occurs (T-13-INJ, V5, T-13-KEY). The key is written to a temp
+    # file created under umask 077 and renamed over config.yaml, so a
+    # pre-existing world-readable config.yaml never receives the new key.
     # In-sandbox HOME = /sandbox; config path /sandbox/.config/revenium/ (Pitfall 6).
     printf '%s\n' "${config_content}" \
-        | nemoclaw "${SANDBOX_NAME}" exec --no-tty -- sh -lc "umask 077 && mkdir -p /sandbox/.config/revenium && cat > /sandbox/.config/revenium/config.yaml && chmod 600 /sandbox/.config/revenium/config.yaml"
+        | nemoclaw "${SANDBOX_NAME}" exec --no-tty -- sh -lc "umask 077 && mkdir -p /sandbox/.config/revenium && cat > /sandbox/.config/revenium/config.yaml.tmp && mv -f /sandbox/.config/revenium/config.yaml.tmp /sandbox/.config/revenium/config.yaml"
 
     ledger_set "creds-written" "1"
     info "Credentials written to /sandbox/.config/revenium/config.yaml"

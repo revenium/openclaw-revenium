@@ -386,7 +386,7 @@ if [[ "${2:-}" == "exec" ]]; then
   fi
 
   # --- Credentials write (config.yaml arrives on stdin) ---
-  if grep -qF "cat > /sandbox/.config/revenium/config.yaml" "${_payload_file}"; then
+  if grep -qF "cat > /sandbox/.config/revenium/config.yaml.tmp" "${_payload_file}"; then
     rm -f "${_payload_file}"
     cat > "${STUB_NEMOCLAW_STDIN_FILE:-/dev/null}"
     exit 0
