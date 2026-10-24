@@ -1031,3 +1031,51 @@ describe("sidecar hardening (bounds, shape validation, idempotency)", () => {
     assert.strictEqual(readSidecarLines().length, 0, "malformed/traversal-shaped parent key must be rejected (T-19-04)");
   });
 });
+
+describe("finalize - current-turn scoping and scanned markers (PR #11 review)", () => {
+  beforeEach(() => resetState());
+
+  const asst = (parts) => ({ message: { role: "assistant", content: parts } });
+  const user = (text) => ({ message: { role: "user", content: [{ type: "text", text }] } });
+  const longText = Array.from({ length: 230 }, (_, i) => `word${i}`).join(" ");
+  const markerViaSearchCode = {
+    type: "toolCall", name: "tool_search_code",
+    arguments: { code: "openclaw.tools.call('openclaw:core:exec', { command: 'bash ~/.openclaw/skills/revenium/scripts/write-marker.sh generation' })" },
+  };
+  const markerViaExec = {
+    type: "toolCall", name: "exec",
+    arguments: { command: "bash ~/.openclaw/skills/revenium/scripts/write-marker.sh generation" },
+  };
+
+  test("write tool + marker via tool_search_code in the same turn → pass-through", () => {
+    handleBeforeToolCall("run-ts-1", "write", { path: "/tmp/zoo.txt", content: "lion" });
+    handleBeforeToolCall("run-ts-1", "tool_search_code", markerViaSearchCode.arguments);
+    const transcript = [user("make a file"), asst([markerViaSearchCode, { type: "text", text: "Done." }])];
+    assert.strictEqual(handleBeforeAgentFinalize("run-ts-1", transcript), undefined);
+  });
+
+  test("disk record unmarked, marker via tool_search_code in transcript → pass-through", () => {
+    handleBeforeToolCall("run-ts-2", "write", { path: "/tmp/zoo.txt", content: "lion" });
+    execRuns.clear();
+    markedTaskRuns.clear();
+    const transcript = [user("make a file"), asst([markerViaSearchCode, { type: "text", text: "Done." }])];
+    assert.strictEqual(handleBeforeAgentFinalize("run-ts-2", transcript), undefined);
+  });
+
+  test("marker in an EARLIER turn does not excuse a long reply in this turn → revise", () => {
+    const transcript = [
+      user("first task"), asst([markerViaExec, { type: "text", text: "Done." }]),
+      user("now tell me a story"), asst([{ type: "text", text: longText }]),
+    ];
+    const result = handleBeforeAgentFinalize("run-ts-3", transcript);
+    assert.ok(result && result.action === "revise", "this turn's long reply needs its own marker");
+  });
+
+  test("work in an EARLIER turn does not flag a short reply in this turn → pass-through", () => {
+    const transcript = [
+      user("first task"), asst([{ type: "toolCall", name: "write", arguments: { path: "/tmp/x" } }]),
+      user("thanks"), asst([{ type: "text", text: "You're welcome." }]),
+    ];
+    assert.strictEqual(handleBeforeAgentFinalize("run-ts-4", transcript), undefined);
+  });
+});
