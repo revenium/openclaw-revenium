@@ -331,8 +331,12 @@ ARGV_G=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-g.XXXXXX")
 TMP_HOMES+=("${ARGV_G}")
 LEDGER_G="${TMP_HOME_G}/.nemoclaw/revenium-nemoclaw.ledger"
 
+STDIN_G=$(mktemp "${TMPDIR:-/tmp}/test-nemo-stdin-g.XXXXXX")
+TMP_HOMES+=("${STDIN_G}")
+
 exit_code_g=0
-output_g=$(run_provision "${TMP_HOME_G}" "${ARGV_G}" 2>&1) || exit_code_g=$?
+output_g=$(run_provision "${TMP_HOME_G}" "${ARGV_G}" \
+  env STUB_NEMOCLAW_STDIN_FILE="${STDIN_G}" REVENIUM_API_KEY="argv-leak-probe-key" 2>&1) || exit_code_g=$?
 
 # Assert all five ledger keys present
 for key in revenium-policy-applied gh-release-policy-applied cli-delivered creds-written meter-probe-passed; do
@@ -356,19 +360,32 @@ fi
 #   The revenium CLI reads the API key from `api-key:` in ~/.config/revenium/
 #   config.yaml; a bare `key:` field is SILENTLY IGNORED (Phase 13 live-smoke
 #   finding — `config show` reported "API Key: (not set)" with a `key:` line,
-#   while still reading team-id from the same file). Decode the base64 creds
-#   payload captured in GROUP-G's argv and assert the field name.
+#   while still reading team-id from the same file). Read the creds payload
+#   GROUP-G captured from exec stdin and assert the field name, and that the
+#   key never reached argv, where the host process list would expose it.
 # ===========================================================================
 echo ""
-echo "--- GROUP H: NCCLI-02 creds use api-key: field (decoded from exec payload) ---"
+echo "--- GROUP H: NCCLI-02 creds use api-key: field (read from exec stdin) ---"
 
-creds_b64=$(grep -aF 'base64 -d' "${ARGV_G}" 2>/dev/null \
-  | grep -aF '/sandbox/.config/revenium/config.yaml' \
-  | sed -n "s/.*printf '%s' '\([A-Za-z0-9+/=]*\)'.*/\1/p" | head -1)
-if [[ -z "${creds_b64}" ]]; then
-  fail "GROUP-H: could not locate base64 creds payload in captured argv (creds write not implemented as expected)"
+argv_decoded_tokens() {
+  local token
+  grep -aoE '[A-Za-z0-9+/]{16,}={0,2}' "$1" 2>/dev/null | while IFS= read -r token; do
+    printf '%s' "${token}" | base64 -d 2>/dev/null
+    printf '\n'
+  done
+}
+
+if grep -aqF 'argv-leak-probe-key' "${ARGV_G}" 2>/dev/null \
+  || argv_decoded_tokens "${ARGV_G}" | grep -aqF 'argv-leak-probe-key'; then
+  fail "GROUP-H: API key appears in nemoclaw argv, plain or base64-encoded (visible in the host process list)"
 else
-  creds_decoded=$(printf '%s' "${creds_b64}" | base64 -d 2>/dev/null)
+  pass "GROUP-H: API key does not appear in nemoclaw argv, plain or base64-encoded"
+fi
+
+creds_decoded=$(cat "${STDIN_G}" 2>/dev/null)
+if [[ -z "${creds_decoded}" ]]; then
+  fail "GROUP-H: no creds payload captured on exec stdin (creds write not implemented as expected)"
+else
   if printf '%s\n' "${creds_decoded}" | grep -qE '^api-key: '; then
     pass "GROUP-H: config.yaml uses 'api-key:' field (the field the revenium CLI reads)"
   else

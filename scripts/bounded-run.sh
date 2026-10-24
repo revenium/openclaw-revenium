@@ -83,8 +83,10 @@ bounded_run() {
   # Run the command in the background, bypassing any shell function that
   # shadows its name (the `command` builtin is mandatory — see
   # post-install-nemoclaw.sh's nemoclaw() wrapper, the second consumer this
-  # signature must fit).
-  command "$@" &
+  # signature must fit). The explicit 0<&0 is load-bearing: without job
+  # control, bash gives a background job /dev/null as stdin, which would
+  # silently drop input piped into a bounded command.
+  command "$@" 0<&0 &
   local _child_pid=$!
 
   # Sentinel path created lazily — only the watchdog creates the file itself,
