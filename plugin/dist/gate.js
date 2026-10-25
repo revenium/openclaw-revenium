@@ -287,6 +287,17 @@ export function handleBeforeToolCall(runId, toolName, params, opts = {}) {
 // chat-only arcs with zero markers).
 const SUBSTANTIVE_TEXT_WORDS = 200;
 
+// event.messages is the whole conversation; only entries after the last user
+// message belong to the run being finalized. Without this cut, a marker from an
+// earlier turn excuses this turn's work, and earlier work flags a quiet turn.
+function currentTurnEntries(transcript) {
+  for (let i = transcript.length - 1; i >= 0; i--) {
+    const msg = transcript[i] && transcript[i].message;
+    if (msg && msg.role === "user") return transcript.slice(i + 1);
+  }
+  return transcript;
+}
+
 function scanTranscriptForExec(transcript) {
   const NO_EVIDENCE = { execFound: false, markerFound: false, substantiveText: false };
   try {
@@ -294,7 +305,7 @@ function scanTranscriptForExec(transcript) {
     let execFound = false;
     let markerFound = false;
     let lastAssistantText = "";
-    for (const entry of transcript) {
+    for (const entry of currentTurnEntries(transcript)) {
       try {
         const msg = entry && entry.message;
         if (!msg || msg.role !== "assistant") continue;
@@ -374,10 +385,14 @@ export function handleBeforeAgentFinalize(runId, transcript) {
   // fail-open: no runId
   if (!runId) return undefined;
 
+  // A marker written through tool_search_code never reaches markedTaskRuns or
+  // the disk record, so every unmarked verdict below must defer to the scan.
+  const scan = scanTranscriptForExec(transcript);
+
   // Source 1: In-process path (normal case: same gateway process).
   if (execRuns.has(runId)) {
     // Already classified → pass through
-    if (markedTaskRuns.has(runId)) return undefined;
+    if (markedTaskRuns.has(runId) || scan.markerFound) return undefined;
     // Substantive turn with no marker → force one more pass.
     return _buildReviseAction(runId);
   }
@@ -391,7 +406,7 @@ export function handleBeforeAgentFinalize(runId, transcript) {
       const state = JSON.parse(raw);
       if (state && state.exec === true) {
         // Run was substantive per disk record.
-        if (state.marked === true) return undefined; // already classified
+        if (state.marked === true || scan.markerFound) return undefined; // already classified
         return _buildReviseAction(runId); // needs marker
       }
     }
@@ -403,7 +418,6 @@ export function handleBeforeAgentFinalize(runId, transcript) {
   // non-read-only tool calls, and substantive final text (2026-06-13). Only
   // reached when the in-process Sets and disk both have no evidence.
   // scan result is fail-open — never throws.
-  const scan = scanTranscriptForExec(transcript);
   if (scan.execFound || scan.substantiveText) {
     if (scan.markerFound) return undefined; // write-marker.sh invoked in transcript
     return _buildReviseAction(runId); // substantive turn but no marker

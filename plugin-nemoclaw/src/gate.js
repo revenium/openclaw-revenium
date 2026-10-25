@@ -9,8 +9,8 @@
  * plugin/src/index.ts imports this module and registers the handlers.
  */
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, statSync, renameSync, rmSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Run-state persistence (B-05 / NCENF-02)
@@ -75,6 +75,32 @@ function runStatePath(runId) {
   const safe = sanitizeRunId(runId);
   if (!safe) return null;
   return join(resolveRunStateDir(), safe + ".json");
+}
+
+// ---------------------------------------------------------------------------
+// Per-turn metering directive injection (2026-06-13).
+// OpenClaw 2026.6.6 refuses before_agent_finalize revise actions on turns with
+// side effects ("requested revision after potential side effects; finalizing"),
+// which silently disabled the v1.3 revise loop for exactly the substantive
+// turns it existed to gate. The reliable surface that remains is
+// before_prompt_build — the same per-turn prependContext injection the
+// NemoClaw plugin uses, which is the configuration that demonstrably kept
+// task/job markers flowing (validated live on nemoclaw-006). The directive
+// text is read ONCE at plugin load from the installed skill (no fs I/O at
+// hook time); a missing or out-of-bounds file fails open to no injection
+// (AGENTS.md still carries the directives as the baseline).
+// ---------------------------------------------------------------------------
+export function buildMeteringInjection() {
+  try {
+    const ocHome = process.env.OPENCLAW_HOME || (process.env.HOME + "/.openclaw");
+    const p = join(ocHome, "skills", "revenium", "references", "agents-metering-directives.md");
+    if (!existsSync(p)) return null;
+    const raw = readFileSync(p, "utf8");
+    if (!raw || raw.trim().length < 40 || raw.length > 32768) return null;
+    return "<revenium-metering>\n" + raw.trim() + "\n</revenium-metering>";
+  } catch {
+    return null; // fail-open: no injection rather than a broken hook
+  }
 }
 
 // Per-run tracking state (in-process, not persisted).
@@ -160,11 +186,26 @@ export function resetState() {
  * @param {Record<string,unknown>} params - The event.params.
  * @param {{ log?: (msg: string) => void }} [opts] - Optional logger.
  */
+// Tools that do NOT make a turn substantive on their own (2026-06-13).
+// The directive's own bar is "ANY tool other than read-only file inspection" —
+// but the original gate only observed exec/bash, so turns doing real work via
+// the write/edit file tools escaped enforcement entirely (observed live:
+// a file-creating turn with zero markers). Read-only lookups and the search
+// surface stay exempt so status checks and heartbeats never trip the gate.
+const READ_ONLY_TOOLS = new Set(["read", "tool_search", "tool_search_code"]);
+
 export function handleBeforeToolCall(runId, toolName, params, opts = {}) {
   if (!runId) return;
 
-  // Treat both "exec" and "bash" as exec tool calls (Pitfall 5).
-  if (toolName !== "exec" && toolName !== "bash") return;
+  // Non-exec working tools (write, edit, etc.) mark the run substantive but
+  // carry no marker-script evidence — only exec can run write-marker.sh.
+  if (toolName !== "exec" && toolName !== "bash") {
+    if (typeof toolName === "string" && toolName && !READ_ONLY_TOOLS.has(toolName)) {
+      execRuns.add(runId);
+      persistRunState(runId, markedTaskRuns.has(runId));
+    }
+    return;
+  }
 
   // One-time diagnostic log: record observed toolName + param key names.
   if (!_loggedFirstExec) {
@@ -240,37 +281,84 @@ export function handleBeforeToolCall(runId, toolName, params, opts = {}) {
  * @param {unknown} transcript - The event.messages array (or undefined/null).
  * @returns {TranscriptScanResult}
  */
+// Final replies above this word count are substantive per the directive's own
+// threshold ("> 200 words"), even with zero tool calls — long conversational /
+// creative turns must classify too (observed live 2026-06-13: 40 minutes of
+// chat-only arcs with zero markers).
+const SUBSTANTIVE_TEXT_WORDS = 200;
+
+// event.messages is the whole conversation; only entries after the last user
+// message belong to the run being finalized. Without this cut, a marker from an
+// earlier turn excuses this turn's work, and earlier work flags a quiet turn.
+function currentTurnEntries(transcript) {
+  for (let i = transcript.length - 1; i >= 0; i--) {
+    const msg = transcript[i] && transcript[i].message;
+    if (msg && msg.role === "user") return transcript.slice(i + 1);
+  }
+  return transcript;
+}
+
 function scanTranscriptForExec(transcript) {
-  const NO_EVIDENCE = { execFound: false, markerFound: false };
+  const NO_EVIDENCE = { execFound: false, markerFound: false, substantiveText: false };
   try {
     if (!Array.isArray(transcript)) return NO_EVIDENCE;
     let execFound = false;
     let markerFound = false;
-    for (const entry of transcript) {
+    let lastAssistantText = "";
+    for (const entry of currentTurnEntries(transcript)) {
       try {
         const msg = entry && entry.message;
         if (!msg || msg.role !== "assistant") continue;
         const content = msg.content;
         if (!Array.isArray(content)) continue;
+        let entryText = "";
         for (const part of content) {
-          if (!part || part.type !== "toolCall" || part.name !== "tool_search_code") continue;
-          const code = part.arguments && typeof part.arguments.code === "string"
-            ? part.arguments.code
-            : null;
-          if (!code) continue;
-          if (code.includes("openclaw:core:exec")) {
+          if (!part) continue;
+          // Accumulate text parts — the LAST assistant message's text is the
+          // pending final reply at finalize time.
+          if (part.type === "text" && typeof part.text === "string") {
+            entryText += (entryText ? " " : "") + part.text;
+            continue;
+          }
+          if (part.type !== "toolCall") continue;
+          // (a) Nemotron indirection: tool_search_code wrapping openclaw:core:exec.
+          if (part.name === "tool_search_code") {
+            const code = part.arguments && typeof part.arguments.code === "string"
+              ? part.arguments.code
+              : null;
+            if (!code) continue;
+            if (code.includes("openclaw:core:exec")) {
+              execFound = true;
+              if (MARKER_INVOKE.test(code)) {
+                markerFound = true;
+              }
+            }
+            continue;
+          }
+          // (b) Direct tool calls: any non-read-only tool makes the turn
+          // substantive; exec/bash args are also checked for the marker script.
+          if (typeof part.name === "string" && part.name && !READ_ONLY_TOOLS.has(part.name)) {
             execFound = true;
-            // Check if this specific exec is write-marker.sh
-            if (MARKER_INVOKE.test(code)) {
-              markerFound = true;
+            if (part.name === "exec" || part.name === "bash") {
+              const args = part.arguments;
+              let cmd = args && typeof args.command === "string" ? args.command : null;
+              if (!cmd) cmd = args && typeof args.code === "string" ? args.code : null;
+              if (cmd && MARKER_INVOKE.test(cmd)) {
+                markerFound = true;
+              }
             }
           }
         }
+        if (entryText) lastAssistantText = entryText;
       } catch {
         /* tolerate malformed individual messages — continue scanning */
       }
     }
-    return { execFound, markerFound };
+    // (c) Substantive conversational turn: long final reply, judged by length
+    // only (no content analysis). Short replies and heartbeats never trigger.
+    const substantiveText =
+      lastAssistantText.split(/\s+/).filter(Boolean).length > SUBSTANTIVE_TEXT_WORDS;
+    return { execFound, markerFound, substantiveText };
   } catch {
     return NO_EVIDENCE; // fail-open: any structural error → no evidence
   }
@@ -297,10 +385,14 @@ export function handleBeforeAgentFinalize(runId, transcript) {
   // fail-open: no runId
   if (!runId) return undefined;
 
+  // A marker written through tool_search_code never reaches markedTaskRuns or
+  // the disk record, so every unmarked verdict below must defer to the scan.
+  const scan = scanTranscriptForExec(transcript);
+
   // Source 1: In-process path (normal case: same gateway process).
   if (execRuns.has(runId)) {
     // Already classified → pass through
-    if (markedTaskRuns.has(runId)) return undefined;
+    if (markedTaskRuns.has(runId) || scan.markerFound) return undefined;
     // Substantive turn with no marker → force one more pass.
     return _buildReviseAction(runId);
   }
@@ -314,7 +406,7 @@ export function handleBeforeAgentFinalize(runId, transcript) {
       const state = JSON.parse(raw);
       if (state && state.exec === true) {
         // Run was substantive per disk record.
-        if (state.marked === true) return undefined; // already classified
+        if (state.marked === true || scan.markerFound) return undefined; // already classified
         return _buildReviseAction(runId); // needs marker
       }
     }
@@ -322,13 +414,13 @@ export function handleBeforeAgentFinalize(runId, transcript) {
     /* fail-open: any read/parse error → pass through (undefined) */
   }
 
-  // Source 3: Transcript scan (B-05 — Nemotron tool_search_code exec pattern).
-  // Only reached when the in-process Sets and disk both have no evidence.
+  // Source 3: Transcript scan — Nemotron tool_search_code exec (B-05), direct
+  // non-read-only tool calls, and substantive final text (2026-06-13). Only
+  // reached when the in-process Sets and disk both have no evidence.
   // scan result is fail-open — never throws.
-  const scan = scanTranscriptForExec(transcript);
-  if (scan.execFound) {
+  if (scan.execFound || scan.substantiveText) {
     if (scan.markerFound) return undefined; // write-marker.sh invoked in transcript
-    return _buildReviseAction(runId); // exec ran but no marker
+    return _buildReviseAction(runId); // substantive turn but no marker
   }
 
   // Non-substantive turn (no evidence from any source) → pass through.
@@ -348,10 +440,15 @@ function _buildReviseAction(runId) {
     reason: "turn not classified for Revenium metering",
     retry: {
       instruction:
-        "Before finishing, classify this turn by running: " +
+        "Before finishing: (1) classify this turn by running " +
         "`bash ~/.openclaw/skills/revenium/scripts/write-marker.sh <task_type>` " +
-        "(where <task_type> is one of the labels in task-taxonomy.json), " +
-        "then finish your response.",
+        "(where <task_type> is one of the labels in task-taxonomy.json). " +
+        "(2) If this turn STARTED a new goal arc with no job declared yet, also open it: " +
+        "`bash ~/.openclaw/skills/revenium/scripts/write-job-marker.sh " +
+        "--job-id <goal-slug>-<4hex> --job-name \"<short goal>\" --job-type <label> --status RUNNING`. " +
+        "If it CONCLUDED the current arc, close it instead: " +
+        "`bash ~/.openclaw/skills/revenium/scripts/write-job-marker.sh --close --status SUCCESS|FAILED|CANCELLED`. " +
+        "Then finish your response.",
       idempotencyKey: `marker-gate:${runId}`,
       maxAttempts: 1,
     },
@@ -450,4 +547,258 @@ export function safeAgentEnd(runId, impl = handleAgentEnd) {
   try {
     impl(runId);
   } catch { /* fail-open */ }
+}
+
+// ---------------------------------------------------------------------------
+// Subagent parentage sidecar (PLUG-04 / READ-03 D-08).
+//
+// Neither plugin/ nor plugin-nemoclaw/ registers subagent_spawned or
+// subagent_ended today, and OpenClaw's plugin SDK offers no other way to
+// observe session parentage on a 2.0 host (the SQL parentage columns are
+// present in schema but unconfirmed to populate — this is the primary path,
+// SQL is the fallback per D-08). Both handlers append one JSON line per
+// event to a durable sidecar file that scripts/get-root-session-id.py (plan
+// 19-05) reads to resolve a subagent's root session.
+//
+// Sidecar record schema (pinned here, consumed verbatim by plan 19-05):
+//   spawn record: { event: "spawned", childSessionKey, parentSessionKey, runId, capturedAt }
+//   end record:   { event: "ended", childSessionKey, parentSessionKey, runId, outcome, capturedAt }
+// One JSON object per line, newline-terminated, UTF-8. Unknown keys are
+// ignored by readers; a spawn record missing parentSessionKey is unusable
+// and is not written at all (a half-edge is worse than no edge).
+//
+// Path lives under the skill's state directory (${OPENCLAW_HOME}/skills/revenium/),
+// NOT the plugin's run-state directory, because the consumer
+// (scripts/get-root-session-id.py) resolves its paths from the skill's
+// STATE_DIR, mirroring resolveRunStateDir's env-override discovery exactly.
+// ---------------------------------------------------------------------------
+
+/** @type {string|null} Injectable sidecar path for tests (null = use env-derived default). */
+let _sidecarPathOverride = null;
+
+/**
+ * Set the sidecar file path (used by tests to inject a tmp file).
+ * Pass null to revert to the default env-derived path.
+ *
+ * @param {string|null} path
+ */
+export function setSidecarPath(path) {
+  _sidecarPathOverride = path;
+}
+
+/**
+ * Resolve the sidecar file path.
+ * Mirrors resolveRunStateDir's OPENCLAW_HOME discovery, but rooted at the
+ * skill's state directory (skills/revenium/), not the plugin's run-state dir.
+ *
+ * @returns {string}
+ */
+export function resolveSidecarPath() {
+  if (_sidecarPathOverride !== null) return _sidecarPathOverride;
+  const ocHome = process.env.OPENCLAW_HOME || (process.env.HOME + "/.openclaw");
+  return join(ocHome, "skills", "revenium", "subagent-edges.jsonl");
+}
+
+/** Byte cap for the live sidecar file before a single rotation to the `.1` sibling (T-19-05). */
+export const SIDECAR_MAX_BYTES = 2097152;
+
+// Session keys look like `agent:<agentId>:<scope...>` — e.g. `agent:dev:main`
+// or `agent:dev:subagent:<uuid>`. Both keys must match this shape before a
+// record is written (T-19-04): a traversal-shaped or separator-bearing key
+// must never enter the sidecar, since it directly determines which root
+// session a subagent's spend is attributed to and may later reach a path or
+// a log line.
+const SESSION_KEY_SHAPE = /^agent:[A-Za-z0-9._-]+:[A-Za-z0-9._:-]+$/;
+
+/**
+ * Append one edge record to the sidecar, rotating the live file to its `.1`
+ * sibling first when it is already at or past SIDECAR_MAX_BYTES (T-19-05,
+ * one rotation — not a ring; bounds on-disk cost at roughly 4 MiB while
+ * keeping enough history that a long-lived parent's edge is not lost the
+ * moment the file turns over).
+ *
+ * One appendFileSync call per edge is the concurrency guarantee (PLUG-04):
+ * two subagents spawning at the same moment each issue a single append-mode
+ * write of a short line, so neither can observe or produce a partial line.
+ *
+ * A record whose childSessionKey or parentSessionKey does not match the
+ * `agent:<id>:<scope>` shape is rejected outright (T-19-04) — a malformed or
+ * injected key must not enter the sidecar.
+ *
+ * Fail-open: any error (including the shape-validation rejection) results in
+ * nothing being written, and this function never throws — mirroring
+ * persistRunState's contract.
+ *
+ * @param {{event: string, childSessionKey?: string, parentSessionKey?: string}} record
+ */
+export function appendSidecarEdge(record) {
+  try {
+    if (record && record.childSessionKey !== undefined && !SESSION_KEY_SHAPE.test(String(record.childSessionKey))) {
+      return; // malformed/injected key — reject the whole record (T-19-04)
+    }
+    if (record && record.parentSessionKey !== undefined && !SESSION_KEY_SHAPE.test(String(record.parentSessionKey))) {
+      return;
+    }
+    const filePath = resolveSidecarPath();
+    const dir = dirname(filePath);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try {
+      const st = statSync(filePath);
+      if (st.size >= SIDECAR_MAX_BYTES) {
+        renameSync(filePath, filePath + ".1");
+      }
+    } catch {
+      /* live file does not exist yet — nothing to rotate */
+    }
+    appendFileSync(filePath, JSON.stringify(record) + "\n", { encoding: "utf8", mode: 0o600 });
+  } catch {
+    /* fail-open: a sidecar write failure must never change in-process behavior or throw */
+  }
+}
+
+/**
+ * Handle a subagent_spawned event: append one "spawned" edge recording the
+ * direct child-to-parent session-key link.
+ *
+ * childSessionKey is read from the event, falling back to ctx.childSessionKey.
+ * parentSessionKey is read from ctx.requesterSessionKey (the direct parent
+ * link the hook payload carries at spawn time), falling back to
+ * event.requester. Returns without writing when either key is missing or is
+ * not a non-empty string — a half-edge is worse than no edge because it
+ * looks like data to the reader.
+ *
+ * @param {{childSessionKey?: string, requester?: string, runId?: string}|undefined} event
+ * @param {{requesterSessionKey?: string, childSessionKey?: string, runId?: string}|undefined} ctx
+ */
+export function handleSubagentSpawned(event, ctx) {
+  const childSessionKey = event?.childSessionKey ?? ctx?.childSessionKey;
+  const parentSessionKey = ctx?.requesterSessionKey ?? event?.requester;
+  if (typeof childSessionKey !== "string" || childSessionKey.length === 0) return;
+  if (typeof parentSessionKey !== "string" || parentSessionKey.length === 0) return;
+  const runId = ctx?.runId ?? event?.runId;
+  appendSidecarEdge({
+    event: "spawned",
+    childSessionKey,
+    parentSessionKey,
+    runId,
+    capturedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Handle a subagent_ended event: append one "ended" record for the child
+ * session, so a resolver can tell a still-running child from a completed one
+ * without re-querying the store.
+ *
+ * The child key comes from event.targetSessionKey (NOT event.childSessionKey
+ * — confirmed verbatim in the captured payload; the event key differs from
+ * the spawn side), falling back to ctx.childSessionKey. parentSessionKey is
+ * NOT required here: an end record is useful for lifecycle even without it,
+ * and readSidecarEdges ignores end records when building the parent map.
+ *
+ * @param {{targetSessionKey?: string, outcome?: string, runId?: string}|undefined} event
+ * @param {{requesterSessionKey?: string, childSessionKey?: string, runId?: string}|undefined} ctx
+ */
+export function handleSubagentEnded(event, ctx) {
+  const childSessionKey = event?.targetSessionKey ?? ctx?.childSessionKey;
+  if (typeof childSessionKey !== "string" || childSessionKey.length === 0) return;
+  const parentSessionKey = ctx?.requesterSessionKey;
+  const runId = ctx?.runId ?? event?.runId;
+  const outcome = event?.outcome ?? "";
+  appendSidecarEdge({
+    event: "ended",
+    childSessionKey,
+    parentSessionKey,
+    runId,
+    outcome,
+    capturedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Read all sidecar edges and build a childSessionKey -> parentSessionKey map.
+ *
+ * Reads the rotated `.1` file first, then the live file, so later edges win
+ * (last write wins on duplicate childSessionKey — idempotency). Each file is
+ * split on newlines; blank lines are skipped, and any line that fails to
+ * JSON.parse is skipped (a concurrent append can leave the final line
+ * mid-write for a reader). Only records whose `event` is "spawned" and which
+ * carry both keys populate the map — end records never do.
+ *
+ * This is the single authoritative JavaScript reader for the sidecar schema,
+ * which plan 19-05's Python reader is written to match. Returns an empty
+ * object on any error (fail-open).
+ *
+ * @returns {Record<string, string>}
+ */
+export function readSidecarEdges() {
+  const result = {};
+  try {
+    const filePath = resolveSidecarPath();
+    const candidates = [filePath + ".1", filePath];
+    for (const p of candidates) {
+      let content;
+      try {
+        content = readFileSync(p, "utf8");
+      } catch {
+        continue; // file may not exist — skip
+      }
+      const lines = content.split("\n");
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let rec;
+        try {
+          rec = JSON.parse(line);
+        } catch {
+          continue; // skip unparseable/partial lines
+        }
+        if (rec && rec.event === "spawned" && rec.childSessionKey && rec.parentSessionKey) {
+          result[rec.childSessionKey] = rec.parentSessionKey;
+        }
+      }
+    }
+  } catch {
+    return {};
+  }
+  return result;
+}
+
+/**
+ * Fail-open wrapper for subagent_spawned (observation is best-effort).
+ *
+ * @param {unknown} event
+ * @param {unknown} ctx
+ * @param {{ log?: (msg: string) => void }} [opts]
+ * @param {(event: unknown, ctx: unknown) => void} [impl]
+ */
+export function safeSubagentSpawned(event, ctx, opts = {}, impl = handleSubagentSpawned) {
+  try {
+    impl(event, ctx);
+  } catch (err) {
+    try {
+      if (opts && typeof opts.log === "function") {
+        opts.log(`[revenium-marker-gate] subagent_spawned error (fail-open): ${err}`);
+      }
+    } catch { /* logging must never break fail-open */ }
+  }
+}
+
+/**
+ * Fail-open wrapper for subagent_ended (observation is best-effort).
+ *
+ * @param {unknown} event
+ * @param {unknown} ctx
+ * @param {{ log?: (msg: string) => void }} [opts]
+ * @param {(event: unknown, ctx: unknown) => void} [impl]
+ */
+export function safeSubagentEnded(event, ctx, opts = {}, impl = handleSubagentEnded) {
+  try {
+    impl(event, ctx);
+  } catch (err) {
+    try {
+      if (opts && typeof opts.log === "function") {
+        opts.log(`[revenium-marker-gate] subagent_ended error (fail-open): ${err}`);
+      }
+    } catch { /* logging must never break fail-open */ }
+  }
 }
