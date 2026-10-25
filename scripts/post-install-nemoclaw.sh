@@ -707,9 +707,11 @@ owner-id: $(yaml_dquote "${REVENIUM_OWNER_ID}")"
         return 0
     fi
     if ledger_has "creds-written"; then
-        warn "Revenium credentials changed since the last install — re-writing them and re-running the meter probe."
-        # The probe is the only check that the new key authenticates.
+        warn "Revenium credentials changed since the last install — re-writing them, re-running the meter probe, and refreshing the host metering cron."
+        # The probe is the only check that the new key authenticates, and the
+        # host cron reads its own copy of the key from revenium-host.env.
         ledger_unset "meter-probe-passed"
+        ledger_unset "metering-loop-installed"
     fi
 
     step "Writing revenium credentials into sandbox"
