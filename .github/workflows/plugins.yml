@@ -38,7 +38,9 @@ jobs:
       - name: Committed build output is current
         run: |
           npm run build
-          if ! git diff --exit-code -- . ; then
+          # status, not diff: diff ignores a deleted output the build recreates untracked.
+          if [ -n "$(git status --porcelain --untracked-files=all -- .)" ]; then
+            git status --short --untracked-files=all -- .
             echo "::error::Build output is stale. Run 'npm run build' in ${{ matrix.plugin }}/ and commit the result."
             exit 1
           fi
