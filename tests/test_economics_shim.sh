@@ -252,6 +252,380 @@ else
   fail "SH-D: unexpected heartbeat: $(cat "${HB_D}" 2>/dev/null)"
 fi
 
+# make_stub_runtime <dir> <mode> — a provisioned runtime whose venv python is
+# a bash stub. The stub reads its mode from <dir>/stub-mode on every run:
+# ok exit 0, crash exit 1, rt3 exit 3, rt4 exit 4, hang sleep 30.
+make_stub_runtime() {
+  local dir="$1"
+  mkdir -p "${dir}/venv/bin"
+  chmod 700 "${dir}"
+  printf 'version=test\n' > "${dir}/INSTALLED"
+  cat > "${dir}/venv/bin/python" <<'STUB'
+#!/usr/bin/env bash
+runtime="$(cd "$(dirname "$0")/../.." && pwd)"
+mode="$(cat "${runtime}/stub-mode" 2>/dev/null)"
+case "${mode}" in
+  ok)    exit 0 ;;
+  crash) exit 1 ;;
+  rt3)   exit 3 ;;
+  rt4)   exit 4 ;;
+  hang)  exec sleep 30 ;;
+  *)     exit 1 ;;
+esac
+STUB
+  chmod 755 "${dir}/venv/bin/python"
+  printf '%s\n' "$2" > "${dir}/stub-mode"
+}
+
+# make_state_dir — a private (0700) state dir outside any OPENCLAW_HOME.
+make_state_dir() {
+  local d
+  d=$(mktemp -d "${TMPDIR:-/tmp}/test-econ-state.XXXXXX")
+  TMP_HOMES+=("${d}")
+  chmod 700 "${d}"
+  echo "${d}"
+}
+
+# ===========================================================================
+# GROUP SH-E: Python exit codes map to reasons; outages re-arm.
+# ===========================================================================
+echo ""
+echo "--- GROUP SH-E: rc matrix and outage ids ---"
+
+HOME_E=$(make_home)
+RT_E="${HOME_E}/rt"
+make_stub_runtime "${RT_E}" ok
+SD_E=$(make_state_dir)
+HB_E="${HOME_E}/.openclaw/skills/revenium/economics-status.json"
+RC_E_BAD=0
+
+infer_e() {
+  local rc=0
+  run_econ "${HOME_E}" REVENIUM_SIDECAR_HOME="${RT_E}" REVENIUM_ECON_STATE_DIR="${SD_E}" "$@" infer || rc=$?
+  [[ "${rc}" -eq 0 ]] || RC_E_BAD=$(( RC_E_BAD + 1 ))
+}
+set_mode_e() { printf '%s\n' "$1" > "${RT_E}/stub-mode"; }
+
+infer_e
+U1="$(json_get "${HB_E}" updatedAt)"
+if [[ "$(json_get "${HB_E}" state)" == "ok" && "$(json_get "${HB_E}" outageId)" == "" ]]; then
+  pass "SH-E: rc 0 gives state ok with empty outageId"
+else
+  fail "SH-E: rc 0 heartbeat: $(cat "${HB_E}" 2>/dev/null)"
+fi
+
+set_mode_e crash
+infer_e
+O1="$(json_get "${HB_E}" outageId)"
+if [[ "$(json_get "${HB_E}" state)" == "off" && "$(json_get "${HB_E}" reason)" == "crashing" && "${O1}" == "${U1}" ]]; then
+  pass "SH-E: rc 1 gives crashing with outageId = last healthy updatedAt"
+else
+  fail "SH-E: crash heartbeat (expected outageId ${U1}): $(cat "${HB_E}" 2>/dev/null)"
+fi
+
+infer_e
+if [[ "$(json_get "${HB_E}" outageId)" == "${O1}" ]]; then
+  pass "SH-E: a second crash keeps the same outageId"
+else
+  fail "SH-E: outageId changed during one outage: $(cat "${HB_E}" 2>/dev/null)"
+fi
+
+sleep 1
+set_mode_e ok
+infer_e
+U2="$(json_get "${HB_E}" updatedAt)"
+if [[ "$(json_get "${HB_E}" state)" == "ok" && "$(json_get "${HB_E}" outageId)" == "" ]]; then
+  pass "SH-E: a healthy run clears outageId"
+else
+  fail "SH-E: recovery heartbeat: $(cat "${HB_E}" 2>/dev/null)"
+fi
+
+sleep 1
+set_mode_e crash
+infer_e
+O2="$(json_get "${HB_E}" outageId)"
+if [[ "${O2}" == "${U2}" && "${O2}" != "${O1}" ]]; then
+  pass "SH-E: a new outage gets a new outageId (re-arm)"
+else
+  fail "SH-E: re-armed outageId ${O2} (first ${O1}, last healthy ${U2})"
+fi
+
+set_mode_e rt3
+infer_e
+[[ "$(json_get "${HB_E}" reason)" == "runtime_missing" ]] \
+  && pass "SH-E: rc 3 gives runtime_missing" \
+  || fail "SH-E: rc 3 gave $(json_get "${HB_E}" reason)"
+
+set_mode_e rt4
+infer_e
+[[ "$(json_get "${HB_E}" reason)" == "unsafe_state_dir" ]] \
+  && pass "SH-E: rc 4 gives unsafe_state_dir" \
+  || fail "SH-E: rc 4 gave $(json_get "${HB_E}" reason)"
+
+set_mode_e hang
+t0=$(date +%s)
+infer_e REVENIUM_ECON_INFER_BUDGET_SECONDS=2
+elapsed=$(( $(date +%s) - t0 ))
+if [[ "$(json_get "${HB_E}" reason)" == "timeout" && "${elapsed}" -le 12 ]]; then
+  pass "SH-E: a hung sidecar gives timeout within 12s (took ${elapsed}s)"
+else
+  fail "SH-E: hang gave $(json_get "${HB_E}" reason) after ${elapsed}s"
+fi
+
+rm -f "${RT_E}/venv/bin/python"
+infer_e
+[[ "$(json_get "${HB_E}" reason)" == "runtime_missing" ]] \
+  && pass "SH-E: a missing venv python gives runtime_missing" \
+  || fail "SH-E: missing python gave $(json_get "${HB_E}" reason)"
+
+rm -f "${RT_E}/INSTALLED"
+infer_e
+if [[ "$(json_get "${HB_E}" reason)" == "not_provisioned" && -n "$(json_get "${HB_E}" outageId)" ]]; then
+  pass "SH-E: a removed manifest gives not_provisioned and keeps the outageId (it ran, then stopped)"
+else
+  fail "SH-E: removed manifest heartbeat: $(cat "${HB_E}" 2>/dev/null)"
+fi
+
+[[ "${RC_E_BAD}" -eq 0 ]] \
+  && pass "SH-E: every infer invocation exited 0" \
+  || fail "SH-E: ${RC_E_BAD} infer invocation(s) exited non-zero"
+
+# ===========================================================================
+# GROUP SH-F: the infer lock.
+# ===========================================================================
+echo ""
+echo "--- GROUP SH-F: infer lock ---"
+
+HOME_F=$(make_home)
+RT_F="${HOME_F}/rt"
+make_stub_runtime "${RT_F}" ok
+SD_F=$(make_state_dir)
+HB_F="${HOME_F}/.openclaw/skills/revenium/economics-status.json"
+run_econ "${HOME_F}" REVENIUM_SIDECAR_HOME="${RT_F}" REVENIUM_ECON_STATE_DIR="${SD_F}" infer || true
+
+printf 'hang\n' > "${RT_F}/stub-mode"
+env -i HOME="${HOME_F}" PATH="/usr/bin:/bin" LANG=C REVENIUM_SIDECAR_HOME="${RT_F}" \
+  REVENIUM_ECON_STATE_DIR="${SD_F}" REVENIUM_ECON_INFER_BUDGET_SECONDS=20 \
+  bash "${ECON_SH}" infer --openclaw-home "${HOME_F}/.openclaw" >/dev/null 2>&1 &
+BG_F=$!
+
+if wait_for_file "${SD_F}/infer.started" 10; then
+  before_f="$(cksum < "${HB_F}")"
+  t0=$(date +%s)
+  rc_f=0
+  run_econ "${HOME_F}" REVENIUM_SIDECAR_HOME="${RT_F}" REVENIUM_ECON_STATE_DIR="${SD_F}" infer || rc_f=$?
+  elapsed=$(( $(date +%s) - t0 ))
+  if [[ "${rc_f}" -eq 0 && "${elapsed}" -le 3 && "$(cksum < "${HB_F}")" == "${before_f}" ]]; then
+    pass "SH-F: a second infer exits 0 within 3s and leaves the heartbeat untouched"
+  else
+    fail "SH-F: second infer rc=${rc_f} after ${elapsed}s, heartbeat changed: $(cat "${HB_F}")"
+  fi
+
+  printf '%s\n' "$(( $(date +%s) - 1000 ))" > "${SD_F}/infer.started"
+  run_econ "${HOME_F}" REVENIUM_SIDECAR_HOME="${RT_F}" REVENIUM_ECON_STATE_DIR="${SD_F}" infer || true
+  [[ "$(json_get "${HB_F}" reason)" == "stuck" ]] \
+    && pass "SH-F: a holder older than budget + 60s is reported as stuck" \
+    || fail "SH-F: old holder gave $(json_get "${HB_F}" reason)"
+else
+  fail "SH-F: background infer never took the lock"
+fi
+pkill -TERM -P "${BG_F}" 2>/dev/null || true
+kill "${BG_F}" 2>/dev/null || true
+wait "${BG_F}" 2>/dev/null || true
+
+# ===========================================================================
+# GROUP SH-G: a planted revenium.env cannot redirect state or the runtime.
+# ===========================================================================
+echo ""
+echo "--- GROUP SH-G: trusted paths ---"
+
+HOME_G=$(make_home)
+make_stub_runtime "${HOME_G}/.openclaw/evil-rt" ok
+cat > "${HOME_G}/.openclaw/revenium.env" <<ENV
+REVENIUM_ECON_STATE_DIR=${HOME_G}/.openclaw/evil-state
+REVENIUM_SIDECAR_HOME=${HOME_G}/.openclaw/evil-rt
+PATH=/nonexistent:/usr/bin:/bin
+ENV
+HB_G="${HOME_G}/.openclaw/skills/revenium/economics-status.json"
+run_cron "${HOME_G}" || true
+wait_for_file "${HB_G}" 15 || true
+SD_G="$(expected_state_dir "${HOME_G}")"
+[[ ! -e "${HOME_G}/.openclaw/evil-state" ]] \
+  && pass "SH-G: the planted REVENIUM_ECON_STATE_DIR was never created" \
+  || fail "SH-G: ${HOME_G}/.openclaw/evil-state exists"
+[[ "$(json_get "${HB_G}" reason)" == "not_provisioned" ]] \
+  && pass "SH-G: reason is not_provisioned, so the planted runtime was never consulted" \
+  || fail "SH-G: reason $(json_get "${HB_G}" reason) (expected not_provisioned)"
+[[ -f "${SD_G}/heartbeat.state" ]] \
+  && pass "SH-G: state stayed in the trusted standalone dir" \
+  || fail "SH-G: no heartbeat.state in ${SD_G}"
+
+# ===========================================================================
+# GROUP SH-H: unsafe state dirs are refused before anything is written.
+# ===========================================================================
+echo ""
+echo "--- GROUP SH-H: unsafe state dir ---"
+
+HOME_H=$(make_home)
+RT_H="${HOME_H}/rt"
+make_runtime "${RT_H}"
+HB_H="${HOME_H}/.openclaw/skills/revenium/economics-status.json"
+
+SD_H=$(make_state_dir)
+chmod 755 "${SD_H}"
+run_econ "${HOME_H}" REVENIUM_SIDECAR_HOME="${RT_H}" REVENIUM_ECON_STATE_DIR="${SD_H}" infer || true
+if [[ "$(json_get "${HB_H}" reason)" == "unsafe_state_dir" && "$(json_get "${HB_H}" outageId)" == "unsafe_state_dir" \
+  && ! -e "${SD_H}/heartbeat.state" ]]; then
+  pass "SH-H: a 0755 state dir is refused with unsafe_state_dir and left empty"
+else
+  fail "SH-H: 0755 state dir: $(cat "${HB_H}" 2>/dev/null); contents: $(ls -A "${SD_H}")"
+fi
+
+rm -f "${HB_H}"
+INSIDE_H="${HOME_H}/.openclaw/sidecar-state"
+run_econ "${HOME_H}" REVENIUM_SIDECAR_HOME="${RT_H}" REVENIUM_ECON_STATE_DIR="${INSIDE_H}" infer || true
+if [[ "$(json_get "${HB_H}" reason)" == "unsafe_state_dir" && ! -e "${INSIDE_H}" ]]; then
+  pass "SH-H: a state dir inside OPENCLAW_HOME is refused and never created"
+else
+  fail "SH-H: inside-home state dir: $(cat "${HB_H}" 2>/dev/null); exists: $([[ -e "${INSIDE_H}" ]] && echo yes || echo no)"
+fi
+
+rm -f "${HB_H}"
+mkdir -p "${INSIDE_H}"
+chmod 700 "${INSIDE_H}"
+run_econ "${HOME_H}" REVENIUM_SIDECAR_HOME="${RT_H}" REVENIUM_ECON_STATE_DIR="${INSIDE_H}" infer || true
+if [[ "$(json_get "${HB_H}" reason)" == "unsafe_state_dir" && -z "$(ls -A "${INSIDE_H}")" ]]; then
+  pass "SH-H: an existing 0700 dir inside OPENCLAW_HOME is refused and left empty"
+else
+  fail "SH-H: existing inside-home dir: $(cat "${HB_H}" 2>/dev/null); contents: $(ls -A "${INSIDE_H}")"
+fi
+
+# ===========================================================================
+# GROUP SH-I: hostile PROVISION_STATUS values never reach the heartbeat.
+# ===========================================================================
+echo ""
+echo "--- GROUP SH-I: injection ---"
+
+HOME_I=$(make_home)
+RT_I="${HOME_I}/rt"
+make_runtime "${RT_I}"
+HB_I="${HOME_I}/.openclaw/skills/revenium/economics-status.json"
+
+printf '%s\n' "reason=\$(touch ${HOME_I}/pwned)" > "${RT_I}/PROVISION_STATUS"
+run_econ "${HOME_I}" REVENIUM_SIDECAR_HOME="${RT_I}" infer || true
+if [[ "$(json_get "${HB_I}" detail)" == "" && "$(json_get "${HB_I}" state)" == "off" ]]; then
+  pass "SH-I: a command-substitution reason is dropped from detail"
+else
+  fail "SH-I: command-substitution heartbeat: $(cat "${HB_I}" 2>/dev/null)"
+fi
+[[ ! -e "${HOME_I}/pwned" ]] \
+  && pass "SH-I: PROVISION_STATUS is parsed, never executed" \
+  || fail "SH-I: ${HOME_I}/pwned was created"
+
+printf '%s\n' 'reason=download_failed","state":"ok' > "${RT_I}/PROVISION_STATUS"
+run_econ "${HOME_I}" REVENIUM_SIDECAR_HOME="${RT_I}" infer || true
+if [[ "$(json_get "${HB_I}" detail)" == "" && "$(json_get "${HB_I}" state)" == "off" ]]; then
+  pass "SH-I: a JSON-breaking reason is dropped and the heartbeat still parses"
+else
+  fail "SH-I: JSON-injection heartbeat: $(cat "${HB_I}" 2>/dev/null)"
+fi
+
+# ===========================================================================
+# GROUP SH-J: the NemoClaw tick keeps sidecar state on the host.
+# ===========================================================================
+echo ""
+echo "--- GROUP SH-J: NemoClaw arm ---"
+
+TICK_SH="${REPO_ROOT}/scripts/nemoclaw-cron-tick.sh"
+HOME_J=$(mktemp -d "${TMPDIR:-/tmp}/test-econ-nemo.XXXXXX")
+TMP_HOMES+=("${HOME_J}")
+mkdir -p "${HOME_J}/.nemoclaw" "${HOME_J}/.local/bin"
+for cmd in mountpoint crontab sshfs fusermount umount; do
+  ln -sf "${SCRIPT_DIR}/stub-mount-env.sh" "${HOME_J}/.local/bin/${cmd}"
+done
+ln -sf "${SCRIPT_DIR}/stub-nemoclaw.sh" "${HOME_J}/.local/bin/nemoclaw"
+ln -sf "${STUB_REVENIUM_SH}" "${HOME_J}/.local/bin/revenium"
+MNT_J="${HOME_J}/sbx-openclaw-revenium-spike"
+mkdir -p "${MNT_J}/skills/revenium" "${MNT_J}/agents"
+printf 'sshfs %s fuse.sshfs rw 0 0\n' "${MNT_J}" > "${HOME_J}/proc-mounts"
+HB_J="${MNT_J}/skills/revenium/economics-status.json"
+
+env HOME="${HOME_J}" PATH="${HOME_J}/.local/bin:${PATH}" \
+  STUB_MOUNT_UP=1 STUB_PROC_MOUNTS="${HOME_J}/proc-mounts" \
+  REVENIUM_SANDBOX_NAME=revenium-spike REVENIUM_TICK_INTERVAL_MINUTES=1 \
+  REVENIUM_API_KEY=test-api-key-not-real \
+  bash "${TICK_SH}" >/dev/null 2>&1 || true
+wait_for_file "${HB_J}" 15 || true
+SD_J="${HOME_J}/.nemoclaw/revenium-economics/revenium-spike"
+[[ "$(json_get "${HB_J}" reason)" == "not_provisioned" ]] \
+  && pass "SH-J: the tick publishes not_provisioned on the mount" \
+  || fail "SH-J: mount heartbeat: $(cat "${HB_J}" 2>/dev/null)"
+[[ "$(json_get "${HB_J}" _maxAgeSeconds)" == "180" ]] \
+  && pass "SH-J: _maxAgeSeconds is 180 for a 1-minute interval" \
+  || fail "SH-J: _maxAgeSeconds is $(json_get "${HB_J}" _maxAgeSeconds)"
+[[ -d "${SD_J}" && "$(perms "${SD_J}")" == "drwx------" ]] \
+  && pass "SH-J: per-sandbox state dir ~/.nemoclaw/revenium-economics/revenium-spike is drwx------" \
+  || fail "SH-J: state dir ${SD_J} missing or mode '$(perms "${SD_J}")'"
+leaked_j="$(find "${MNT_J}" -name heartbeat.state -o -name 'revenium-economics.log')"
+[[ -z "${leaked_j}" ]] \
+  && pass "SH-J: no sidecar state or log on the SSHFS mount" \
+  || fail "SH-J: sidecar files on the mount: ${leaked_j}"
+
+# ===========================================================================
+# GROUP SH-K: economics-paths.sh units.
+# ===========================================================================
+echo ""
+echo "--- GROUP SH-K: paths library ---"
+
+out_k="$( . "${PATHS_SH}"; econ_nemoclaw_state_dir 'bad/../x' )"
+rc_k=$?
+[[ "${rc_k}" -ne 0 && -z "${out_k}" ]] \
+  && pass "SH-K: an invalid sandbox name returns non-zero with no output" \
+  || fail "SH-K: econ_nemoclaw_state_dir 'bad/../x' rc=${rc_k} out='${out_k}'"
+
+HOME_K=$(make_home)
+mkdir -p "${HOME_K}/other-oc"
+k1="$( HOME="${HOME_K}"; unset XDG_STATE_HOME; . "${PATHS_SH}"; econ_standalone_state_dir "${HOME_K}/.openclaw" )"
+k2="$( HOME="${HOME_K}"; unset XDG_STATE_HOME; . "${PATHS_SH}"; econ_standalone_state_dir "${HOME_K}/.openclaw" )"
+k3="$( HOME="${HOME_K}"; unset XDG_STATE_HOME; . "${PATHS_SH}"; econ_standalone_state_dir "${HOME_K}/other-oc" )"
+if [[ -n "${k1}" && "${k1}" == "${k2}" && "${k1}" != "${k3}" ]]; then
+  pass "SH-K: one OPENCLAW_HOME maps to one state dir, two homes to two"
+else
+  fail "SH-K: state dirs ${k1} / ${k2} / ${k3}"
+fi
+case "${k1}" in
+  "${HOME_K}/.local/state/revenium-economics/standalone-"????????????) pass "SH-K: standalone dir is under ~/.local/state with a 12-hex suffix" ;;
+  *) fail "SH-K: unexpected standalone dir ${k1}" ;;
+esac
+
+( . "${PATHS_SH}"; econ_valid_enum crashing "${ECON_REASONS}" ) \
+  && pass "SH-K: econ_valid_enum accepts crashing" \
+  || fail "SH-K: econ_valid_enum rejected crashing"
+( . "${PATHS_SH}"; econ_valid_enum 'ok;rm' "${ECON_REASONS}" ) \
+  && fail "SH-K: econ_valid_enum accepted 'ok;rm'" \
+  || pass "SH-K: econ_valid_enum rejects 'ok;rm'"
+
+( . "${PATHS_SH}"; econ_is_under "${HOME_K}/.openclaw2" "${HOME_K}/.openclaw" ) \
+  && fail "SH-K: a sibling sharing a name prefix counted as under OPENCLAW_HOME" \
+  || pass "SH-K: econ_is_under does not match a sibling with a shared prefix"
+( . "${PATHS_SH}"; econ_is_under "${HOME_K}/.openclaw/not/yet/created" "${HOME_K}/.openclaw" ) \
+  && pass "SH-K: econ_is_under catches a not-yet-created dir inside OPENCLAW_HOME" \
+  || fail "SH-K: econ_is_under missed a missing dir inside OPENCLAW_HOME"
+( . "${PATHS_SH}"; econ_real_dir "${HOME_K}/x/../.openclaw" >/dev/null ) \
+  && fail "SH-K: econ_real_dir accepted a path with .." \
+  || pass "SH-K: econ_real_dir rejects a path with .."
+
+KV_K="${HOME_K}/kv"
+printf 'reason=%s\001%s\n' "abc" "$(printf 'x%.0s' $(seq 1 100))" > "${KV_K}"
+kv_val="$( . "${PATHS_SH}"; econ_read_kv "${KV_K}" reason )"
+[[ "${kv_val}" == abc* && "${#kv_val}" -eq 64 && "${kv_val}" != *$'\001'* ]] \
+  && pass "SH-K: econ_read_kv strips control characters and cuts to 64" \
+  || fail "SH-K: econ_read_kv returned '${kv_val}' (${#kv_val} chars)"
+( . "${PATHS_SH}"; econ_write_kv "${KV_K}" "reason=ok"$'\n'"outage_id=forged" "detail=" )
+[[ "$(grep -c '' "${KV_K}")" -eq 2 && "$( . "${PATHS_SH}"; econ_read_kv "${KV_K}" outage_id )" == "" ]] \
+  && pass "SH-K: econ_write_kv cannot be made to forge a second key" \
+  || fail "SH-K: econ_write_kv wrote: $(cat "${KV_K}")"
+
 # ===========================================================================
 # Summary
 # ===========================================================================
