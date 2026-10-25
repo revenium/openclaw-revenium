@@ -85,6 +85,13 @@ prune_markers() {
   find "${MARKERS_DIR}" -name '*.jsonl' -mtime +7 -delete 2>/dev/null
 }
 
+# shellcheck source=/dev/null
+. "${SKILL_DIR}/scripts/rotate-log.sh"
+rotate_logs() {
+  rotate_log_if_large "${OPENCLAW_HOME}/revenium-metering.log"
+  rotate_log_if_large "${OPENCLAW_HOME}/skills/revenium/revenium-metering.log"
+}
+
 LOCK_FILE="${OPENCLAW_HOME:-${HOME}/.openclaw}/revenium-metering.lock"
 if command -v flock &>/dev/null; then
   (
@@ -92,6 +99,7 @@ if command -v flock &>/dev/null; then
     run_report "$@" || true
     bash "${SKILL_DIR}/scripts/guardrail-check.sh" || true
     prune_markers || true
+    rotate_logs || true
   ) 9>"${LOCK_FILE}"
 else
   # No flock (e.g. macOS): atomic mkdir lock. `mkdir` fails if the dir exists,
@@ -107,6 +115,7 @@ else
     run_report "$@" || true
     bash "${SKILL_DIR}/scripts/guardrail-check.sh" || true
     prune_markers || true
+    rotate_logs || true
   else
     # Another run holds the lock — skip this tick (matches flock -n behavior).
     exit 0

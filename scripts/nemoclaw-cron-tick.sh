@@ -28,6 +28,9 @@ SANDBOX_NAME="${REVENIUM_SANDBOX_NAME:?ERROR: REVENIUM_SANDBOX_NAME must be set}
 MNT="${HOME}/sbx-openclaw-${SANDBOX_NAME}"
 LOG_FILE="${HOME}/.nemoclaw/revenium-nemoclaw-metering.log"
 mkdir -p "${HOME}/.nemoclaw"
+# shellcheck source=/dev/null
+. "${SKILL_DIR}/scripts/rotate-log.sh"
+rotate_log_if_large "${LOG_FILE}"
 
 # ---------------------------------------------------------------------------
 # Internal logging helper: ISO-8601 prefix + tag.
