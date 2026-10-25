@@ -55,6 +55,10 @@
 #     error. Exercises the fail-open fallback path in guardrail-check.sh.
 #     `meter completion`, `config show`, and `jobs` calls are UNAFFECTED.
 #
+#   STUB_REVENIUM_ENFORCEMENT_ERROR=1
+#     When set, `guardrails enforcement-rules get` exits 1 with a non-EOF
+#     error (an API outage or revoked key, as opposed to an empty team).
+#
 #   STUB_REVENIUM_ENFORCEMENT_JSON=<json>
 #     When set, returned as the body of `guardrails enforcement-rules get`.
 #     Default when unset: '{"rules":[]}'.
@@ -121,6 +125,10 @@ fi
 if [[ "$1 $2 $3" == "guardrails enforcement-rules get" ]]; then
   if [[ -n "${STUB_REVENIUM_GUARDRAILS_FAIL:-}" ]]; then
     echo '{"error":"EOF"}' >&2
+    exit 1
+  fi
+  if [[ -n "${STUB_REVENIUM_ENFORCEMENT_ERROR:-}" ]]; then
+    echo 'Error: 401 Unauthorized' >&2
     exit 1
   fi
   if [[ -n "${STUB_REVENIUM_ENFORCEMENT_JSON:-}" ]]; then

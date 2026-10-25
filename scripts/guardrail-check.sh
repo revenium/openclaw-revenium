@@ -116,9 +116,16 @@ fi
 
 # (F) Fetch enforcement rules — treat EOF/exit-1 (empty team) as soft-fail.
 # Uses --output json (global flag, not --json per Pitfall 2 verification).
-ENFORCEMENT_JSON=$(revenium guardrails enforcement-rules get "${TEAM_ID}" --output json 2>&1) || true
+ENFORCEMENT_RC=0
+ENFORCEMENT_JSON=$(revenium guardrails enforcement-rules get "${TEAM_ID}" --output json 2>&1) || ENFORCEMENT_RC=$?
 if echo "${ENFORCEMENT_JSON}" | grep -q '"error".*EOF'; then
   ENFORCEMENT_JSON='{"rules": []}'
+elif [[ "${ENFORCEMENT_RC}" -ne 0 ]] || ! ENFORCEMENT_JSON="${ENFORCEMENT_JSON}" python3 -c \
+    "import json,os,sys; sys.exit(0 if isinstance(json.loads(os.environ['ENFORCEMENT_JSON']), dict) else 1)" 2>/dev/null; then
+  # Writing an empty rule list here would clear an active halt and stamp the
+  # file fresh; leaving it alone keeps the halt and lets it age into stale.
+  warn "enforcement-rules fetch failed (rc=${ENFORCEMENT_RC}) — guardrails are NOT being enforced; status left to go stale."
+  exit 0
 fi
 
 # Pre-step: build name -> string-id map once per tick (D-15 name-join).

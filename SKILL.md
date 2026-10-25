@@ -47,7 +47,7 @@ The guardrail status is maintained by a background cron job that checks Revenium
 
    **Else if `_maxAgeSeconds` is present and more than `_maxAgeSeconds` seconds have passed since `updatedAt`:** the status is stale, so budget limits may not be enforced. BEFORE doing any other work this turn:
 
-   - Tell the user: "Guardrail status is stale (last updated [updatedAt]). The Revenium budget check has stopped running, so spending limits may not be enforced. Check `~/.openclaw/revenium-metering.log`. Do you want me to proceed anyway, or stop?"
+   - Tell the user: "Guardrail status is stale (last updated [updatedAt]). The Revenium budget check has stopped running, so spending limits may not be enforced. Check `~/.openclaw/skills/revenium/revenium-metering.log` and `~/.openclaw/revenium-metering.log`. Do you want me to proceed anyway, or stop?"
    - WAIT for the user's answer. Do NOT perform the requested operation or any tool calls until the user grants permission.
 
    **Else if `warned` is `true`:** BEFORE doing any other work this turn, execute the warn-and-ask branch:

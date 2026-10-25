@@ -72,11 +72,11 @@ fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 # which left GROUP-C red until plan 19-11 caught and fixed the omission.
 # Re-pinned 2026-10-24: guardrail-check.sh now writes updatedAt/_maxAgeSeconds
 # and warns on an unreadable config.json, so skipped enforcement is visible.
-#   scripts/guardrail-check.sh = 65210700999905962ef980e40c8e96deecd02bd9ec4c79dd858caa8e622d8241
+#   scripts/guardrail-check.sh = d984172b7b1ae7a1241167a36571ccf538d4ccda4189bc8ab1401cb2a0a099be
 # ---------------------------------------------------------------------------
 SC4_CRON_SHA="78124b27a78595821f9914c7c79211934da236aa5aa37c21261de34fa82ecaff"
 SC4_REPORT_SHA="0588982e13e65a55b57cb75c048f877acc9c1136679831a7d50e76a4ed71b216"
-SC4_GUARDRAIL_SHA="65210700999905962ef980e40c8e96deecd02bd9ec4c79dd858caa8e622d8241"
+SC4_GUARDRAIL_SHA="d984172b7b1ae7a1241167a36571ccf538d4ccda4189bc8ab1401cb2a0a099be"
 
 # ---------------------------------------------------------------------------
 # Cleanup: track all tmp HOMEs and clean up on exit

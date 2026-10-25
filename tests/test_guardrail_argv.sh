@@ -780,6 +780,24 @@ else
 fi
 rm -rf "${TMP_HOME_M3}"
 
+TMP_HOME_M4=$(make_openclaw_home)
+STATUS_M4="${TMP_HOME_M4}/skills/revenium/guardrail-status.json"
+LOG_M4="${TMP_HOME_M4}/skills/revenium/revenium-metering.log"
+echo '{"halted":true,"warned":false,"warnedRules":[],"autonomousMode":true,"lastChecked":"2026-01-01T00:00:00+00:00","updatedAt":"2026-01-01T00:00:00+00:00","rules":[]}' > "${STATUS_M4}"
+before_m4=$(cat "${STATUS_M4}")
+STUB_REVENIUM_ENFORCEMENT_ERROR=1 REVENIUM_TICK_INTERVAL_MINUTES=1 run_guardrail_check "${TMP_HOME_M4}" "${ARGV_FILE}" >/dev/null
+if [[ "$(cat "${STATUS_M4}")" == "${before_m4}" ]]; then
+  pass "M: failed enforcement fetch keeps the prior halt and does not refresh updatedAt"
+else
+  fail "M: failed enforcement fetch rewrote the status file (halt cleared / stamped fresh)"
+fi
+if grep -q "guardrails are NOT being enforced" "${LOG_M4}" 2>/dev/null; then
+  pass "M: failed enforcement fetch is logged"
+else
+  fail "M: failed enforcement fetch was silent"
+fi
+rm -rf "${TMP_HOME_M4}"
+
 unset STUB_REVENIUM_ENFORCEMENT_JSON STUB_REVENIUM_BUDGET_RULES_JSON
 
 # ===========================================================================
