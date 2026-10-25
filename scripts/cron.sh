@@ -88,7 +88,11 @@ prune_markers() {
 # shellcheck source=/dev/null
 . "${SKILL_DIR}/scripts/rotate-log.sh"
 rotate_logs() {
-  rotate_log_if_large "${OPENCLAW_HOME}/revenium-metering.log"
+  # install-cron.sh always redirects to ${HOME}/.openclaw, which differs from
+  # OPENCLAW_HOME under an override or the /home/ubuntu fallback.
+  rotate_log_if_large "${HOME}/.openclaw/revenium-metering.log"
+  [[ "${OPENCLAW_HOME}" == "${HOME}/.openclaw" ]] \
+    || rotate_log_if_large "${OPENCLAW_HOME}/revenium-metering.log"
   rotate_log_if_large "${OPENCLAW_HOME}/skills/revenium/revenium-metering.log"
 }
 

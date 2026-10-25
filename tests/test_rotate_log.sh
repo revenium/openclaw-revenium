@@ -49,6 +49,20 @@ else
   fail "RL-A: missing log returned non-zero"
 fi
 
+LOG_OPEN="${TMP}/open.log"
+head -c 150 /dev/zero > "${LOG_OPEN}"
+exec 7>>"${LOG_OPEN}"
+rotate_log_if_large "${LOG_OPEN}"
+printf 'held-writer-line\n' >&7
+exec 7>&-
+printf 'next-tick-line\n' >> "${LOG_OPEN}"
+if grep -q 'held-writer-line' "${LOG_OPEN}.1" && ! grep -q 'held-writer-line' "${LOG_OPEN}" \
+   && grep -q 'next-tick-line' "${LOG_OPEN}" && ! grep -q 'next-tick-line' "${LOG_OPEN}.1"; then
+  pass "RL-A: a writer holding the log open keeps writing to .1; the next open writes the live file"
+else
+  fail "RL-A: output was lost or misplaced across a rotation with an open writer"
+fi
+
 echo ""
 echo "--- GROUP RL-B: cron.sh rotates both standalone logs ---"
 
@@ -63,6 +77,18 @@ if [[ -f "${OC}/revenium-metering.log.1" && -f "${OC}/skills/revenium/revenium-m
   pass "RL-B: cron tick rotated the cron-output log and the skill warn log"
 else
   fail "RL-B: cron tick did not rotate both metering logs"
+fi
+
+HOME_C="${TMP}/home-c"
+OC_C="${TMP}/elsewhere/.openclaw"
+mkdir -p "${HOME_C}/.openclaw" "${OC_C}/agents" "${OC_C}/skills/revenium"
+head -c 200 /dev/zero > "${HOME_C}/.openclaw/revenium-metering.log"
+HOME="${HOME_C}" OPENCLAW_HOME="${OC_C}" ROTATE_LOG_MAX_BYTES=100 PATH="/usr/bin:/bin" \
+  bash "${REPO_ROOT}/scripts/cron.sh" >/dev/null 2>&1 || true
+if [[ -f "${HOME_C}/.openclaw/revenium-metering.log.1" ]]; then
+  pass "RL-B: with OPENCLAW_HOME overridden, the installed cron's redirect target still rotates"
+else
+  fail "RL-B: OPENCLAW_HOME override left \${HOME}/.openclaw/revenium-metering.log unrotated"
 fi
 
 echo ""

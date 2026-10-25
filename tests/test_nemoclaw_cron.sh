@@ -58,7 +58,7 @@ fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 # ---------------------------------------------------------------------------
 # SC4 Baseline sha256 constants (do NOT modify — GROUP C enforces these).
 # Captured from live files 2026-06-08 (shasum -a 256), scripts/cron.sh only:
-#   scripts/cron.sh            = dbfa8c8ff29b92215298ae92932d3e8697a45bc1381a5643757fd2de5a90cfbc
+#   scripts/cron.sh            = 6cdff1c49d03bdd69c10b6b6065e23e7ac1584a403da253c56d8e6d0ca635085
 # scripts/cron.sh re-pinned 2026-10-24: it now rotates the metering logs at
 # the end of each locked tick (scripts/rotate-log.sh).
 # scripts/report.sh and scripts/guardrail-check.sh re-pinned 2026-09-25 by
@@ -76,7 +76,7 @@ fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 # and warns on an unreadable config.json, so skipped enforcement is visible.
 #   scripts/guardrail-check.sh = d984172b7b1ae7a1241167a36571ccf538d4ccda4189bc8ab1401cb2a0a099be
 # ---------------------------------------------------------------------------
-SC4_CRON_SHA="dbfa8c8ff29b92215298ae92932d3e8697a45bc1381a5643757fd2de5a90cfbc"
+SC4_CRON_SHA="6cdff1c49d03bdd69c10b6b6065e23e7ac1584a403da253c56d8e6d0ca635085"
 SC4_REPORT_SHA="0588982e13e65a55b57cb75c048f877acc9c1136679831a7d50e76a4ed71b216"
 SC4_GUARDRAIL_SHA="d984172b7b1ae7a1241167a36571ccf538d4ccda4189bc8ab1401cb2a0a099be"
 
