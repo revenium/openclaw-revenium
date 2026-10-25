@@ -81,6 +81,19 @@ if [[ -f "${HOST_ENV_FILE}" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Step 2b: Per-sandbox sidecar state must sit on the host, off the SSHFS mount
+#   the sandboxed agent can write. cron.sh snapshots this before it sources
+#   the mount's revenium.env.
+# ---------------------------------------------------------------------------
+# shellcheck source=economics-paths.sh
+. "${SKILL_DIR}/scripts/economics-paths.sh"
+if _econ_state_dir="$(econ_nemoclaw_state_dir "${SANDBOX_NAME}")"; then
+  export REVENIUM_ECON_STATE_DIR="${_econ_state_dir}"
+else
+  log "sandbox name not valid for sidecar state; sidecar state dir not exported"
+fi
+
+# ---------------------------------------------------------------------------
 # Step 3: Delegate to cron.sh (D-01, SC1, SC4).
 #   Set OPENCLAW_HOME to the mount so cron.sh resolves session logs,
 #   config.json, and guardrail-status.json through the SSHFS mount.
