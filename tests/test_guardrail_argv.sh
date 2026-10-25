@@ -719,6 +719,85 @@ fi
 
 rm -rf "${TMP_HOME_L_EMPTY}"
 
+# ===========================================================================
+# GROUP M: skipped enforcement is visible — the status file carries updatedAt
+# and, when the cron line exports its interval, _maxAgeSeconds, so the
+# BUDGET-GUARD.md stale branch can fire; an unreadable config.json is logged
+# instead of silently disabling guardrails.
+# ===========================================================================
+echo ""
+echo "--- GROUP M: freshness fields and unreadable config ---"
+
+export STUB_REVENIUM_ENFORCEMENT_JSON='{"rules":[]}'
+export STUB_REVENIUM_BUDGET_RULES_JSON='[]'
+
+status_field() {
+  python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$1" "$2" 2>/dev/null
+}
+
+TMP_HOME_M1=$(make_openclaw_home)
+STATUS_M1="${TMP_HOME_M1}/skills/revenium/guardrail-status.json"
+REVENIUM_TICK_INTERVAL_MINUTES=5 run_guardrail_check "${TMP_HOME_M1}" "${ARGV_FILE}" >/dev/null
+if [[ -n "$(status_field "${STATUS_M1}" updatedAt)" ]]; then
+  pass "M: updatedAt written to guardrail-status.json"
+else
+  fail "M: updatedAt missing — BUDGET-GUARD.md stale check can never fire"
+fi
+if [[ "$(status_field "${STATUS_M1}" _maxAgeSeconds)" == "900" ]]; then
+  pass "M: _maxAgeSeconds = 3 x 5-minute interval (900)"
+else
+  fail "M: _maxAgeSeconds expected 900, got '$(status_field "${STATUS_M1}" _maxAgeSeconds)'"
+fi
+rm -rf "${TMP_HOME_M1}"
+
+TMP_HOME_M2=$(make_openclaw_home)
+STATUS_M2="${TMP_HOME_M2}/skills/revenium/guardrail-status.json"
+REVENIUM_TICK_INTERVAL_MINUTES= run_guardrail_check "${TMP_HOME_M2}" "${ARGV_FILE}" >/dev/null
+if [[ -z "$(status_field "${STATUS_M2}" _maxAgeSeconds)" ]]; then
+  pass "M: _maxAgeSeconds omitted when the cron line does not export an interval"
+else
+  fail "M: _maxAgeSeconds guessed without an interval — risks a stale warning every turn"
+fi
+rm -rf "${TMP_HOME_M2}"
+
+TMP_HOME_M3=$(make_openclaw_home)
+STATUS_M3="${TMP_HOME_M3}/skills/revenium/guardrail-status.json"
+LOG_M3="${TMP_HOME_M3}/skills/revenium/revenium-metering.log"
+printf '{"ruleIds": ["rule-abc123"' > "${TMP_HOME_M3}/skills/revenium/config.json"
+before_m3=$(cat "${STATUS_M3}")
+exit_m3=0
+STUB_REVENIUM_ARGV_FILE="${ARGV_FILE}" OPENCLAW_HOME="${TMP_HOME_M3}" HOME="${TMP_FAKE_HOME}" \
+  bash "${GUARDRAIL_CHECK_SH}" >/dev/null 2>&1 || exit_m3=$?
+if [[ "${exit_m3}" -eq 0 ]] && grep -q "guardrails are NOT being enforced" "${LOG_M3}" 2>/dev/null; then
+  pass "M: unreadable config.json logs a warning and still exits 0"
+else
+  fail "M: unreadable config.json was silent (exit=${exit_m3})"
+fi
+if [[ "$(cat "${STATUS_M3}")" == "${before_m3}" ]]; then
+  pass "M: unreadable config.json leaves the status file untouched (ages into stale)"
+else
+  fail "M: unreadable config.json rewrote the status file"
+fi
+rm -rf "${TMP_HOME_M3}"
+
+TMP_HOME_M4=$(make_openclaw_home)
+STATUS_M4="${TMP_HOME_M4}/skills/revenium/guardrail-status.json"
+LOG_M4="${TMP_HOME_M4}/skills/revenium/revenium-metering.log"
+echo '{"halted":true,"warned":false,"warnedRules":[],"autonomousMode":true,"lastChecked":"2026-01-01T00:00:00+00:00","updatedAt":"2026-01-01T00:00:00+00:00","rules":[]}' > "${STATUS_M4}"
+before_m4=$(cat "${STATUS_M4}")
+STUB_REVENIUM_ENFORCEMENT_ERROR=1 REVENIUM_TICK_INTERVAL_MINUTES=1 run_guardrail_check "${TMP_HOME_M4}" "${ARGV_FILE}" >/dev/null
+if [[ "$(cat "${STATUS_M4}")" == "${before_m4}" ]]; then
+  pass "M: failed enforcement fetch keeps the prior halt and does not refresh updatedAt"
+else
+  fail "M: failed enforcement fetch rewrote the status file (halt cleared / stamped fresh)"
+fi
+if grep -q "guardrails are NOT being enforced" "${LOG_M4}" 2>/dev/null; then
+  pass "M: failed enforcement fetch is logged"
+else
+  fail "M: failed enforcement fetch was silent"
+fi
+rm -rf "${TMP_HOME_M4}"
+
 unset STUB_REVENIUM_ENFORCEMENT_JSON STUB_REVENIUM_BUDGET_RULES_JSON
 
 # ===========================================================================

@@ -39,11 +39,16 @@ The guardrail status is maintained by a background cron job that checks Revenium
 
 1. **Read guardrail status.** Read `~/.openclaw/skills/revenium/guardrail-status.json`. If it does not exist, tell the user "Guardrail status not yet available. The metering cron may not be installed. Run `bash ~/.openclaw/skills/revenium/scripts/install-cron.sh` to set it up." Then proceed with the operation.
 
-2. **Parse the status.** Extract `halted`, `warned`, and (when `warned` is true) `warnedRules` from the JSON.
+2. **Parse the status.** Extract `halted`, `warned`, `updatedAt`, `_maxAgeSeconds`, and (when `warned` is true) `warnedRules` from the JSON.
 
 3. **Evaluate:**
 
    **If `halted` is `true`:** Follow the HALT CHECK above — output ONLY the halt message using `haltedRule` fields, and stop.
+
+   **Else if `_maxAgeSeconds` is present and more than `_maxAgeSeconds` seconds have passed since `updatedAt`:** the status is stale, so budget limits may not be enforced. BEFORE doing any other work this turn:
+
+   - Tell the user: "Guardrail status is stale (last updated [updatedAt]). The Revenium budget check has stopped running, so spending limits may not be enforced. Check `~/.openclaw/skills/revenium/revenium-metering.log` and `~/.openclaw/revenium-metering.log`. Do you want me to proceed anyway, or stop?"
+   - WAIT for the user's answer. Do NOT perform the requested operation or any tool calls until the user grants permission.
 
    **Else if `warned` is `true`:** BEFORE doing any other work this turn, execute the warn-and-ask branch:
 

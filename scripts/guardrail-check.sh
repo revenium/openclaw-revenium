@@ -40,9 +40,16 @@ import json, os
 try:
     ids = json.load(open(os.environ['CONFIG_FILE'])).get('ruleIds', [])
     print(json.dumps(ids))
-except Exception:
+except FileNotFoundError:
     print('[]')
-" 2>/dev/null || echo '[]')
+except Exception:
+    print('UNREADABLE')
+" 2>/dev/null || echo 'UNREADABLE')
+
+if [[ "${RULE_IDS_JSON}" == "UNREADABLE" ]]; then
+  warn "config.json at ${CONFIG_FILE} is unreadable or not valid JSON — guardrails are NOT being enforced."
+  exit 0
+fi
 
 RULE_IDS_COUNT=$(echo "${RULE_IDS_JSON}" | python3 -c \
   "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
@@ -109,9 +116,16 @@ fi
 
 # (F) Fetch enforcement rules — treat EOF/exit-1 (empty team) as soft-fail.
 # Uses --output json (global flag, not --json per Pitfall 2 verification).
-ENFORCEMENT_JSON=$(revenium guardrails enforcement-rules get "${TEAM_ID}" --output json 2>&1) || true
+ENFORCEMENT_RC=0
+ENFORCEMENT_JSON=$(revenium guardrails enforcement-rules get "${TEAM_ID}" --output json 2>&1) || ENFORCEMENT_RC=$?
 if echo "${ENFORCEMENT_JSON}" | grep -q '"error".*EOF'; then
   ENFORCEMENT_JSON='{"rules": []}'
+elif [[ "${ENFORCEMENT_RC}" -ne 0 ]] || ! ENFORCEMENT_JSON="${ENFORCEMENT_JSON}" python3 -c \
+    "import json,os,sys; sys.exit(0 if isinstance(json.loads(os.environ['ENFORCEMENT_JSON']), dict) else 1)" 2>/dev/null; then
+  # Writing an empty rule list here would clear an active halt and stamp the
+  # file fresh; leaving it alone keeps the halt and lets it age into stale.
+  warn "enforcement-rules fetch failed (rc=${ENFORCEMENT_RC}) — guardrails are NOT being enforced; status left to go stale."
+  exit 0
 fi
 
 # Pre-step: build name -> string-id map once per tick (D-15 name-join).
@@ -129,6 +143,7 @@ HALT_OUTPUT=$(
   BUDGET_RULES_JSON="${BUDGET_RULES_JSON}" \
   RULE_IDS_JSON="${RULE_IDS_JSON}" \
   AUTONOMOUS="${AUTONOMOUS}" \
+  TICK_INTERVAL_MINUTES="${REVENIUM_TICK_INTERVAL_MINUTES:-}" \
   python3 - <<'PY'
 import json, os, tempfile
 from datetime import datetime, timezone
@@ -318,8 +333,16 @@ data = {
     'warnedRules': warned_rules,
     'autonomousMode': autonomous,
     'lastChecked': now,
+    'updatedAt': now,
     'rules': new_rules,
 }
+# BUDGET-GUARD.md treats the file as stale past _maxAgeSeconds, so a cron that
+# stops running is surfaced to the user instead of trusting the last verdict.
+# Omitted when the cron line predates the interval export: guessing a too-short
+# TTL would warn on every turn.
+tick_interval = os.environ.get('TICK_INTERVAL_MINUTES', '')
+if tick_interval.isdigit() and int(tick_interval) > 0:
+    data['_maxAgeSeconds'] = int(tick_interval) * 60 * 3
 if new_halted and halted_at:
     data['haltedAt'] = halted_at
 if halted_rule:

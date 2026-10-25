@@ -82,7 +82,7 @@ if command -v brew &>/dev/null; then
   [[ -d "${BREW_BIN}" ]] && CRON_PATH="${BREW_BIN}:${CRON_PATH}"
 fi
 
-CRON_LINE="${CRON_SCHEDULE} PATH=${CRON_PATH} bash ${CRON_SCRIPT} >> ${HOME}/.openclaw/revenium-metering.log 2>&1 ${CRON_COMMENT}"
+CRON_LINE="${CRON_SCHEDULE} PATH=${CRON_PATH} REVENIUM_TICK_INTERVAL_MINUTES=${INTERVAL} bash ${CRON_SCRIPT} >> ${HOME}/.openclaw/revenium-metering.log 2>&1 ${CRON_COMMENT}"
 
 chmod +x "${SKILL_DIR}/scripts/report.sh"
 chmod +x "${SKILL_DIR}/scripts/cron.sh"
