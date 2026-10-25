@@ -442,6 +442,10 @@ else
   # Also, disable auto-install by ensuring neither apt-get nor dnf exists on PATH.
   # We achieve this by using only the stub bin dir (no system commands).
 
+  # The PATH below holds only stubs, so the installer is started via ${BASH}
+  # (an absolute path); a bare `bash` would not resolve and the run would exit
+  # 127 before reaching the sshfs gate.
+
   # Add a no-op apt-get and dnf stub that fails (simulates no package manager)
   printf '#!/bin/bash\nexit 1\n' > "${TMP_HOME_F}/.local/bin/apt-get"
   printf '#!/bin/bash\nexit 1\n' > "${TMP_HOME_F}/.local/bin/dnf"
@@ -453,7 +457,7 @@ else
              HOME="${TMP_HOME_F}" \
              PATH="${TMP_HOME_F}/.local/bin" \
              REVENIUM_SANDBOX_NAME="revenium-spike" \
-             bash "${INSTALL_SH}" --sandbox "revenium-spike" 2>&1) || rc_f=$?
+             "${BASH}" "${INSTALL_SH}" --sandbox "revenium-spike" 2>&1) || rc_f=$?
 
   # Assert non-zero exit
   if [[ "${rc_f}" -ne 0 ]]; then
@@ -609,8 +613,13 @@ else
   printf '{"halted":false,"warned":false,"lastChecked":"2026-06-08T00:00:00Z","rules":[]}\n' \
     > "${STATUS_I}"
 
+  # The tick judges mount health from the mount table, so list MNT_I as mounted.
+  MOUNTS_I="${TMP_HOME_I}/proc-mounts"
+  printf 'sshfs %s fuse.sshfs rw 0 0\n' "${MNT_I}" > "${MOUNTS_I}"
+
   rc_i=0
-  output_i=$(STUB_MOUNT_UP=1 run_tick "${TMP_HOME_I}" "${NEMO_I}" "${MOUNT_I}" 2>&1) || rc_i=$?
+  output_i=$(STUB_MOUNT_UP=1 STUB_PROC_MOUNTS="${MOUNTS_I}" \
+    run_tick "${TMP_HOME_I}" "${NEMO_I}" "${MOUNT_I}" 2>&1) || rc_i=$?
 
   # Assert _maxAgeSeconds field in status file
   if [[ -f "${STATUS_I}" ]] && grep -qF "_maxAgeSeconds" "${STATUS_I}"; then

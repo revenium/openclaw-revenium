@@ -44,14 +44,16 @@ log() {
 #   Must run BEFORE auth sourcing or cron.sh delegation so a dead mount
 #   never triggers a guardrail-status.json write.
 # ---------------------------------------------------------------------------
+# STUB_PROC_MOUNTS: hermetic test override (macOS has no /proc/mounts).
+PROC_MOUNTS="${STUB_PROC_MOUNTS:-/proc/mounts}"
 # Health = in the mount table AND the mountpoint ROOT stats OK. Stat the root, not a
 # subdir — a transient SSHFS subdir cache-lag must not look broken or trigger a
 # teardown of a healthy mount. Only (re)mount when not healthy.
-if ! { grep -qsF " ${MNT} " /proc/mounts 2>/dev/null && stat "${MNT}" >/dev/null 2>&1; }; then
+if ! { grep -qsF " ${MNT} " "${PROC_MOUNTS}" 2>/dev/null && stat "${MNT}" >/dev/null 2>&1; }; then
   log "mount not healthy — (re)mounting: ${SANDBOX_NAME}"
   # Dead/stale (listed but root won't stat — backing SSH connection dropped) blocks
   # `share mount` with "permission denied creating the directory". Clear it first.
-  if grep -qsF " ${MNT} " /proc/mounts 2>/dev/null; then
+  if grep -qsF " ${MNT} " "${PROC_MOUNTS}" 2>/dev/null; then
     log "clearing stale mount at ${MNT}"
     fusermount -u "${MNT}" 2>>"${LOG_FILE}" || umount -l "${MNT}" 2>>"${LOG_FILE}" || true
     sleep 1
@@ -59,7 +61,7 @@ if ! { grep -qsF " ${MNT} " /proc/mounts 2>/dev/null && stat "${MNT}" >/dev/null
   mkdir -p "${MNT}" 2>/dev/null || true
   # "already mounted/exists" is not a failure; verify the end state below.
   nemoclaw "${SANDBOX_NAME}" share mount /sandbox/.openclaw "${MNT}" >>"${LOG_FILE}" 2>&1 || true
-  if ! { grep -qsF " ${MNT} " /proc/mounts 2>/dev/null && stat "${MNT}" >/dev/null 2>&1; }; then
+  if ! { grep -qsF " ${MNT} " "${PROC_MOUNTS}" 2>/dev/null && stat "${MNT}" >/dev/null 2>&1; }; then
     log "remount failed — skipping tick (rc=3)"
     exit 3
   fi

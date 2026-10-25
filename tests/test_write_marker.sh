@@ -119,7 +119,7 @@ fi
 
 # Validate markers/ dir is mode 0700
 if [[ -d "${TMP_MARKERS}" ]]; then
-  dir_perms=$(stat -f "%Lp" "${TMP_MARKERS}" 2>/dev/null || stat -c "%a" "${TMP_MARKERS}" 2>/dev/null || echo "unknown")
+  dir_perms=$(stat -c "%a" "${TMP_MARKERS}" 2>/dev/null || stat -f "%Lp" "${TMP_MARKERS}" 2>/dev/null || echo "unknown")
   if [[ "${dir_perms}" == "700" ]]; then
     pass "markers/ directory is mode 0700"
   else
