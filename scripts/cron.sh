@@ -21,6 +21,18 @@ if [[ -z "${OPENCLAW_HOME}" ]]; then
   OPENCLAW_HOME="${OPENCLAW_HOME:-${HOME}/.openclaw}"
 fi
 
+# Snapshot the values the economics sidecar trusts BEFORE revenium.env is
+# sourced. On NemoClaw that file sits on the agent-writable SSHFS mount and is
+# sourced with allexport, so anything it sets (state dir, runtime dir, PATH)
+# must never decide where the sidecar keeps state or which runtime it runs.
+_ECON_HOME="${HOME:-}"
+_ECON_PATH="${PATH:-}"
+_ECON_OPENCLAW_HOME="${OPENCLAW_HOME:-}"
+_ECON_SIDECAR_HOME="${REVENIUM_SIDECAR_HOME:-}"
+_ECON_STATE_DIR="${REVENIUM_ECON_STATE_DIR:-}"
+_ECON_XDG_STATE_HOME="${XDG_STATE_HOME:-}"
+_ECON_INTERVAL="${REVENIUM_TICK_INTERVAL_MINUTES:-}"
+
 # Source environment from revenium.env if it exists
 ENV_FILE="${OPENCLAW_HOME}/revenium.env"
 if [[ -f "${ENV_FILE}" ]]; then
@@ -65,6 +77,33 @@ run_report() {
   fi
 }
 
+# Run the economics sidecar shim with only the snapshotted values. economics.sh
+# always exits 0 and bounds its own run. fd 9 (the metering lock) is closed so
+# a sidecar child that outlives its bound cannot hold the lock.
+run_economics() {
+  /usr/bin/env -i \
+    HOME="${_ECON_HOME}" PATH="${_ECON_PATH:-/usr/bin:/bin}" LANG=C \
+    REVENIUM_SIDECAR_HOME="${_ECON_SIDECAR_HOME}" \
+    REVENIUM_ECON_STATE_DIR="${_ECON_STATE_DIR}" \
+    XDG_STATE_HOME="${_ECON_XDG_STATE_HOME}" \
+    REVENIUM_TICK_INTERVAL_MINUTES="${_ECON_INTERVAL}" \
+    bash "${SKILL_DIR}/scripts/economics.sh" "$@" --openclaw-home "${_ECON_OPENCLAW_HOME}" 9>&-
+}
+
+# Start the infer stage detached, after the metering lock is released, so a
+# slow model call never delays report.sh or guardrail-check.sh. economics.sh
+# takes its own infer lock and writes its own log.
+launch_economics_infer() {
+  nohup /usr/bin/env -i \
+    HOME="${_ECON_HOME}" PATH="${_ECON_PATH:-/usr/bin:/bin}" LANG=C \
+    REVENIUM_SIDECAR_HOME="${_ECON_SIDECAR_HOME}" \
+    REVENIUM_ECON_STATE_DIR="${_ECON_STATE_DIR}" \
+    XDG_STATE_HOME="${_ECON_XDG_STATE_HOME}" \
+    REVENIUM_TICK_INTERVAL_MINUTES="${_ECON_INTERVAL}" \
+    bash "${SKILL_DIR}/scripts/economics.sh" infer --openclaw-home "${_ECON_OPENCLAW_HOME}" \
+    </dev/null >/dev/null 2>&1 9>&- &
+}
+
 # Run the metering + guardrail-check pass under a mutual-exclusion lock so two
 # overlapping cron ticks can't race on the offsets/status files and double-meter.
 # This matters at short intervals: the cron can run as often as every minute,
@@ -100,8 +139,10 @@ LOCK_FILE="${OPENCLAW_HOME:-${HOME}/.openclaw}/revenium-metering.lock"
 if command -v flock &>/dev/null; then
   (
     flock -n 9 || exit 0
+    run_economics deliver --phase pre || true
     run_report "$@" || true
     bash "${SKILL_DIR}/scripts/guardrail-check.sh" || true
+    run_economics deliver --phase post || true
     prune_markers || true
     rotate_logs || true
   ) 9>"${LOCK_FILE}"
@@ -116,12 +157,17 @@ else
   fi
   if mkdir "${LOCK_DIR}" 2>/dev/null; then
     trap 'rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT
+    run_economics deliver --phase pre || true
     run_report "$@" || true
     bash "${SKILL_DIR}/scripts/guardrail-check.sh" || true
+    run_economics deliver --phase post || true
     prune_markers || true
     rotate_logs || true
   else
-    # Another run holds the lock — skip this tick (matches flock -n behavior).
-    exit 0
+    # Another run holds the lock — skip metering this tick (matches flock -n
+    # behavior). Fall through: the infer stage below takes its own lock.
+    :
   fi
 fi
+
+launch_economics_infer || true
