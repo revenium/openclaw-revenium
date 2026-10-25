@@ -42,6 +42,10 @@
 
 set -uo pipefail
 
+# A developer shell's real credentials must not reach the stubs or change the
+# creds-written fingerprint the ledger seeds below are computed for.
+unset REVENIUM_API_KEY REVENIUM_TEAM_ID REVENIUM_TENANT_ID REVENIUM_OWNER_ID
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROVISION_SH="${REPO_ROOT}/scripts/post-install-nemoclaw.sh"
@@ -399,6 +403,71 @@ else
 fi
 
 # ===========================================================================
+# GROUP H2: key rotation — the creds-written ledger value fingerprints the
+#   config content, so a re-run with the same key skips the write while a
+#   rotated key is re-written and re-verified by the meter probe. Reuses
+#   GROUP-G's provisioned home and ledger.
+# ===========================================================================
+echo ""
+echo "--- GROUP H2: creds re-written on key rotation, skipped otherwise ---"
+
+if grep -qE '^creds-written=[0-9a-f]{64}$' "${LEDGER_G}" 2>/dev/null; then
+  pass "GROUP-H2: creds-written ledger value is a sha256 fingerprint"
+else
+  fail "GROUP-H2: creds-written ledger value is not a sha256 fingerprint"
+fi
+if grep -aqF 'argv-leak-probe-key' "${LEDGER_G}" 2>/dev/null; then
+  fail "GROUP-H2: plaintext API key written to the ledger"
+else
+  pass "GROUP-H2: ledger does not contain the plaintext API key"
+fi
+
+# The hermetic env has no sshfs, so a full install always stops at the metering
+# loop and never exits 0. Each run is instead checked for the log lines proving
+# it reached the creds and probe steps; a run that died earlier fails here.
+echo "metering-loop-installed=1" >> "${LEDGER_G}"
+
+STDIN_H2_SAME=$(mktemp "${TMPDIR:-/tmp}/test-nemo-stdin-h2s.XXXXXX")
+ARGV_H2_SAME=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-h2s.XXXXXX")
+TMP_HOMES+=("${STDIN_H2_SAME}" "${ARGV_H2_SAME}")
+output_h2_same=$(run_provision "${TMP_HOME_G}" "${ARGV_H2_SAME}" \
+  env STUB_NEMOCLAW_STDIN_FILE="${STDIN_H2_SAME}" REVENIUM_API_KEY="argv-leak-probe-key" 2>&1) || true
+if echo "${output_h2_same}" | grep -qF "Revenium credentials already written (ledger)" \
+   && echo "${output_h2_same}" | grep -qF "Meter probe already passed (ledger)" \
+   && [[ ! -s "${STDIN_H2_SAME}" ]] && ! grep -aqF 'meter completion' "${ARGV_H2_SAME}" 2>/dev/null; then
+  pass "GROUP-H2: re-run with the same key reaches and skips the creds write and the meter probe"
+else
+  fail "GROUP-H2: same-key re-run did not reach-and-skip creds/probe. Output: ${output_h2_same}"
+fi
+
+STDIN_H2_ROT=$(mktemp "${TMPDIR:-/tmp}/test-nemo-stdin-h2r.XXXXXX")
+ARGV_H2_ROT=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-h2r.XXXXXX")
+TMP_HOMES+=("${STDIN_H2_ROT}" "${ARGV_H2_ROT}")
+output_h2_rot=$(run_provision "${TMP_HOME_G}" "${ARGV_H2_ROT}" \
+  env STUB_NEMOCLAW_STDIN_FILE="${STDIN_H2_ROT}" REVENIUM_API_KEY="rotated-probe-key" 2>&1) || true
+if echo "${output_h2_rot}" | grep -qF "Revenium credentials changed since the last install" \
+   && grep -qF 'rotated-probe-key' "${STDIN_H2_ROT}" 2>/dev/null; then
+  pass "GROUP-H2: rotated key is detected and written into the sandbox"
+else
+  fail "GROUP-H2: rotated key was NOT written (stale key left in the sandbox). Output: ${output_h2_rot}"
+fi
+if grep -aqF 'meter completion' "${ARGV_H2_ROT}" 2>/dev/null; then
+  pass "GROUP-H2: meter probe re-runs to verify the rotated key"
+else
+  fail "GROUP-H2: meter probe skipped after key rotation"
+fi
+if echo "${output_h2_rot}" | grep -qF "Installing host-side metering loop"; then
+  pass "GROUP-H2: host metering cron is re-installed so revenium-host.env gets the rotated key"
+else
+  fail "GROUP-H2: host metering cron skipped after rotation — scheduled metering keeps the old key"
+fi
+if grep -aqF 'rotated-probe-key' "${ARGV_H2_ROT}" 2>/dev/null; then
+  fail "GROUP-H2: rotated key appears in nemoclaw argv"
+else
+  pass "GROUP-H2: rotated key does not appear in nemoclaw argv"
+fi
+
+# ===========================================================================
 # GROUP I: NCDEPLOY-01 — SKILL.md guard + ✓ ready assertion
 #
 #   I-a: SKILL.md absent from resolved skill dir → non-zero exit + "SKILL.md not found"
@@ -425,7 +494,7 @@ _seed_phase13_14_ledger() {
 revenium-policy-applied=1
 gh-release-policy-applied=1
 cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
-creds-written=1
+creds-written=f64cb6da2c257701ff8580e3ed5f65fa2be762728fe6a3e3722795f24deb4bb9
 meter-probe-passed=1
 metering-loop-installed=1
 SEED
@@ -602,7 +671,7 @@ _seed_through_skill() {
 revenium-policy-applied=1
 gh-release-policy-applied=1
 cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
-creds-written=1
+creds-written=f64cb6da2c257701ff8580e3ed5f65fa2be762728fe6a3e3722795f24deb4bb9
 meter-probe-passed=1
 metering-loop-installed=1
 skill-installed-nemoclaw=1
@@ -825,7 +894,7 @@ _seed_all_but_host() {
 revenium-policy-applied=1
 gh-release-policy-applied=1
 cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
-creds-written=1
+creds-written=f64cb6da2c257701ff8580e3ed5f65fa2be762728fe6a3e3722795f24deb4bb9
 meter-probe-passed=1
 metering-loop-installed=1
 skill-installed-nemoclaw=1
@@ -855,9 +924,15 @@ while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2;; *) shift;; esac; don
 [ -n "${out}" ] && cp "${STUB_CURL_FIXTURE}" "${out}"
 exit 0
 CURL_STUB
+  # Fakes only the tarball check (`sha256sum <file>`); stdin hashing, such as
+  # the creds-written fingerprint, must stay real or every run looks rotated.
   cat > "${bindir}/sha256sum" << 'SHA_STUB'
 #!/usr/bin/env bash
-echo "${STUB_SHA256_VALUE}  ${1:-rev.tgz}"
+if [ $# -eq 0 ]; then
+  if [ -x /usr/bin/sha256sum ]; then exec /usr/bin/sha256sum; fi
+  exec /usr/bin/shasum -a 256
+fi
+echo "${STUB_SHA256_VALUE}  $1"
 SHA_STUB
   chmod +x "${bindir}/curl" "${bindir}/sha256sum"
 }
@@ -982,12 +1057,14 @@ run_provision_no_ledger() {
   bash "${PROVISION_SH}" 2>&1
 }
 
+# Ledger seeds carry the creds-written fingerprint for the default
+# REVENIUM_API_KEY=test-key: printf 'api-key: "test-key"\n' | shasum -a 256
 _seed_full() {
   cat >> "$1" << 'SEED_FULL'
 revenium-policy-applied=1
 gh-release-policy-applied=1
 cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
-creds-written=1
+creds-written=f64cb6da2c257701ff8580e3ed5f65fa2be762728fe6a3e3722795f24deb4bb9
 meter-probe-passed=1
 cli-delivered-host=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
 metering-loop-installed=1

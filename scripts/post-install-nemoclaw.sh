@@ -132,6 +132,25 @@ ledger_has() {
     grep -q "^${key}=" "${LEDGER_FILE}" 2>/dev/null
 }
 
+ledger_get() {
+    grep "^$1=" "${LEDGER_FILE}" 2>/dev/null | cut -d= -f2-
+}
+
+ledger_unset() {
+    [[ -f "${LEDGER_FILE}" ]] || return 0
+    { grep -v "^$1=" "${LEDGER_FILE}" || true; } > "${LEDGER_FILE}.tmp" && \
+      mv "${LEDGER_FILE}.tmp" "${LEDGER_FILE}"
+}
+
+# sha256_stdin — hex digest of stdin, so hashed secrets never reach argv.
+sha256_stdin() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum | awk '{print $1}'
+    else
+        shasum -a 256 | awk '{print $1}'
+    fi
+}
+
 # Set to 1 by ledger_set the first time a provisioning step actually does work,
 # so the success banner can distinguish a fresh provision from an idempotent
 # re-run where every step was skipped via the ledger (WR-03).
@@ -654,17 +673,11 @@ deliver_revenium_cli_host() {
 
 # write_revenium_creds — write REVENIUM_* env vars to /sandbox/.config/revenium/config.yaml
 # chmod 600. API key MUST NOT appear on a nemoclaw exec command line (D-05, T-13-KEY).
-# Ledger key: creds-written
+# Ledger key: creds-written (value: sha256 of the config content, so a rotated
+# key or changed team/tenant/owner ID is re-written on the next run)
 write_revenium_creds() {
-    if ledger_has "creds-written"; then
-        info "Revenium credentials already written (ledger) — skipping."
-        return 0
-    fi
-
     [[ -n "${REVENIUM_API_KEY:-}" ]] \
         || fail "REVENIUM_API_KEY not set — export it before running the install"
-
-    step "Writing revenium credentials into sandbox"
 
     # Build config content on the host side; optional fields only when set.
     # The config-file field for the API key is `api-key:` — NOT `key:`. The
@@ -687,6 +700,22 @@ tenant-id: $(yaml_dquote "${REVENIUM_TENANT_ID}")"
     [[ -n "${REVENIUM_OWNER_ID:-}"  ]] && config_content="${config_content}
 owner-id: $(yaml_dquote "${REVENIUM_OWNER_ID}")"
 
+    local creds_fingerprint
+    creds_fingerprint=$(printf '%s\n' "${config_content}" | sha256_stdin)
+    if [[ "$(ledger_get "creds-written")" == "${creds_fingerprint}" ]]; then
+        info "Revenium credentials already written (ledger) — skipping."
+        return 0
+    fi
+    if ledger_has "creds-written"; then
+        warn "Revenium credentials changed since the last install — re-writing them, re-running the meter probe, and refreshing the host metering cron."
+        # The probe is the only check that the new key authenticates, and the
+        # host cron reads its own copy of the key from revenium-host.env.
+        ledger_unset "meter-probe-passed"
+        ledger_unset "metering-loop-installed"
+    fi
+
+    step "Writing revenium credentials into sandbox"
+
     # The YAML travels on stdin, never argv: any argv element is visible in the
     # host process list, and real NemoClaw gRPC exec REJECTS argv elements
     # containing a newline/CR (Phase 13 live-smoke finding). stdin is written
@@ -698,7 +727,7 @@ owner-id: $(yaml_dquote "${REVENIUM_OWNER_ID}")"
     printf '%s\n' "${config_content}" \
         | nemoclaw "${SANDBOX_NAME}" exec --no-tty -- sh -lc "umask 077 && mkdir -p /sandbox/.config/revenium && cat > /sandbox/.config/revenium/config.yaml.tmp && mv -f /sandbox/.config/revenium/config.yaml.tmp /sandbox/.config/revenium/config.yaml"
 
-    ledger_set "creds-written" "1"
+    ledger_set "creds-written" "${creds_fingerprint}"
     info "Credentials written to /sandbox/.config/revenium/config.yaml"
 }
 
