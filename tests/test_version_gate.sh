@@ -196,11 +196,23 @@ echo ""
 echo "--- GROUP VG-D: GATE-01 passing case reaches routing dispatch ---"
 
 TMP_HOME_VGD=$(make_home openclaw)
+# A passing gate hands off to the real post-install.sh, which runs
+# `openclaw doctor --fix` and installs into the user's crontab (crontab is per
+# user, not per HOME). Run a copy of install.sh whose post-install is a stub.
+VGD_SCRIPTS="${TMP_HOME_VGD}/scripts"
+mkdir -p "${VGD_SCRIPTS}"
+cp "${INSTALL_SH}" "${VERSION_GATE_SH}" "${VGD_SCRIPTS}/"
+for stub in post-install.sh post-install-nemoclaw.sh; do
+  printf '#!/usr/bin/env bash\necho "VGD_STUB_REACHED %s"\n' "${stub}" > "${VGD_SCRIPTS}/${stub}"
+done
 exit_code_vgd=0
-output_vgd=$(STUB_OPENCLAW_VERSION_OUTPUT="OpenClaw 2026.9.6 (eb377ac)" HOME="${TMP_HOME_VGD}" \
-    bash "${INSTALL_SH}" 2>&1) || exit_code_vgd=$?
+# Node and sqlite3 are pinned so the result does not depend on the host's versions.
+output_vgd=$(STUB_OPENCLAW_VERSION_OUTPUT="OpenClaw 2026.9.6 (eb377ac)" \
+    STUB_NODE_VERSION="v24.21.0" STUB_SQLITE3_VERSION_OUTPUT="3.46.1 2024-08-13" \
+    HOME="${TMP_HOME_VGD}" bash "${VGD_SCRIPTS}/install.sh" 2>&1) || exit_code_vgd=$?
 
-if echo "${output_vgd}" | grep -qF "Routing to standalone install path"; then
+if echo "${output_vgd}" | grep -qF "Routing to standalone install path" \
+   && echo "${output_vgd}" | grep -qF "VGD_STUB_REACHED post-install.sh"; then
   pass "VG-D: passing OpenClaw version reaches routing dispatch"
 else
   fail "VG-D: passing OpenClaw version did not reach routing dispatch (exit=${exit_code_vgd})"
