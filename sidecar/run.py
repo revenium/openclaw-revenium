@@ -34,6 +34,7 @@ import signal
 import sys
 import time
 
+from openclaw_economics import cli_probe
 from openclaw_economics.paths import Context, UnsafePathError, build_context
 from openclaw_economics.status import read_manifest, sanitize_token, write_stage_status
 
@@ -75,8 +76,22 @@ def run_infer(ctx: Context) -> dict:
 
 
 def run_deliver(ctx: Context, phase: str) -> tuple[dict, dict]:
-    """Run the deliver stage; return (counters, extra status fields)."""
-    return {}, {}
+    """Run the deliver stage; return (counters, extra status fields).
+
+    Phase ``pre`` refreshes the revenium CLI capability record. A probe
+    failure never fails the stage: it is recorded as ``capable: false`` with
+    the exception type name. The deadline still propagates, so the stage
+    stops at its budget.
+    """
+    if phase != "pre":
+        return {}, {}
+    try:
+        result = cli_probe.load_or_probe(ctx.state_dir)
+    except DeadlineExceeded:
+        raise
+    except Exception as exc:  # noqa: BLE001 - fail-open by contract
+        result = {"capable": False, "error": sanitize_token(type(exc).__name__)}
+    return {}, {"cli": result}
 
 
 def _parse_args(argv):
