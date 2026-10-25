@@ -1,0 +1,9 @@
+repo=github.com/revenium/revenium-agent-economics
+commit=5c7fba352cda25d68613f46bd8729740fc74827a
+version=0.1.0rc1
+source_date_epoch=1792959731
+builder=UV_NO_CONFIG=1 uv run --no-project --python 3.12 python tools/check_reproducible.py --out dist
+wheel=revenium_agent_economics-0.1.0rc1-py3-none-any.whl
+wheel_sha256=fe9f6c06be31d8d1e524a9d0bd6fb63a3766aa4f40796e06298434ba22bcea68
+conformance=24 scenarios, 0 failing
+pypi_name_claimed=no
