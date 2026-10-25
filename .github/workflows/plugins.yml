@@ -1,0 +1,44 @@
+name: Plugins
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-drift:
+    name: ${{ matrix.plugin }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: [plugin, plugin-nemoclaw]
+    defaults:
+      run:
+        working-directory: ${{ matrix.plugin }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.plugin }}/package-lock.json
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: node --test src/index.test.js
+
+      # plugin-nemoclaw/src/gate.js, the baked directives and both dist/ trees
+      # are committed build output; they went four months stale once (#11).
+      - name: Committed build output is current
+        run: |
+          npm run build
+          if ! git diff --exit-code -- . ; then
+            echo "::error::Build output is stale. Run 'npm run build' in ${{ matrix.plugin }}/ and commit the result."
+            exit 1
+          fi
