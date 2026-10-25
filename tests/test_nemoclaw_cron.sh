@@ -70,11 +70,13 @@ fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 # || true` call before get_root_session_id runs (see 19-10-SUMMARY.md D3). Plan
 # 19-10 legitimately changed the file's bytes without re-pinning this constant,
 # which left GROUP-C red until plan 19-11 caught and fixed the omission.
-#   scripts/guardrail-check.sh = 608f396bf6b705bdaa6b85b86623d16b1187d93ca45712e7d66aa44451564e4a
+# Re-pinned 2026-10-24: guardrail-check.sh now writes updatedAt/_maxAgeSeconds
+# and warns on an unreadable config.json, so skipped enforcement is visible.
+#   scripts/guardrail-check.sh = 65210700999905962ef980e40c8e96deecd02bd9ec4c79dd858caa8e622d8241
 # ---------------------------------------------------------------------------
 SC4_CRON_SHA="78124b27a78595821f9914c7c79211934da236aa5aa37c21261de34fa82ecaff"
 SC4_REPORT_SHA="0588982e13e65a55b57cb75c048f877acc9c1136679831a7d50e76a4ed71b216"
-SC4_GUARDRAIL_SHA="608f396bf6b705bdaa6b85b86623d16b1187d93ca45712e7d66aa44451564e4a"
+SC4_GUARDRAIL_SHA="65210700999905962ef980e40c8e96deecd02bd9ec4c79dd858caa8e622d8241"
 
 # ---------------------------------------------------------------------------
 # Cleanup: track all tmp HOMEs and clean up on exit
