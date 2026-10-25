@@ -9,7 +9,7 @@ assignment keeps its name and separator.
 
 TestKnownValues covers load_known_values (revenium.env, config.yaml
 ``api-key:``, a model.key file, short values ignored, unreadable files
-skipped, longest first) and the exact-value pass for a value no regex
+ignored, longest first) and the exact-value pass for a value no regex
 matches.
 
 TestSanitize covers the order (pre-cap, redact, clamp): a secret straddling
@@ -146,7 +146,7 @@ class TestKnownValues(unittest.TestCase):
         env = self._write("revenium.env", "A=1234567\nB=12345678\n")
         self.assertEqual(redact.load_known_values(env_files=(env,)), ("12345678",))
 
-    def test_unreadable_files_are_skipped(self) -> None:
+    def test_unreadable_files_are_ignored(self) -> None:
         missing = os.path.join(self.dir, "missing.env")
         a_dir = os.path.join(self.dir, "subdir")
         os.mkdir(a_dir)
