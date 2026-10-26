@@ -1,0 +1,7 @@
+{"type":"message","id":"fixture-evt-1","parentId":"fixture-evt-0","timestamp":"2026-10-26T12:00:00.000Z","message":{"role":"user","content":"fixture user text"}}
+{"type":"message","id":"fixture-evt-2","parentId":"fixture-evt-1","timestamp":"2026-10-26T12:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"fixture assistant reply"},{"type":"toolCall","id":"fixture-call-1","name":"exec","arguments":{}}]}}
+{"type":"message","id":"fixture-evt-3","parentId":"fixture-evt-2","timestamp":"2026-10-26T12:00:04.000Z","message":{"role":"toolResult","toolCallId":"fixture-call-1","toolName":"exec","content":[{"type":"text","text":"fixture tool result body"}]}}
+{"type":"message","id":"fixture-evt-4","parentId":"fixture-evt-3","timestamp":"2026-10-26T12:00:06.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"fixture-call-2","name":"tool_call","arguments":{}}]}}
+{"type":"message","id":"fixture-evt-5","parentId":"fixture-evt-4","timestamp":"2026-10-26T12:00:08.000Z","message":{"role":"custom","customType":"openclaw.nested-tool.v1","content":"fixture nested tool record"}}
+{"type":"message","id":"fixture-evt-6","parentId":"fixture-evt-5","timestamp":"2026-10-26T12:00:10.000Z","message":{"role":"toolResult","toolCallId":"fixture-call-2","toolName":"tool_call","content":[{"type":"text","text":"fixture tool result body"}]}}
+{"type":"message","id":"fixture-evt-7","parentId":"fixture-evt-6","timestamp":"2026-10-26T12:00:12.000Z","message":{"role":"assistant","content":[{"type":"text","text":"fixture assistant final reply"}]}}
