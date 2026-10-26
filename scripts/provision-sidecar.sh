@@ -261,11 +261,12 @@ build_venv() {
   local uv_bin="${RT}/bin/uv" new="${RT}/venv.new" out rc last
   export UV_NO_CONFIG=1 UV_PYTHON_INSTALL_DIR="${RT}/python" UV_CACHE_DIR="${RT}/cache"
 
+  # A venv.new left by an interrupted run is never trusted or reused.
+  rm -rf "${new}"
   if ! "${uv_bin}" python install --no-bin "${PY_REQUEST}" >>"${PROV_LOG}" 2>&1; then
     printf 'python_install_failed\n'
     return 1
   fi
-  rm -rf "${new}"
   if ! "${uv_bin}" venv --no-project --managed-python --python "${PY_REQUEST}" --clear "${new}" >>"${PROV_LOG}" 2>&1; then
     rm -rf "${new}"
     printf 'venv_failed\n'
