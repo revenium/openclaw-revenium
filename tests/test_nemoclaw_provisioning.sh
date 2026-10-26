@@ -30,6 +30,8 @@
 #              the operator as a measured in-sandbox Node version
 #   GROUP T: RUN-01/RUN-03  — economics sidecar provisioned per sandbox, fail-open,
 #              after the host CLI step and before the metering loop
+#   GROUP U: OPS-02/RUN-04  — skill redeploy keyed on a content hash; a host
+#              revenium below the 1.7.0 floor is replaced by the pinned CLI
 #
 # No group runs the real provisioner: run_provision and run_provision_no_ledger
 # point SIDECAR_PROVISION_SCRIPT at a stub that records its argv.
@@ -59,8 +61,24 @@ STUB_SH="${SCRIPT_DIR}/stub-nemoclaw.sh"
 PASS=0
 FAIL=0
 
-pass() { echo "PASS: $1"; ((PASS++)) || true; }
-fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
+# TAP=1 prints TAP 13 on stdout (first line of each description only) and
+# discards the narrative lines, so a TAP consumer reads a clean report.
+# Default output stays PASS:/FAIL: lines.
+TAP_N=0
+if [[ "${TAP:-}" == "1" ]]; then
+  exec 3>&1 1>/dev/null
+  printf 'TAP version 13\n' >&3
+fi
+pass() {
+  if [[ "${TAP:-}" == "1" ]]; then TAP_N=$((TAP_N + 1)); printf 'ok %s - %s\n' "${TAP_N}" "${1%%$'\n'*}" >&3
+  else echo "PASS: $1"; fi
+  ((PASS++)) || true
+}
+fail() {
+  if [[ "${TAP:-}" == "1" ]]; then TAP_N=$((TAP_N + 1)); printf 'not ok %s - %s\n' "${TAP_N}" "${1%%$'\n'*}" >&3
+  else echo "FAIL: $1"; fi
+  ((FAIL++)) || true
+}
 
 # ---------------------------------------------------------------------------
 # Cleanup: track all tmp HOMEs and clean up on exit
@@ -128,6 +146,27 @@ EOF
   chmod +x "${d}/stub-provision-sidecar.sh"
   echo "${d}"
 }
+
+# ---------------------------------------------------------------------------
+# _skill_hash <skill_dir> — the skill-installed-nemoclaw ledger value, computed
+# independently of the script: sha256 over SKILL.md, BUDGET-GUARD.md, then
+# references/*.md sorted under LC_ALL=C; per file the relative path, a newline,
+# then the file bytes.
+# ---------------------------------------------------------------------------
+_skill_hash() {
+  local dir="$1" f
+  {
+    for f in SKILL.md BUDGET-GUARD.md; do
+      [[ -f "${dir}/${f}" ]] || continue
+      printf '%s\n' "${f}"; cat "${dir}/${f}"
+    done
+    while IFS= read -r f; do
+      [[ -f "${dir}/${f}" ]] || continue
+      printf '%s\n' "${f}"; cat "${dir}/${f}"
+    done < <(cd "${dir}" && for f in references/*.md; do printf '%s\n' "${f}"; done | LC_ALL=C sort)
+  } | if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | awk '{print $1}'
+}
+REPO_SKILL_HASH="$(_skill_hash "${REPO_ROOT}")"
 
 # ---------------------------------------------------------------------------
 # run_provision <home> <argv_file> [stub_env...]
@@ -689,8 +728,8 @@ cli-delivered=v1.9.0:0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc
 creds-written=f64cb6da2c257701ff8580e3ed5f65fa2be762728fe6a3e3722795f24deb4bb9
 meter-probe-passed=1
 metering-loop-installed=1
-skill-installed-nemoclaw=1
 SEED_J
+  printf 'skill-installed-nemoclaw=%s\n' "${REPO_SKILL_HASH}" >> "${ledger_file}"
 }
 
 # --- GROUP J-a: --force present in captured argv ---
@@ -912,9 +951,9 @@ cli-delivered=v1.9.0:0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc
 creds-written=f64cb6da2c257701ff8580e3ed5f65fa2be762728fe6a3e3722795f24deb4bb9
 meter-probe-passed=1
 metering-loop-installed=1
-skill-installed-nemoclaw=1
 enforcement-plugin-installed=1
 SEED_L
+  printf 'skill-installed-nemoclaw=%s\n' "${REPO_SKILL_HASH}" >> "${ledger_file}"
 }
 
 # Build a fixture tarball containing a top-level `revenium` file (mirrors the real
@@ -962,7 +1001,7 @@ TMP_HOMES+=("${ARGV_La}")
 LEDGER_La="${TMP_HOME_La}/.nemoclaw/revenium-nemoclaw.ledger"
 _seed_all_but_host "${LEDGER_La}"
 # Pre-place a fake revenium on the host PATH (the make_home .local/bin dir).
-printf '#!/bin/sh\nexit 0\n' > "${TMP_HOME_La}/.local/bin/revenium"
+printf '#!/bin/sh\n[ "$1" = version ] && echo "revenium 1.9.0 (test)"\nexit 0\n' > "${TMP_HOME_La}/.local/bin/revenium"
 chmod +x "${TMP_HOME_La}/.local/bin/revenium"
 
 exit_code_la=0
@@ -1084,9 +1123,9 @@ creds-written=f64cb6da2c257701ff8580e3ed5f65fa2be762728fe6a3e3722795f24deb4bb9
 meter-probe-passed=1
 cli-delivered-host=v1.9.0:0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3
 metering-loop-installed=1
-skill-installed-nemoclaw=1
 enforcement-plugin-installed=1
 SEED_FULL
+  printf 'skill-installed-nemoclaw=%s\n' "${REPO_SKILL_HASH}" >> "$1"
 }
 
 # --- GROUP M-a: per-UUID ledger honored; global ledger not used ---
@@ -1596,10 +1635,161 @@ else
 fi
 
 # ===========================================================================
+# GROUP U: content-hashed skill redeploy (OPS-02) and host CLI floor (RUN-04)
+#
+#   U-a: legacy ledger value `1` → redeploy, "skill content changed", hash stored.
+#   U-b: ledger value == current content hash → skip, no `skill install` call.
+#   U-c: one byte changed in a references/*.md copy → hash differs → redeploy.
+#   U-d: host revenium 1.6.0 on PATH → pinned CLI installed into ~/.local/bin,
+#        warning names the 1.7.0 floor, ledger records v1.9.0; the old binary
+#        is left untouched.
+#   U-e: host revenium 1.9.0 on PATH → left alone, ledger written.
+# ===========================================================================
+echo ""
+echo "--- GROUP U: content-hashed skill redeploy + host CLI floor ---"
+
+# _argv_has_skill_install <argv_file> — the stub records one argv word per line.
+_argv_has_skill_install() {
+  grep -A1 -x "skill" "$1" 2>/dev/null | grep -qx "install"
+}
+
+# Seed everything except the skill key, so only install_skill_nemoclaw acts.
+_seed_all_but_skill() {
+  _seed_phase13_14_ledger "$1"
+  printf 'cli-delivered-host=%s:%s\n' "v1.9.0" "${PINNED_SHA}" >> "$1"
+  echo "enforcement-plugin-installed=1" >> "$1"
+}
+
+echo ""
+echo "  -- U-a: legacy skill-installed-nemoclaw=1 → redeploy --"
+TMP_HOME_Ua=$(make_home)
+ARGV_Ua=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ua.XXXXXX")
+TMP_HOMES+=("${ARGV_Ua}")
+LEDGER_Ua="${TMP_HOME_Ua}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_all_but_skill "${LEDGER_Ua}"
+echo "skill-installed-nemoclaw=1" >> "${LEDGER_Ua}"   # pre-upgrade install
+
+exit_code_ua=0
+output_ua=$(run_provision "${TMP_HOME_Ua}" "${ARGV_Ua}" 2>&1) || exit_code_ua=$?
+
+if [[ "${exit_code_ua}" -eq 0 ]] \
+   && echo "${output_ua}" | grep -qF "skill content changed" \
+   && _argv_has_skill_install "${ARGV_Ua}" \
+   && grep -qxF "skill-installed-nemoclaw=${REPO_SKILL_HASH}" "${LEDGER_Ua}"; then
+  pass "GROUP-U-a: legacy ledger value 1 redeploys the skill and stores the content hash"
+else
+  fail "GROUP-U-a: legacy ledger value did not redeploy/store hash (exit ${exit_code_ua}). Output: ${output_ua}"
+fi
+
+echo ""
+echo "  -- U-b: ledger hash matches → skip --"
+TMP_HOME_Ub=$(make_home)
+ARGV_Ub=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ub.XXXXXX")
+TMP_HOMES+=("${ARGV_Ub}")
+LEDGER_Ub="${TMP_HOME_Ub}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_all_but_skill "${LEDGER_Ub}"
+printf 'skill-installed-nemoclaw=%s\n' "${REPO_SKILL_HASH}" >> "${LEDGER_Ub}"
+
+exit_code_ub=0
+output_ub=$(run_provision "${TMP_HOME_Ub}" "${ARGV_Ub}" 2>&1) || exit_code_ub=$?
+
+if [[ "${exit_code_ub}" -eq 0 ]] \
+   && echo "${output_ub}" | grep -qF "already deployed to sandbox (ledger)" \
+   && ! _argv_has_skill_install "${ARGV_Ub}"; then
+  pass "GROUP-U-b: matching content hash skips the deploy (no skill install call)"
+else
+  fail "GROUP-U-b: matching hash did not skip (exit ${exit_code_ub}). Output: ${output_ub}"
+fi
+
+echo ""
+echo "  -- U-c: one byte changed in references/*.md → redeploy --"
+TMP_HOME_Uc=$(make_home)
+ARGV_Uc=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-uc.XXXXXX")
+TMP_HOMES+=("${ARGV_Uc}")
+LEDGER_Uc="${TMP_HOME_Uc}/.nemoclaw/revenium-nemoclaw.ledger"
+SKILL_COPY_Uc=$(mktemp -d "${TMPDIR:-/tmp}/test-nemo-skillcopy.XXXXXX")
+TMP_HOMES+=("${SKILL_COPY_Uc}")
+cp "${REPO_ROOT}/SKILL.md" "${REPO_ROOT}/BUDGET-GUARD.md" "${SKILL_COPY_Uc}/"
+mkdir -p "${SKILL_COPY_Uc}/references"
+cp "${REPO_ROOT}"/references/*.md "${SKILL_COPY_Uc}/references/"
+hash_before_uc="$(_skill_hash "${SKILL_COPY_Uc}")"
+_seed_all_but_skill "${LEDGER_Uc}"
+printf 'skill-installed-nemoclaw=%s\n' "${hash_before_uc}" >> "${LEDGER_Uc}"
+first_ref_uc=$(cd "${SKILL_COPY_Uc}" && for f in references/*.md; do printf '%s\n' "${f}"; done | LC_ALL=C sort | head -1)
+printf 'x' >> "${SKILL_COPY_Uc}/${first_ref_uc}"
+hash_after_uc="$(_skill_hash "${SKILL_COPY_Uc}")"
+
+exit_code_uc=0
+output_uc=$(REVENIUM_SKILL_DIR="${SKILL_COPY_Uc}" \
+            run_provision "${TMP_HOME_Uc}" "${ARGV_Uc}" 2>&1) || exit_code_uc=$?
+
+if [[ "${exit_code_uc}" -eq 0 && "${hash_before_uc}" != "${hash_after_uc}" ]] \
+   && echo "${output_uc}" | grep -qF "skill content changed" \
+   && _argv_has_skill_install "${ARGV_Uc}" \
+   && grep -qxF "skill-installed-nemoclaw=${hash_after_uc}" "${LEDGER_Uc}"; then
+  pass "GROUP-U-c: a one-byte change in ${first_ref_uc} changes the hash and redeploys"
+else
+  fail "GROUP-U-c: references change did not redeploy (exit ${exit_code_uc}). Output: ${output_uc}"
+fi
+
+echo ""
+echo "  -- U-d: host revenium 1.6.0 below floor → pinned CLI installed --"
+TMP_HOME_Ud=$(make_home)
+ARGV_Ud=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ud.XXXXXX")
+TMP_HOMES+=("${ARGV_Ud}")
+LEDGER_Ud="${TMP_HOME_Ud}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_all_but_host "${LEDGER_Ud}"
+_install_host_cli_stubs "${TMP_HOME_Ud}/.local/bin"
+mkdir -p "${TMP_HOME_Ud}/oldbin"
+printf '#!/bin/sh\n[ "$1" = version ] && echo "revenium 1.6.0 (old)"\nexit 0\n' > "${TMP_HOME_Ud}/oldbin/revenium"
+chmod +x "${TMP_HOME_Ud}/oldbin/revenium"
+old_sum_ud=$(cksum < "${TMP_HOME_Ud}/oldbin/revenium")
+
+exit_code_ud=0
+output_ud=$(STUB_CURL_FIXTURE="${FIXTURE_TGZ}" STUB_SHA256_VALUE="${PINNED_SHA}" \
+            PATH="${TMP_HOME_Ud}/oldbin:/usr/bin:/bin" \
+            run_provision "${TMP_HOME_Ud}" "${ARGV_Ud}" 2>&1) || exit_code_ud=$?
+
+if [[ "${exit_code_ud}" -eq 0 ]] \
+   && grep -qF "stub-revenium" "${TMP_HOME_Ud}/.local/bin/revenium" 2>/dev/null \
+   && echo "${output_ud}" | grep -qF "below 1.7.0" \
+   && grep -qxF "cli-delivered-host=v1.9.0:${PINNED_SHA}" "${LEDGER_Ud}" \
+   && [[ "$(cksum < "${TMP_HOME_Ud}/oldbin/revenium")" == "${old_sum_ud}" ]]; then
+  pass "GROUP-U-d: below-floor host CLI → pinned v1.9.0 installed to ~/.local/bin with a 1.7.0 floor warning; old binary untouched"
+else
+  fail "GROUP-U-d: below-floor host CLI not replaced (exit ${exit_code_ud}). Output: ${output_ud}"
+fi
+
+echo ""
+echo "  -- U-e: host revenium 1.9.0 meets floor → left alone --"
+TMP_HOME_Ue=$(make_home)
+ARGV_Ue=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ue.XXXXXX")
+TMP_HOMES+=("${ARGV_Ue}")
+LEDGER_Ue="${TMP_HOME_Ue}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_all_but_host "${LEDGER_Ue}"
+mkdir -p "${TMP_HOME_Ue}/oldbin"
+printf '#!/bin/sh\n[ "$1" = version ] && echo "revenium 1.9.0 (test)"\nexit 0\n' > "${TMP_HOME_Ue}/oldbin/revenium"
+chmod +x "${TMP_HOME_Ue}/oldbin/revenium"
+
+exit_code_ue=0
+output_ue=$(PATH="${TMP_HOME_Ue}/oldbin:/usr/bin:/bin" \
+            run_provision "${TMP_HOME_Ue}" "${ARGV_Ue}" 2>&1) || exit_code_ue=$?
+
+if [[ "${exit_code_ue}" -eq 0 ]] \
+   && echo "${output_ue}" | grep -qF "already on host PATH" \
+   && [[ ! -e "${TMP_HOME_Ue}/.local/bin/revenium" ]] \
+   && grep -qxF "cli-delivered-host=v1.9.0:${PINNED_SHA}" "${LEDGER_Ue}"; then
+  pass "GROUP-U-e: at-floor host CLI left alone (no clobber) and ledger written"
+else
+  fail "GROUP-U-e: at-floor host CLI not honored (exit ${exit_code_ue}). Output: ${output_ue}"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
+[[ "${TAP:-}" == "1" ]] && printf '1..%s\n' "${TAP_N}" >&3
 echo ""
 if [[ "${FAIL}" -gt 0 ]]; then
   exit 1
