@@ -53,6 +53,10 @@ command_exists() { command -v "$1" &>/dev/null; }
 # exercise a real ceiling expiry in seconds instead of two minutes.
 DOCTOR_TIMEOUT_SECONDS="${DOCTOR_TIMEOUT_SECONDS:-120}"
 
+# The economics sidecar provisioner. Overridable so the hermetic installer
+# suites can point it at a no-op stub instead of downloading uv and CPython.
+SIDECAR_PROVISION_SCRIPT="${SIDECAR_PROVISION_SCRIPT:-${SCRIPT_DIR}/provision-sidecar.sh}"
+
 # ---------------------------------------------------------------------------
 # 0. Runtime version gate (GATE-01/GATE-02/GATE-04) — defense in depth
 # ---------------------------------------------------------------------------
@@ -867,6 +871,16 @@ if [[ -n "${REVENIUM_BUDGET_LIMIT:-}" && -n "${REVENIUM_BUDGET_PERIOD:-}" ]]; th
     warn "metering cron install failed — run install-cron.sh manually (guardrail status stays stale without it)"
   fi
 fi
+
+# ---------------------------------------------------------------------------
+# 8c. Provision the economics sidecar (fail-open)
+# ---------------------------------------------------------------------------
+# Executed, never sourced, so nothing inside it can trip this script's
+# `set -e`; it always exits 0 and records why it stopped in its runtime dir.
+# Re-running post-install is the upgrade path: a runtime matching the pins is
+# reused.
+step "Provisioning the economics sidecar"
+bash "${SIDECAR_PROVISION_SCRIPT}" --openclaw-home "${OPENCLAW_HOME}" || warn "economics sidecar provisioning did not complete — metering and budget enforcement are unaffected; re-run post-install to retry"
 
 # ---------------------------------------------------------------------------
 # 9. Verify
