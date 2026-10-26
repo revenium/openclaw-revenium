@@ -506,6 +506,30 @@ store_session_events() {
 }
 
 # ---------------------------------------------------------------------------
+# store_session_events_seq <sid> [after_seq] — the same rows as
+# store_session_events, each prefixed with its seq:
+# "<seq>\x1f<event_json with newlines collapsed to spaces>", ORDER BY seq ASC.
+# Callers that keep a per-session cursor and dedupe cached turns need the
+# row's seq, which session-events drops. Valid JSON cannot contain a raw
+# 0x1F byte, so one split on the first 0x1F is unambiguous.
+# ---------------------------------------------------------------------------
+store_session_events_seq() {
+  local sid="$1" after_seq="${2:--1}"
+  if ! _store_valid_id "${sid}"; then
+    warn "store_session_events_seq: rejected invalid session id"
+    return 0
+  fi
+  _store_valid_seq "${after_seq}" || after_seq=-1
+  local q_sid
+  q_sid="$(_store_sql_quote "${sid}")"
+  local _ss_db
+  while IFS= read -r _ss_db; do
+    [[ -z "${_ss_db}" ]] && continue
+    store_sql "${_ss_db}" "SELECT seq || char(31) || replace(event_json, char(10), ' ') FROM transcript_events WHERE session_id = '${q_sid}' AND seq > ${after_seq} AND event_json IS NOT NULL ORDER BY seq ASC;"
+  done < <(store_db_paths)
+}
+
+# ---------------------------------------------------------------------------
 # store_max_seq <sid> — coalesce(max(seq), -1) across every store.
 # ---------------------------------------------------------------------------
 store_max_seq() {
@@ -940,6 +964,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       store_session_events "$@"
       exit 0
       ;;
+    session-events-seq)
+      store_session_events_seq "$@"
+      exit 0
+      ;;
     completions)
       store_completions "$@"
       exit 0
@@ -962,7 +990,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       ;;
     *)
       echo "Usage: session-store.sh <verb> [args]" >&2
-      echo "Verbs: db-paths probe current-session-id last-completion-id session-key-for-id session-id-for-key parent-session-id root-session-id list-sessions session-events completions tool-calls max-seq null-event-count write-status" >&2
+      echo "Verbs: db-paths probe current-session-id last-completion-id session-key-for-id session-id-for-key parent-session-id root-session-id list-sessions session-events session-events-seq completions tool-calls max-seq null-event-count write-status" >&2
       exit 64
       ;;
   esac
