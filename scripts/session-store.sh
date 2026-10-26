@@ -781,12 +781,14 @@ store_session_events_seq_strict() {
   store_strict_query "$(_store_events_seq_sql "$(_store_sql_quote "${sid}")" "${after_seq}")" || return 3
 }
 
-# store_max_seq_all_strict — "<session_id>\x1f<max seq>" for every session
-# with at least one event, one row per session per store (a caller merging
-# several stores keeps the largest). One query per store, so a baseline
-# costs the same for ten sessions or ten thousand.
+# store_max_seq_all_strict — "<session_id>\x1f<max seq>\x1f<max readable
+# seq>" for every session with at least one event, one row per session per
+# store (a caller merging several stores keeps the largest). The readable
+# max skips compacted rows (event_json IS NULL), which session-events-seq
+# never returns, and is -1 when every row is compacted. One query per store,
+# so a baseline costs the same for ten sessions or ten thousand.
 store_max_seq_all_strict() {
-  store_strict_query "SELECT session_id || char(31) || max(seq) FROM transcript_events GROUP BY session_id;" || return 3
+  store_strict_query "SELECT session_id || char(31) || max(seq) || char(31) || coalesce(max(CASE WHEN event_json IS NOT NULL THEN seq END), -1) FROM transcript_events GROUP BY session_id;" || return 3
 }
 
 # store_max_seq_strict <sid> — like store_max_seq, but prints nothing and

@@ -8,8 +8,8 @@ the verbs from the host clone with OPENCLAW_HOME pointed at the arm's home:
 - ``list-sessions-strict``: ``<sid>`` 0x1F ``<key>`` 0x1F ``<created_via>``
   0x1F ``<updated_at>`` per line;
 - ``max-seq-strict <sid>``: one integer, -1 for a session with no events;
-- ``max-seq-all-strict``: ``<sid>`` 0x1F ``<max seq>`` per session that has
-  events, possibly once per store;
+- ``max-seq-all-strict``: ``<sid>`` 0x1F ``<max seq>`` 0x1F ``<max readable
+  seq>`` per session that has events, possibly once per store;
 - ``session-events-seq-strict <sid> <after>``: ``<seq>`` 0x1F
   ``<event_json>`` per line, in seq order;
 - ``null-event-count <sid>``: one integer.
@@ -124,21 +124,26 @@ class StoreClient:
         out = self._call("max-seq-strict", sid)
         return None if out is None else _parse_int(out)
 
-    def max_seq_all(self) -> dict[str, int] | None:
-        """Highest seq per session across all stores, or None on failure.
+    def max_seq_all(self) -> dict[str, tuple[int, int]] | None:
+        """(max seq, max readable seq) per session across all stores.
 
-        A session missing from the result has no events (-1).
+        None when any store failed. A session missing from the result has no
+        events; "readable" leaves out compacted rows, which
+        session-events-seq-strict never returns.
         """
         out = self._call("max-seq-all-strict")
         if out is None:
             return None
-        tops: dict[str, int] = {}
+        tops: dict[str, tuple[int, int]] = {}
         for line in out.splitlines():
-            sid, sep, seq_text = line.partition(_FIELD_SEP)
-            seq = _parse_int(seq_text) if sep else None
-            if seq is None or not valid_session_id(sid):
+            parts = line.split(_FIELD_SEP)
+            if len(parts) != 3 or not valid_session_id(parts[0]):
                 continue
-            tops[sid] = max(seq, tops.get(sid, seq))
+            top, readable = _parse_int(parts[1]), _parse_int(parts[2])
+            if top is None or readable is None:
+                continue
+            seen = tops.get(parts[0], (top, readable))
+            tops[parts[0]] = (max(top, seen[0]), max(readable, seen[1]))
         return tops
 
     def events_since(self, sid: str, after_seq: int) -> list[tuple[int, str]] | None:

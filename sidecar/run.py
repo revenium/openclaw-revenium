@@ -179,13 +179,17 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
         tops = client.max_seq_all() if listing_ok else None
         if tops is not None:
             for row in sessions:
-                cursors.set(row.session_id, tops.get(row.session_id, -1), row.updated_at)
+                cursors.set(row.session_id, tops.get(row.session_id, (-1, -1))[0], row.updated_at)
             counters["baselined"] = len(sessions)
             cursors.mark_baselined()
             cursors.save()
         counters["storeFailures"] = client.failures
         return counters
 
+    # Fetched once, on the first changed session: the highest readable seq
+    # per session, to check that each read reached the end of its session.
+    tops: dict | None = None
+    tops_fetched = False
     for index, row in enumerate(sessions):
         if clock() >= soft_deadline:
             counters["sessionsDeferred"] = len(sessions) - index
@@ -196,6 +200,8 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
             counters["sessionsSkippedUnchanged"] += 1
             continue
         after = entry["cursor"] if entry else -1
+        if not tops_fetched:
+            tops, tops_fetched = client.max_seq_all(), True
         events = client.events_since(sid, after)
         if events is None:
             # Keep the old cursor and updatedAt so the next tick retries.
@@ -217,7 +223,12 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
             batch.append(_record(msg, text))
         counters["turnsCached"] += cache.append(sid, batch)
         counters["compactedUnread"] += client.null_event_count(sid)
-        cursors.set(sid, last, row.updated_at)
+        # The new updatedAt marks the session as fully read, after which it
+        # is skipped until it changes again. Store it only when the read is
+        # known to have reached the session's last readable row; otherwise
+        # keep the old one so the next tick reads on from the new cursor.
+        reached = tops is not None and last >= tops.get(sid, (-1, -1))[1]
+        cursors.set(sid, last, row.updated_at if reached else (entry["updatedAt"] if entry else ""))
         cursors.save()
 
     cache.prune(time.time())

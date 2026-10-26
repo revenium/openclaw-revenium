@@ -536,10 +536,18 @@ else
 fi
 
 st_all=$(_st max-seq-all-strict)
-if [[ "${st_all}" == "${ST_A}"$'\x1f''4'$'\nrc=0' ]]; then
-  pass "strict: max-seq-all-strict lists each session with events and its max seq"
+if [[ "${st_all}" == "${ST_A}"$'\x1f''4'$'\x1f''4'$'\nrc=0' ]]; then
+  pass "strict: max-seq-all-strict lists each session with events, its max seq and max readable seq"
 else
   fail "strict: max-seq-all-strict wrong: ${st_all}"
+fi
+
+mk_compacted_event "${ST_DB_MAIN}" "${ST_A}" 9
+st_all_c=$(_st max-seq-all-strict)
+if [[ "${st_all_c}" == "${ST_A}"$'\x1f''9'$'\x1f''4'$'\nrc=0' ]]; then
+  pass "strict: max-seq-all-strict leaves compacted rows out of the readable max"
+else
+  fail "strict: max-seq-all-strict with a compacted head row wrong: ${st_all_c}"
 fi
 
 if [[ "$(_st max-seq-strict "not-a-session")" == $'\nrc=2' && "$(_st session-events-seq-strict "${ST_A}" abc)" == $'\nrc=2' ]]; then

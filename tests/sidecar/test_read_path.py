@@ -589,9 +589,56 @@ class TestEdges(unittest.TestCase):
             ("mk_event", other, SID_C, 2, event(2, "user", "fixture")),
         )
         client = store.StoreClient(os.path.join(str(_REPO_ROOT), "scripts", "session-store.sh"), lay.oc_home)
-        self.assertEqual(client.max_seq_all(), {SID_A: 7, SID_C: 2})
+        self.assertEqual(client.max_seq_all(), {SID_A: (7, 7), SID_C: (2, 2)})
         lay.infer()
         self.assertEqual(lay.cursors_doc()["sessions"][SID_B]["cursor"], -1)
+
+    def test_failed_event_read_keeps_cursor_and_updated_at(self) -> None:
+        self.add_turns(SID_A, 1, 2, 170)
+        before = self.cursors_bytes()
+        bad = os.path.join(self.lay.base, "bad", "openclaw-agent.sqlite")
+        write_garbage(bad)
+        runner = CountingRunner(broken={"session-events-seq-strict": bad})
+        with mock.patch.object(run, "StoreClient",
+                               lambda *a, **k: store.StoreClient(*a, **dict(k, runner=runner))):
+            doc = self.lay.infer()
+        self.assertIn("session-events-seq-strict", runner.verbs)
+        self.assertGreater(doc["counters"]["storeFailures"], 0)
+        self.assertEqual(self.cursors_bytes(), before)
+        doc = self.lay.infer()
+        self.assertEqual([r["seq"] for r in self.lay.cached(SID_A)], [1, 2])
+
+    def test_short_read_keeps_the_old_updated_at(self) -> None:
+        self.add_turns(SID_A, 1, 3, 170)
+
+        def short(argv, **kwargs):
+            proc = subprocess.run(argv, **kwargs)
+            if argv[2] == "session-events-seq-strict":
+                lines = proc.stdout.splitlines(keepends=True)
+                proc = subprocess.CompletedProcess(argv, 0, b"".join(lines[:-1]), b"")
+            return proc
+
+        with mock.patch.object(run, "StoreClient",
+                               lambda *a, **k: store.StoreClient(*a, **dict(k, runner=short))):
+            self.lay.infer()
+        entry = self.lay.cursors_doc()["sessions"][SID_A]
+        self.assertEqual(entry["cursor"], 2)
+        self.assertEqual(entry["updatedAt"], "100")
+        doc = self.lay.infer()
+        self.assertEqual(doc["counters"]["sessionsRead"], 1)
+        self.assertEqual([r["seq"] for r in self.lay.cached(SID_A)], [1, 2, 3])
+        self.assertEqual(self.lay.cursors_doc()["sessions"][SID_A]["updatedAt"], "170")
+
+    def test_compacted_head_row_does_not_force_rereads(self) -> None:
+        fixture(
+            ("mk_event", self.lay.db, SID_A, 1, event(1, "user", "fixture turn")),
+            ("mk_compacted_event", self.lay.db, SID_A, 2),
+            ("mk_touch_session", self.lay.db, SID_A, 170),
+        )
+        self.lay.infer()
+        self.assertEqual(self.lay.cursors_doc()["sessions"][SID_A]["updatedAt"], "170")
+        doc = self.lay.infer()
+        self.assertEqual(doc["counters"]["sessionsSkippedUnchanged"], 1)
 
     def test_store_client_keeps_failed_distinct_from_empty(self) -> None:
         lay = Layout(self)
