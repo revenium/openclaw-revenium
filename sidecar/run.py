@@ -172,7 +172,7 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
             if seq <= after:
                 continue
             last = max(last, seq)
-            msg = turns.extract(seq, event_json)
+            msg = turns.extract(seq, event_json, known)
             if msg is None:
                 counters["eventsSkipped"] += 1
                 continue

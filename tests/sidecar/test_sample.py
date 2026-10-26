@@ -16,6 +16,11 @@ After a real infer tick, no secret, directive text, tool-result body or
 custom-row body may appear in the built sample or in any file under the
 state dir. The host-known value is loaded from each of its sources in turn,
 and a forced redaction failure must cache ``[turn omitted]`` for every turn.
+
+Tool names are model-written too: a secret planted as a toolCall ``name``
+or as the last segment of the ``tool_call`` meta-tool's ``arguments.id``
+must reach neither the cache nor a sample, and a secret name already in an
+old cache line must render as ``[tool]``.
 """
 from __future__ import annotations
 
@@ -236,6 +241,72 @@ class TestPlantedSecrets(unittest.TestCase):
                 handle.write(f"api-key: {KNOWN}\n")
 
         self._known_value_from(place)
+
+    def _tool_name_secrets(self) -> list:
+        """(planted name, material) for every regex kind, a token no regex
+        knows (prefix-free, so only the shape check catches it) and the
+        host-known value. Kinds whose planted form carries spaces, quotes,
+        ``/`` or ``@`` are not valid names and must be dropped whole."""
+        generic = "tok" + "9f8e7d6c5b4a3210" * 2
+        return list(SECRETS.values()) + [(generic, generic), (KNOWN, KNOWN)]
+
+    def _assert_names_clean(self, lay: Layout, sid: str, planted: list) -> str:
+        sample = self.assertClean(lay, sid)
+        blob = lay.state_bytes(exclude=("model.key",)).decode("utf-8", errors="replace")
+        for _name, material in planted:
+            for where, text in (("sample", sample), ("state dir", blob)):
+                self.assertNotIn(material, text, f"tool-name secret survived in {where}")
+        return sample
+
+    def test_secret_in_a_toolcall_name_never_leaves_the_store(self) -> None:
+        lay = PlantedLayout(self)
+        with open(os.path.join(lay.oc_home, "revenium.env"), "w", encoding="utf-8") as handle:
+            handle.write(f"REVENIUM_API_KEY={KNOWN}\n")
+        planted = self._tool_name_secrets()
+        items = [{"type": "text", "text": "fixture calling tools"}]
+        items += [{"type": "toolCall", "id": f"c-{i}", "name": name, "arguments": {}}
+                  for i, (name, _material) in enumerate(planted)]
+        items.append({"type": "toolCall", "id": "c-ok", "name": "exec", "arguments": {}})
+        fixture(
+            ("mk_session", lay.db, SID_B, "agent:main:main2", "", 200),
+            ("mk_event", lay.db, SID_B, 0, event(0, "assistant", items)),
+        )
+        lay.infer()
+        records = lay.cached(SID_B)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["tools"][-1], "exec")
+        self.assertEqual(set(records[0]["tools"][:-1]), {""})
+        sample = self._assert_names_clean(lay, SID_B, planted)
+        self.assertIn("[tool: exec]", sample)
+        self.assertIn("[tool]", sample)
+
+    def test_secret_in_a_meta_tool_id_never_leaves_the_store(self) -> None:
+        lay = PlantedLayout(self)
+        with open(os.path.join(lay.oc_home, "revenium.env"), "w", encoding="utf-8") as handle:
+            handle.write(f"REVENIUM_API_KEY={KNOWN}\n")
+        planted = self._tool_name_secrets()
+        items = [{"type": "toolCall", "id": f"c-{i}", "name": "tool_call",
+                  "arguments": {"id": "openclaw:core:" + name, "args": {}}}
+                 for i, (name, _material) in enumerate(planted)]
+        items.append({"type": "toolCall", "id": "c-ok", "name": "tool_call",
+                      "arguments": {"id": "openclaw:core:exec", "args": {}}})
+        fixture(
+            ("mk_session", lay.db, SID_B, "agent:main:main2", "", 200),
+            ("mk_event", lay.db, SID_B, 0, event(0, "assistant", items)),
+        )
+        lay.infer()
+        records = lay.cached(SID_B)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["tools"][-1], "exec")
+        sample = self._assert_names_clean(lay, SID_B, planted)
+        self.assertIn("[tool: exec]", sample)
+
+    def test_a_secret_name_already_in_the_cache_is_not_rendered(self) -> None:
+        secret = SECRETS["github"][1]
+        markers = sample_module().build_messages([
+            {"role": "assistant", "text": "", "tools": [secret, "exec"]},
+        ])
+        self.assertEqual(markers, [("assistant", "[tool]\n[tool: exec]")])
 
     def test_forced_redaction_failure_omits_every_turn(self) -> None:
         lay = PlantedLayout(self)

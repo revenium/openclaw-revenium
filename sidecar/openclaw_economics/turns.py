@@ -14,6 +14,11 @@ Event shapes handled:
 - A ``toolCall`` item contributes only its name, checked against
   TOOL_NAME_RE; any other name is kept as "" and rendered ``[tool]``. Tool
   arguments are never read, with one narrow exception below.
+- A tool name is model-written text, so it gets the same redaction as turn
+  text: the regex pass and the host-known-value pass. A name that redaction
+  would change, or that looks like a random token, is replaced with "" and
+  never cached. Redacting part of a name would leave a fragment beside the
+  marker; dropping the whole name loses only a label.
 - Progressive tool disclosure: newer OpenClaw builds route most calls
   through a meta-tool named ``tool_call``, whose arguments carry the real
   tool as ``{"id": "openclaw:core:<tool>", "args": {...}}``. The name
@@ -36,11 +41,20 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from . import redact
 from .status import sanitize_token
 
 TOOL_NAME_RE = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 META_TOOL_NAME = "tool_call"
 MAX_TOOLS_PER_TURN = 64
+
+# Real tool names are words joined by separators (exec, web_search,
+# mcp__github__create_issue). An unbroken alphanumeric run this long, or a
+# shorter one mixing letters with several digits, is an id or a key, which
+# the regex pass does not know when the issuer uses no fixed prefix.
+_TOKEN_RUN_RE = re.compile(r"[A-Za-z0-9]{16,}")
+TOKEN_RUN_ALWAYS = 32
+TOKEN_RUN_MIN_DIGITS = 3
 
 DIRECTIVE_PATTERNS = (
     re.compile(r"<revenium-guard>.*?</revenium-guard>", re.DOTALL),
@@ -78,7 +92,28 @@ def _token(value: Any) -> str:
     return sanitize_token(value).encode("utf-8", errors="replace").decode("utf-8")
 
 
-def _tool_name(item: dict) -> str:
+def _secret_shaped(name: str) -> bool:
+    for run in _TOKEN_RUN_RE.findall(name):
+        if len(run) >= TOKEN_RUN_ALWAYS:
+            return True
+        digits = sum(ch.isdigit() for ch in run)
+        if digits >= TOKEN_RUN_MIN_DIGITS and digits < len(run):
+            return True
+    return False
+
+
+def clean_tool_name(name: Any, known_values: Iterable[str] = ()) -> str:
+    """Return name when it is a valid, secret-free tool name, else ""."""
+    if not valid_tool_name(name) or _secret_shaped(name):
+        return ""
+    try:
+        redacted = redact.redact(name, known_values)
+    except Exception:  # noqa: BLE001 - fail closed: an unchecked name is dropped
+        return ""
+    return name if redacted == name else ""
+
+
+def _tool_name(item: dict, known_values: Iterable[str]) -> str:
     name = item.get("name")
     if not valid_tool_name(name):
         return ""
@@ -89,8 +124,8 @@ def _tool_name(item: dict) -> str:
             if valid_tool_name(wrapped):
                 real = wrapped.rpartition(":")[2]
                 if valid_tool_name(real):
-                    return real
-    return name
+                    return clean_tool_name(real, known_values)
+    return clean_tool_name(name, known_values)
 
 
 def strip_directives(text: str) -> str:
@@ -99,8 +134,12 @@ def strip_directives(text: str) -> str:
     return text
 
 
-def extract(seq: int, event_json: str) -> Message | None:
-    """Return the Message carried by one event row, or None."""
+def extract(seq: int, event_json: str, known_values: Iterable[str] = ()) -> Message | None:
+    """Return the Message carried by one event row, or None.
+
+    known_values feeds the exact-value pass applied to tool names; text is
+    returned unredacted for the caller's sanitize_turn.
+    """
     try:
         event = json.loads(event_json)
     except (TypeError, ValueError, RecursionError):
@@ -127,7 +166,7 @@ def extract(seq: int, event_json: str) -> Message | None:
             if kind == "text" and isinstance(item.get("text"), str):
                 parts.append(item["text"])
             elif kind == "toolCall" and len(tools) < MAX_TOOLS_PER_TURN:
-                tools.append(_tool_name(item))
+                tools.append(_tool_name(item, known_values))
 
     text = "\n".join(parts)
     if role == "user":
@@ -148,5 +187,13 @@ def extract(seq: int, event_json: str) -> Message | None:
 
 
 def tool_markers(tools: Iterable[str]) -> list[str]:
-    """``[tool: <name>]`` per valid name, ``[tool]`` for anything else."""
-    return [f"[tool: {name}]" if valid_tool_name(name) else "[tool]" for name in tools]
+    """``[tool: <name>]`` per clean name, ``[tool]`` for anything else.
+
+    The regex and shape checks run again here, so a cache line written
+    before names were checked cannot put a secret into a sample.
+    """
+    markers = []
+    for name in tools:
+        clean = clean_tool_name(name)
+        markers.append(f"[tool: {clean}]" if clean else "[tool]")
+    return markers
