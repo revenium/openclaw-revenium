@@ -24,9 +24,15 @@ Event shapes handled:
   tool as ``{"id": "openclaw:core:<tool>", "args": {...}}``. The name
   ``tool_call`` says nothing about what ran, so for that one name the
   ``id`` string is read and its last ``:`` segment becomes the tool name
-  when both pass TOOL_NAME_RE. ``args`` and every other argument value are
-  never read. The nested execution is also recorded as a separate
-  ``custom`` row; dropping custom rows keeps it from being counted twice.
+  when both pass TOOL_NAME_RE. The whole ``id`` must first pass the regex
+  and host-known-value redaction passes unchanged, or the call is recorded
+  as ``[tool]``: a value that contains ``:``, or a ``name:value``
+  assignment such as ``api_key:<value>``, would otherwise leave its tail
+  behind as a clean-looking tool name. The token-shape check runs on the
+  kept segment only, so a hashed namespace segment does not drop a real
+  name. ``args`` and every other argument value are never read. The
+  nested execution is also recorded as a separate ``custom`` row;
+  dropping custom rows keeps it from being counted twice.
 - User text can carry the directive blocks the Revenium plugins and the
   AGENTS.md injection prepend each turn. Those blocks are stripped before
   the text is redacted, so directive text never reaches the cache.
@@ -102,15 +108,23 @@ def _secret_shaped(name: str) -> bool:
     return False
 
 
+def _unchanged_by_redaction(value: str, known_values: Iterable[str]) -> bool:
+    """True when the regex and exact-value passes leave value as it is.
+
+    Only Exception counts as a failure, and it fails closed. The stage
+    deadline is a BaseException and passes through.
+    """
+    try:
+        return redact.redact(value, known_values) == value
+    except Exception:  # noqa: BLE001 - fail closed: an unchecked name is dropped
+        return False
+
+
 def clean_tool_name(name: Any, known_values: Iterable[str] = ()) -> str:
     """Return name when it is a valid, secret-free tool name, else ""."""
     if not valid_tool_name(name) or _secret_shaped(name):
         return ""
-    try:
-        redacted = redact.redact(name, known_values)
-    except Exception:  # noqa: BLE001 - fail closed: an unchecked name is dropped
-        return ""
-    return name if redacted == name else ""
+    return name if _unchanged_by_redaction(name, known_values) else ""
 
 
 def _tool_name(item: dict, known_values: Iterable[str]) -> str:
@@ -122,6 +136,8 @@ def _tool_name(item: dict, known_values: Iterable[str]) -> str:
         if isinstance(arguments, dict):
             wrapped = arguments.get("id")
             if valid_tool_name(wrapped):
+                if not _unchanged_by_redaction(wrapped, known_values):
+                    return ""
                 real = wrapped.rpartition(":")[2]
                 if valid_tool_name(real):
                     return clean_tool_name(real, known_values)

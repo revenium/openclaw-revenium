@@ -222,7 +222,10 @@ one row each of: `user` string, `assistant [text]`, `assistant [toolCall]` (same
   The `tool_call` item's `arguments` carry the wrapped tool as
   `{"id": "openclaw:core:<tool>", "args": {...}}` (ids observed: `openclaw:core:sessions_spawn`,
   `openclaw:core:agents_wait`, `openclaw:core:subagents`). The sidecar reads only that `id` and
-  keeps its last `:` segment as the tool name; it never reads `args`.
+  keeps its last `:` segment as the tool name; it never reads `args`. Before that, the whole `id`
+  must come through the regex and host-known-value redaction passes unchanged; otherwise the call
+  is recorded as `[tool]`, so a value that contains `:` or an `api_key:<value>` assignment cannot
+  leave its tail behind as a tool name.
 - **Directive bleed:** not observable on this spike (enforcement plugin not installed). The
   Revenium enforcement plugin was absent from the spike sandbox, so the `<revenium-guard>` and
   `<revenium-metering>` checks were `false` on every row by construction. Plan 01-07 strips the
