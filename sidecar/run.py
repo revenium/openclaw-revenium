@@ -30,13 +30,16 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import signal
 import sys
 import time
 
-from openclaw_economics import cli_probe
+from openclaw_economics import cli_probe, redact, turns
+from openclaw_economics.cache import Cursors, TurnCache
 from openclaw_economics.paths import Context, UnsafePathError, build_context
 from openclaw_economics.status import read_manifest, sanitize_token, write_stage_status
+from openclaw_economics.store import StoreClient
 
 EXIT_OK = 0
 EXIT_CRASH = 1
@@ -70,9 +73,97 @@ def _on_deadline(signum, frame):  # noqa: ARG001 - signal handler signature
     raise DeadlineExceeded()
 
 
+def _known_values(ctx: Context) -> tuple[str, ...]:
+    home = os.path.expanduser("~")
+    return redact.load_known_values(
+        config_yaml=os.path.join(home, ".config", "revenium", "config.yaml"),
+        env_files=[
+            os.path.join(ctx.openclaw_home, "revenium.env"),
+            os.path.join(home, ".nemoclaw", "revenium-host.env"),
+        ],
+        key_files=[os.path.join(ctx.state_dir, "model.key")],
+    )
+
+
+def _record(msg: turns.Message, text: str) -> dict:
+    return {
+        "seq": msg.seq,
+        "id": msg.event_id,
+        "parentId": msg.parent_id,
+        "role": msg.role,
+        "ts": msg.ts,
+        "text": text,
+        "tools": list(msg.tools),
+    }
+
+
 def run_infer(ctx: Context) -> dict:
-    """Run the infer stage and return the counters for infer-status.json."""
-    return {}
+    """Read new turns from the store into the redacted turn cache.
+
+    Returns the counters infer-status.json records. The first run (no
+    cursors.json) only baselines every listed session at its current max
+    seq, so history from before install is never read. A session first
+    listed after the baseline starts at -1, so its first turn is kept.
+    """
+    counters = {
+        "sessionsSeen": 0,
+        "sessionsRead": 0,
+        "baselined": 0,
+        "turnsCached": 0,
+        "redactionOmitted": 0,
+        "eventsSkipped": 0,
+        "storeFailures": 0,
+    }
+    client = StoreClient(ctx.store_script, ctx.openclaw_home)
+    known = _known_values(ctx)
+    cursors = Cursors.load(ctx.state_dir)
+    cache = TurnCache(ctx.state_dir)
+
+    sessions = client.list_sessions()
+    counters["sessionsSeen"] = len(sessions)
+
+    if cursors.baseline_needed:
+        # A failed listing would baseline nothing, and every session would
+        # then be read from the start once the store comes back. Wait for a
+        # clean listing instead.
+        if client.failures == 0:
+            for row in sessions:
+                top = client.max_seq(row.session_id)
+                cursors.set(row.session_id, -1 if top is None else top, row.updated_at)
+                counters["baselined"] += 1
+            if client.failures == 0:
+                cursors.mark_baselined()
+                cursors.save()
+        counters["storeFailures"] = client.failures
+        return counters
+
+    for row in sessions:
+        sid = row.session_id
+        entry = cursors.get(sid)
+        after = entry["cursor"] if entry else -1
+        events = client.events_since(sid, after)
+        counters["sessionsRead"] += 1
+        last = after
+        batch = []
+        for seq, event_json in events:
+            if seq <= after:
+                continue
+            last = max(last, seq)
+            msg = turns.extract(seq, event_json)
+            if msg is None:
+                counters["eventsSkipped"] += 1
+                continue
+            text, omitted = redact.sanitize_turn(msg.text, known)
+            if omitted:
+                counters["redactionOmitted"] += 1
+            batch.append(_record(msg, text))
+        counters["turnsCached"] += cache.append(sid, batch)
+        if last != after or entry is None:
+            cursors.set(sid, last, row.updated_at)
+            cursors.save()
+
+    counters["storeFailures"] = client.failures
+    return counters
 
 
 def run_deliver(ctx: Context, phase: str) -> tuple[dict, dict]:

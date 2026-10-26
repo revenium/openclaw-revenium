@@ -219,6 +219,10 @@ one row each of: `user` string, `assistant [text]`, `assistant [toolCall]` (same
   inside a `tool_call` invocation. A nested execution is recorded as a `role: "custom"` message
   with `customType: "openclaw.nested-tool.v1"`. A reader must not take `tool_call` as the name of
   the tool that actually ran.
+  The `tool_call` item's `arguments` carry the wrapped tool as
+  `{"id": "openclaw:core:<tool>", "args": {...}}` (ids observed: `openclaw:core:sessions_spawn`,
+  `openclaw:core:agents_wait`, `openclaw:core:subagents`). The sidecar reads only that `id` and
+  keeps its last `:` segment as the tool name; it never reads `args`.
 - **Directive bleed:** not observable on this spike (enforcement plugin not installed). The
   Revenium enforcement plugin was absent from the spike sandbox, so the `<revenium-guard>` and
   `<revenium-metering>` checks were `false` on every row by construction. Plan 01-07 strips the
@@ -238,7 +242,8 @@ one row each of: `user` string, `assistant [text]`, `assistant [toolCall]` (same
 
 `tests/sidecar/fixtures/nemoclaw-events.jsonl` reproduces these `message` shapes with synthetic
 text and ids: a string-content `user` row, an `assistant` row with a `text` item then an `exec`
-`toolCall`, a `toolCall`-only `assistant` row naming `tool_call`, a string-content
+`toolCall`, a `toolCall`-only `assistant` row naming `tool_call` whose `arguments` wrap the synthetic id
+`openclaw:core:exec`, a string-content
 `openclaw.nested-tool.v1` custom row, `toolResult` rows, and a text-only `assistant` reply. The
 spike projection did not inspect `toolResult` keys outside `content`. The fixture gives those
 rows the standalone `toolCallId` and `toolName` keys. It contains no directive-bearing user row,

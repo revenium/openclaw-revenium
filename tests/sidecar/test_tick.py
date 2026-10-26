@@ -209,6 +209,11 @@ class TestStatus(unittest.TestCase):
 class TestRunMain(unittest.TestCase):
     def setUp(self) -> None:
         self.lay = _Layout(self)
+        # infer reads host-known secret values from files under HOME; keep it
+        # on fixture files, never the operator's real config.
+        env = mock.patch.dict(os.environ, {"HOME": _mkdir(os.path.join(self.lay.base, "home"))})
+        env.start()
+        self.addCleanup(env.stop)
         with open(os.path.join(self.lay.runtime, "INSTALLED"), "w", encoding="utf-8") as handle:
             handle.write("library_sha=5c7fba352cda25d68613f46bd8729740fc74827a\n")
 
