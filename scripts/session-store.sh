@@ -781,6 +781,14 @@ store_session_events_seq_strict() {
   store_strict_query "$(_store_events_seq_sql "$(_store_sql_quote "${sid}")" "${after_seq}")" || return 3
 }
 
+# store_max_seq_all_strict — "<session_id>\x1f<max seq>" for every session
+# with at least one event, one row per session per store (a caller merging
+# several stores keeps the largest). One query per store, so a baseline
+# costs the same for ten sessions or ten thousand.
+store_max_seq_all_strict() {
+  store_strict_query "SELECT session_id || char(31) || max(seq) FROM transcript_events GROUP BY session_id;" || return 3
+}
+
 # store_max_seq_strict <sid> — like store_max_seq, but prints nothing and
 # returns 3 unless every store answered with an integer.
 store_max_seq_strict() {
@@ -1068,13 +1076,17 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       store_max_seq_strict "$@"
       exit $?
       ;;
+    max-seq-all-strict)
+      store_max_seq_all_strict
+      exit $?
+      ;;
     write-status)
       store_write_status "$@"
       exit 0
       ;;
     *)
       echo "Usage: session-store.sh <verb> [args]" >&2
-      echo "Verbs: db-paths probe current-session-id last-completion-id session-key-for-id session-id-for-key parent-session-id root-session-id list-sessions session-events session-events-seq completions tool-calls max-seq null-event-count write-status list-sessions-strict session-events-seq-strict max-seq-strict" >&2
+      echo "Verbs: db-paths probe current-session-id last-completion-id session-key-for-id session-id-for-key parent-session-id root-session-id list-sessions session-events session-events-seq completions tool-calls max-seq null-event-count write-status list-sessions-strict session-events-seq-strict max-seq-strict max-seq-all-strict" >&2
       exit 64
       ;;
   esac

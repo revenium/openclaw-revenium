@@ -555,10 +555,43 @@ class TestEdges(unittest.TestCase):
         )
         bad = os.path.join(lay.base, "bad", "openclaw-agent.sqlite")
         write_garbage(bad)
-        patch_runner(self, CountingRunner(broken={"max-seq-strict": bad}))
+        patch_runner(self, CountingRunner(broken={"max-seq-all-strict": bad}))
         doc = lay.infer()
         self.assertEqual(doc["counters"]["baselined"], 0)
         self.assertFalse(os.path.exists(os.path.join(lay.state, cache.CURSORS_FILE)))
+
+    def test_baseline_is_one_store_call_for_many_sessions(self) -> None:
+        lay = Layout(self)
+        steps = [("mk_store", lay.db)]
+        sids = [f"dddddddd-0000-4000-8000-{i:012d}" for i in range(40)]
+        for i, sid in enumerate(sids):
+            steps.append(("mk_session", lay.db, sid, f"agent:main:s{i}", "", 100 + i))
+            steps.append(("mk_event", lay.db, sid, i, event(i, "user", "fixture history")))
+        fixture(*steps)
+        runner = CountingRunner()
+        patch_runner(self, runner)
+        doc = lay.infer()
+        self.assertEqual(doc["counters"]["baselined"], 40)
+        self.assertEqual(runner.verbs, ["list-sessions-strict", "max-seq-all-strict"])
+        got = lay.cursors_doc()["sessions"]
+        self.assertEqual({sid: got[sid]["cursor"] for sid in sids}, {sid: i for i, sid in enumerate(sids)})
+
+    def test_max_seq_all_merges_stores_and_skips_empty_sessions(self) -> None:
+        lay = Layout(self)
+        other = os.path.join(lay.oc_home, "agents", "dev", "agent", "openclaw-agent.sqlite")
+        fixture(
+            ("mk_store", lay.db),
+            ("mk_session", lay.db, SID_A, "agent:main:main", "", 100),
+            ("mk_event", lay.db, SID_A, 7, event(7, "user", "fixture")),
+            ("mk_session", lay.db, SID_B, "agent:main:empty", "", 100),
+            ("mk_store", other),
+            ("mk_session", other, SID_C, "agent:dev:main", "", 100),
+            ("mk_event", other, SID_C, 2, event(2, "user", "fixture")),
+        )
+        client = store.StoreClient(os.path.join(str(_REPO_ROOT), "scripts", "session-store.sh"), lay.oc_home)
+        self.assertEqual(client.max_seq_all(), {SID_A: 7, SID_C: 2})
+        lay.infer()
+        self.assertEqual(lay.cursors_doc()["sessions"][SID_B]["cursor"], -1)
 
     def test_store_client_keeps_failed_distinct_from_empty(self) -> None:
         lay = Layout(self)
@@ -568,11 +601,13 @@ class TestEdges(unittest.TestCase):
         self.assertEqual(client.max_seq(SID_A), -1)
         self.assertEqual(client.events_since(SID_A, -1), [])
         self.assertEqual(client.failures, 0)
+        self.assertEqual(client.max_seq_all(), {})
         with BrokenStore(lay.db):
             self.assertIsNone(client.list_sessions())
             self.assertIsNone(client.max_seq(SID_A))
             self.assertIsNone(client.events_since(SID_A, -1))
-        self.assertEqual(client.failures, 3)
+            self.assertIsNone(client.max_seq_all())
+        self.assertEqual(client.failures, 4)
 
     def test_prune_deletes_files_older_than_seven_days(self) -> None:
         turn_cache = cache.TurnCache(self.lay.state)

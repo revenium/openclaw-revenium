@@ -174,18 +174,15 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
         # A baseline built from a failed or partial read would leave some
         # sessions without a cursor, and each of them would be read from its
         # first turn once the store answers. Wait for a complete read.
-        if listing_ok:
-            complete = True
+        # One query per store, not one subprocess per session, so the
+        # baseline fits the stage budget on a store with many sessions.
+        tops = client.max_seq_all() if listing_ok else None
+        if tops is not None:
             for row in sessions:
-                top = client.max_seq(row.session_id)
-                if top is None:
-                    complete = False
-                    break
-                cursors.set(row.session_id, top, row.updated_at)
-            if complete:
-                counters["baselined"] = len(sessions)
-                cursors.mark_baselined()
-                cursors.save()
+                cursors.set(row.session_id, tops.get(row.session_id, -1), row.updated_at)
+            counters["baselined"] = len(sessions)
+            cursors.mark_baselined()
+            cursors.save()
         counters["storeFailures"] = client.failures
         return counters
 

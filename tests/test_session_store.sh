@@ -535,6 +535,13 @@ else
   fail "strict: session-events-seq-strict wrong: ${st_ev}"
 fi
 
+st_all=$(_st max-seq-all-strict)
+if [[ "${st_all}" == "${ST_A}"$'\x1f''4'$'\nrc=0' ]]; then
+  pass "strict: max-seq-all-strict lists each session with events and its max seq"
+else
+  fail "strict: max-seq-all-strict wrong: ${st_all}"
+fi
+
 if [[ "$(_st max-seq-strict "not-a-session")" == $'\nrc=2' && "$(_st session-events-seq-strict "${ST_A}" abc)" == $'\nrc=2' ]]; then
   pass "strict: an invalid session id or cursor exits 2 with no output"
 else
@@ -552,7 +559,7 @@ else
   fail "strict: lenient list-sessions behaviour changed: ${st_lenient_bad}"
 fi
 st_all_fail=1
-for st_args in "list-sessions-strict" "max-seq-strict ${ST_A}" "session-events-seq-strict ${ST_A} -1"; do
+for st_args in "list-sessions-strict" "max-seq-strict ${ST_A}" "session-events-seq-strict ${ST_A} -1" "max-seq-all-strict"; do
   # shellcheck disable=SC2086
   st_got=$(_st ${st_args})
   if [[ "${st_got}" != $'\nrc=3' ]]; then

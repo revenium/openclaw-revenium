@@ -8,6 +8,8 @@ the verbs from the host clone with OPENCLAW_HOME pointed at the arm's home:
 - ``list-sessions-strict``: ``<sid>`` 0x1F ``<key>`` 0x1F ``<created_via>``
   0x1F ``<updated_at>`` per line;
 - ``max-seq-strict <sid>``: one integer, -1 for a session with no events;
+- ``max-seq-all-strict``: ``<sid>`` 0x1F ``<max seq>`` per session that has
+  events, possibly once per store;
 - ``session-events-seq-strict <sid> <after>``: ``<seq>`` 0x1F
   ``<event_json>`` per line, in seq order;
 - ``null-event-count <sid>``: one integer.
@@ -121,6 +123,23 @@ class StoreClient:
             return None
         out = self._call("max-seq-strict", sid)
         return None if out is None else _parse_int(out)
+
+    def max_seq_all(self) -> dict[str, int] | None:
+        """Highest seq per session across all stores, or None on failure.
+
+        A session missing from the result has no events (-1).
+        """
+        out = self._call("max-seq-all-strict")
+        if out is None:
+            return None
+        tops: dict[str, int] = {}
+        for line in out.splitlines():
+            sid, sep, seq_text = line.partition(_FIELD_SEP)
+            seq = _parse_int(seq_text) if sep else None
+            if seq is None or not valid_session_id(sid):
+                continue
+            tops[sid] = max(seq, tops.get(sid, seq))
+        return tops
 
     def events_since(self, sid: str, after_seq: int) -> list[tuple[int, str]] | None:
         """Rows with seq > after_seq in seq order, or None on failure."""
