@@ -17,6 +17,12 @@ after the baseline at its first turn.
 TestToolCallMeta covers the meta-tool ``tool_call``: its wrapped
 ``arguments.id`` names the real tool when valid, the name ``tool_call`` is
 kept otherwise, and the wrapped ``args`` never reach the cache.
+
+TestEdges covers change detection, the compacted-row count, idempotency,
+crash safety between the cache append and the cursor save, 64-bit seqs,
+invalid UTF-8, empty and failing stores, age and size retention, the soft
+deadline between sessions and dropping cursors of sessions gone from the
+store.
 """
 from __future__ import annotations
 
@@ -26,8 +32,10 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -36,7 +44,7 @@ if str(_SIDECAR_DIR) not in sys.path:
     sys.path.insert(0, str(_SIDECAR_DIR))
 
 import run  # noqa: E402
-from openclaw_economics import cache, turns  # noqa: E402
+from openclaw_economics import cache, paths, store, turns  # noqa: E402
 
 FIXTURE_LIB = str(_REPO_ROOT / "tests" / "lib" / "mk-session-store.sh")
 
@@ -164,6 +172,21 @@ class Layout:
                 found.append(os.path.join(root, name))
         return found
 
+    def context(self, budget: int = 30) -> paths.Context:
+        return paths.build_context(SimpleNamespace(
+            state_dir=self.state, openclaw_home=self.oc_home, skill_dir=str(_REPO_ROOT),
+            runtime_dir=self.runtime, budget_seconds=budget,
+        ))
+
+    def snapshot(self) -> dict:
+        found = {}
+        for path in self.state_files():
+            if path.endswith("-status.json"):
+                continue
+            with open(path, "rb") as handle:
+                found[os.path.relpath(path, self.state)] = handle.read()
+        return found
+
     def state_bytes(self) -> bytes:
         blob = b""
         for path in self.state_files():
@@ -205,6 +228,7 @@ class TestTracer(unittest.TestCase):
             ])),
             ("mk_event", lay.db, SID_A, 4, event(4, "toolResult", [{"type": "text", "text": tool_body}],
                                                toolCallId="call-1", toolName="exec")),
+            ("mk_touch_session", lay.db, SID_A, 200),
             ("mk_session", lay.db, SID_B, "agent:main:subagent:x", "spawn", 201),
             ("mk_event", lay.db, SID_B, 0, event(0, "user", "fixture subagent task")),
         )
@@ -286,6 +310,247 @@ class TestToolCallMeta(unittest.TestCase):
         lay.infer()
         self.assertEqual([r["tools"] for r in lay.cached(SID_C)], [["exec"]])
         self.assertNotIn(planted.encode("utf-8"), lay.state_bytes())
+
+
+class CountingRunner:
+    """subprocess.run stand-in that records each verb and can fail them all."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.verbs: list = []
+        self.fail = fail
+
+    def __call__(self, argv, **kwargs):
+        self.verbs.append(argv[2])
+        if self.fail:
+            return subprocess.CompletedProcess(argv, 1, b"", b"")
+        return subprocess.run(argv, **kwargs)
+
+
+def patch_runner(test: unittest.TestCase, runner: CountingRunner) -> None:
+    real = store.StoreClient
+
+    def factory(*args, **kwargs):
+        kwargs["runner"] = runner
+        return real(*args, **kwargs)
+
+    patcher = mock.patch.object(run, "StoreClient", factory)
+    patcher.start()
+    test.addCleanup(patcher.stop)
+
+
+def fake_clock(*readings: float):
+    values = list(readings)
+
+    def clock() -> float:
+        return values.pop(0) if len(values) > 1 else values[0]
+
+    return clock
+
+
+class TestEdges(unittest.TestCase):
+    def setUp(self) -> None:
+        self.lay = Layout(self)
+        fixture(
+            ("mk_store", self.lay.db),
+            ("mk_session", self.lay.db, SID_A, "agent:main:main", "", 100),
+            ("mk_event", self.lay.db, SID_A, 0, event(0, "user", "fixture before install")),
+        )
+        self.lay.infer()
+
+    def add_turns(self, sid: str, first_seq: int, count: int, updated_at: int, text: str = "fixture turn") -> None:
+        steps = [("mk_event", self.lay.db, sid, seq, event(seq, "user", f"{text} {seq}"))
+                 for seq in range(first_seq, first_seq + count)]
+        steps.append(("mk_touch_session", self.lay.db, sid, updated_at))
+        fixture(*steps)
+
+    def cursors_bytes(self) -> bytes:
+        with open(os.path.join(self.lay.state, cache.CURSORS_FILE), "rb") as handle:
+            return handle.read()
+
+    def test_unchanged_session_is_not_read(self) -> None:
+        runner = CountingRunner()
+        patch_runner(self, runner)
+        fixture(("mk_event", self.lay.db, SID_A, 1, event(1, "user", "fixture unseen")))
+        doc = self.lay.infer()
+        self.assertNotIn("session-events-seq", runner.verbs)
+        self.assertEqual(doc["counters"]["sessionsSkippedUnchanged"], 1)
+        self.assertEqual(doc["counters"]["sessionsRead"], 0)
+
+    def test_compacted_rows_are_counted(self) -> None:
+        fixture(
+            ("mk_compacted_event", self.lay.db, SID_A, 1),
+            ("mk_compacted_event", self.lay.db, SID_A, 2),
+            ("mk_touch_session", self.lay.db, SID_A, 150),
+        )
+        doc = self.lay.infer()
+        self.assertEqual(doc["counters"]["compactedUnread"], 2)
+        self.assertEqual(doc["counters"]["turnsCached"], 0)
+
+    def test_second_run_on_unchanged_store_changes_nothing(self) -> None:
+        self.add_turns(SID_A, 1, 3, 150)
+        self.lay.infer()
+        before = self.lay.snapshot()
+        self.assertIn(os.path.join(cache.TURNS_DIR, SID_A + ".jsonl"), before)
+        doc = self.lay.infer()
+        self.assertEqual(self.lay.snapshot(), before)
+        self.assertEqual(doc["counters"]["turnsCached"], 0)
+
+    def test_crash_before_cursor_save_is_absorbed_by_seq_dedupe(self) -> None:
+        self.add_turns(SID_A, 1, 3, 150)
+        with mock.patch.object(cache.Cursors, "save", side_effect=OSError("disk full")):
+            rc = run.main(self.lay.argv(), find_library=lambda: True)
+        self.assertEqual(rc, run.EXIT_CRASH)
+        self.assertEqual([r["seq"] for r in self.lay.cached(SID_A)], [1, 2, 3])
+        self.assertEqual(self.lay.cursors_doc()["sessions"][SID_A]["cursor"], 0)
+
+        doc = self.lay.infer()
+        self.assertEqual(doc["counters"]["turnsCached"], 0)
+        self.assertEqual([r["seq"] for r in self.lay.cached(SID_A)], [1, 2, 3])
+        self.assertEqual(self.lay.cursors_doc()["sessions"][SID_A]["cursor"], 3)
+
+    def test_large_seq_round_trips_exactly(self) -> None:
+        big = 9007199254740993
+        fixture(
+            ("mk_session", self.lay.db, SID_B, "agent:main:big", "", 160),
+            ("mk_event", self.lay.db, SID_B, big, event(1, "user", "fixture big seq")),
+        )
+        self.lay.infer()
+        self.assertIn(b'"cursor": 9007199254740993', self.cursors_bytes())
+        self.assertEqual(self.lay.cursors_doc()["sessions"][SID_B]["cursor"], big)
+        self.assertEqual([r["seq"] for r in self.lay.cached(SID_B)], [big])
+        path = cache.TurnCache(self.lay.state).path(SID_B)
+        with open(path, "rb") as handle:
+            self.assertIn(b'"seq": 9007199254740993', handle.read())
+        self.assertEqual(cache.TurnCache(self.lay.state).last_seq(SID_B), big)
+
+    def test_invalid_utf8_and_cjk_are_cached_as_valid_utf8(self) -> None:
+        raw = event(1, "user", "fixture 你好 PLACEHOLDER end").encode("utf-8")
+        raw = raw.replace(b"PLACEHOLDER", b"\xff\xfe\xc3")
+        fixture(
+            ("mk_event_hex", self.lay.db, SID_A, 1, raw.hex()),
+            ("mk_event", self.lay.db, SID_A, 2, event(2, "assistant", [{"type": "text", "text": "fixture こんにちは"}])),
+            ("mk_touch_session", self.lay.db, SID_A, 150),
+        )
+        doc = self.lay.infer()
+        self.assertEqual(doc["counters"]["turnsCached"], 2)
+        with open(cache.TurnCache(self.lay.state).path(SID_A), "rb") as handle:
+            data = handle.read()
+        text = data.decode("utf-8")  # strict: raises on invalid bytes
+        self.assertIn("你好", text)
+        self.assertIn("�", text)
+        self.assertIn("こんにちは", text)
+        self.assertEqual([r["seq"] for r in self.lay.cached(SID_A)], [1, 2])
+
+    def test_empty_quiet_and_failing_stores_change_nothing(self) -> None:
+        with self.subTest("session with no new rows"):
+            before = self.cursors_bytes()
+            fixture(("mk_touch_session", self.lay.db, SID_A, 150))
+            doc = self.lay.infer()
+            self.assertEqual(doc["reason"], "ok")
+            self.assertEqual(self.lay.cursors_doc()["sessions"][SID_A]["cursor"], 0)
+            self.assertEqual(json.loads(before)["sessions"][SID_A]["cursor"], 0)
+            self.assertFalse(os.path.exists(os.path.join(self.lay.state, cache.TURNS_DIR)))
+
+        with self.subTest("store script exits non-zero"):
+            self.add_turns(SID_A, 1, 2, 170)
+            before = self.cursors_bytes()
+            patch_runner(self, CountingRunner(fail=True))
+            doc = self.lay.infer()
+            self.assertEqual(doc["reason"], "ok")
+            self.assertGreater(doc["counters"]["storeFailures"], 0)
+            self.assertEqual(self.cursors_bytes(), before)
+            self.assertFalse(os.path.exists(os.path.join(self.lay.state, cache.TURNS_DIR)))
+
+    def test_empty_store_finishes_ok_without_writes(self) -> None:
+        lay = Layout(self)
+        fixture(("mk_store", lay.db))
+        doc = lay.infer()
+        self.assertEqual(doc["reason"], "ok")
+        before = lay.snapshot()
+        doc = lay.infer()
+        self.assertEqual(doc["reason"], "ok")
+        self.assertEqual(lay.snapshot(), before)
+        self.assertFalse(os.path.exists(os.path.join(lay.state, cache.TURNS_DIR)))
+
+    def test_failing_store_on_first_run_does_not_baseline(self) -> None:
+        lay = Layout(self)
+        fixture(("mk_store", lay.db), ("mk_session", lay.db, SID_B, "agent:main:main", "", 100))
+        patch_runner(self, CountingRunner(fail=True))
+        doc = lay.infer()
+        self.assertEqual(doc["reason"], "ok")
+        self.assertFalse(os.path.exists(os.path.join(lay.state, cache.CURSORS_FILE)))
+
+    def test_prune_deletes_files_older_than_seven_days(self) -> None:
+        turn_cache = cache.TurnCache(self.lay.state)
+        for sid in (SID_B, SID_C):
+            turn_cache.append(sid, [{"seq": 0, "role": "user", "text": "fixture", "tools": []}])
+        now = time.time()
+        os.utime(turn_cache.path(SID_B), (now - 8 * 86400, now - 8 * 86400))
+        os.utime(turn_cache.path(SID_C), (now - 6 * 86400, now - 6 * 86400))
+        turn_cache.prune(now)
+        self.assertFalse(os.path.exists(turn_cache.path(SID_B)))
+        self.assertTrue(os.path.exists(turn_cache.path(SID_C)))
+
+    def test_prune_cuts_an_oversized_file_to_its_newest_records(self) -> None:
+        turn_cache = cache.TurnCache(self.lay.state)
+        filler = "fixture é" * 250
+        records = [{"seq": i, "role": "user", "text": filler, "tools": []} for i in range(400)]
+        turn_cache.append(SID_B, records)
+        path = turn_cache.path(SID_B)
+        self.assertGreater(os.path.getsize(path), cache.SESSION_CAP_BYTES)
+        turn_cache.prune(time.time())
+        self.assertLessEqual(os.path.getsize(path), cache.SESSION_CAP_BYTES)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertEqual(turn_cache.last_seq(SID_B), 399)
+        kept = [r["seq"] for r in turn_cache.read(SID_B)]
+        self.assertEqual(kept, list(range(400 - len(kept), 400)))
+        self.assertGreater(len(kept), 0)
+        self.assertEqual([n for n in os.listdir(turn_cache.dir) if n.endswith(".tmp")], [])
+
+    def test_soft_deadline_stops_between_sessions(self) -> None:
+        fixture(
+            ("mk_session", self.lay.db, SID_B, "agent:main:b", "", 300),
+            ("mk_event", self.lay.db, SID_B, 0, event(0, "user", "fixture b")),
+            ("mk_session", self.lay.db, SID_C, "agent:main:c", "", 200),
+            ("mk_event", self.lay.db, SID_C, 0, event(0, "user", "fixture c")),
+        )
+        ctx = self.lay.context(budget=30)
+        counters = run.run_infer(ctx, clock=fake_clock(0.0, 0.0, 1e9))
+        self.assertEqual(counters["sessionsRead"], 1)
+        doc = self.lay.cursors_doc()["sessions"]
+        self.assertIn(SID_B, doc)
+        self.assertNotIn(SID_C, doc)
+        self.assertEqual(len(self.lay.cached(SID_B)), 1)
+        self.assertEqual(self.lay.cached(SID_C), [])
+
+        counters = run.run_infer(ctx)
+        self.assertEqual(counters["sessionsRead"], 1)
+        self.assertEqual(len(self.lay.cached(SID_C)), 1)
+        self.assertEqual(self.lay.cursors_doc()["sessions"][SID_C]["cursor"], 0)
+
+    def test_cursors_of_vanished_sessions_drop_once_their_cache_is_gone(self) -> None:
+        fixture(
+            ("mk_session", self.lay.db, SID_B, "agent:main:b", "", 300),
+            ("mk_session", self.lay.db, SID_C, "agent:main:c", "", 301),
+            ("mk_event", self.lay.db, SID_C, 0, event(0, "user", "fixture c")),
+        )
+        self.lay.infer()
+        self.assertEqual(set(self.lay.cursors_doc()["sessions"]), {SID_A, SID_B, SID_C})
+
+        fixture(
+            ("mk_store", self.lay.db),
+            ("mk_session", self.lay.db, SID_A, "agent:main:main", "", 100),
+            ("mk_event", self.lay.db, SID_A, 0, event(0, "user", "fixture before install")),
+        )
+        self.lay.infer()
+        self.assertEqual(set(self.lay.cursors_doc()["sessions"]), {SID_A, SID_C})
+
+        path = cache.TurnCache(self.lay.state).path(SID_C)
+        old = time.time() - 8 * 86400
+        os.utime(path, (old, old))
+        self.lay.infer()
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(set(self.lay.cursors_doc()["sessions"]), {SID_A})
 
 
 if __name__ == "__main__":
