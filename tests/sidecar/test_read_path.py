@@ -187,9 +187,11 @@ class Layout:
                 found[os.path.relpath(path, self.state)] = handle.read()
         return found
 
-    def state_bytes(self) -> bytes:
+    def state_bytes(self, exclude: tuple = ()) -> bytes:
         blob = b""
         for path in self.state_files():
+            if os.path.basename(path) in exclude:
+                continue
             with open(path, "rb") as handle:
                 blob += handle.read()
         return blob

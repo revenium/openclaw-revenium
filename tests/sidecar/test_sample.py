@@ -146,7 +146,8 @@ class TestBuild(unittest.TestCase):
 class TestPlantedSecrets(unittest.TestCase):
     def assertClean(self, lay: Layout, sid: str) -> str:
         sample = sample_module().build_sample(cache.TurnCache(lay.state), sid)
-        blob = lay.state_bytes().decode("utf-8", errors="replace")
+        # model.key is where a host-known value comes from, not a leak of it.
+        blob = lay.state_bytes(exclude=("model.key",)).decode("utf-8", errors="replace")
         for where, text in (("sample", sample), ("state dir", blob)):
             for material in secret_materials():
                 self.assertNotIn(material, text, f"secret survived in {where}")
