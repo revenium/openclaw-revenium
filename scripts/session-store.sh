@@ -475,11 +475,13 @@ store_warn_if_unreadable() {
 # "<current_session_id>\x1f<session_key>\x1f<created_via>\x1f<updated_at>",
 # ORDER BY updated_at DESC, session_key ASC.
 # ---------------------------------------------------------------------------
+_STORE_LIST_SESSIONS_SQL="SELECT current_session_id || char(31) || session_key || char(31) || coalesce(created_via,'') || char(31) || updated_at FROM session_nodes WHERE created_via IS NULL OR created_via != 'cron' ORDER BY updated_at DESC, session_key ASC;"
+
 store_list_sessions() {
   local _ss_db
   while IFS= read -r _ss_db; do
     [[ -z "${_ss_db}" ]] && continue
-    store_sql "${_ss_db}" "SELECT current_session_id || char(31) || session_key || char(31) || coalesce(created_via,'') || char(31) || updated_at FROM session_nodes WHERE created_via IS NULL OR created_via != 'cron' ORDER BY updated_at DESC, session_key ASC;"
+    store_sql "${_ss_db}" "${_STORE_LIST_SESSIONS_SQL}"
   done < <(store_db_paths)
 }
 
@@ -525,8 +527,15 @@ store_session_events_seq() {
   local _ss_db
   while IFS= read -r _ss_db; do
     [[ -z "${_ss_db}" ]] && continue
-    store_sql "${_ss_db}" "SELECT seq || char(31) || replace(event_json, char(10), ' ') FROM transcript_events WHERE session_id = '${q_sid}' AND seq > ${after_seq} AND event_json IS NOT NULL ORDER BY seq ASC;"
+    store_sql "${_ss_db}" "$(_store_events_seq_sql "${q_sid}" "${after_seq}")"
   done < <(store_db_paths)
+}
+
+# _store_events_seq_sql <quoted_sid> <after_seq> — the session-events-seq
+# query, shared by the lenient and strict verbs. Both arguments must already
+# be validated and quoted by the caller.
+_store_events_seq_sql() {
+  printf '%s' "SELECT seq || char(31) || replace(event_json, char(10), ' ') FROM transcript_events WHERE session_id = '${1}' AND seq > ${2} AND event_json IS NOT NULL ORDER BY seq ASC;"
 }
 
 # ---------------------------------------------------------------------------
@@ -725,6 +734,68 @@ store_null_event_count() {
 }
 
 # ---------------------------------------------------------------------------
+# Strict reads. The verbs above print whatever the healthy stores return and
+# exit 0, which suits report.sh: one broken sibling store must not stop the
+# metering of the others. A caller that keeps per-session cursors needs the
+# opposite answer. It moves a cursor or a baseline only on a read it knows
+# is complete, because an empty or partial answer that looks successful
+# makes it re-read history (or skip turns) later.
+#
+# store_strict_query <sql> runs one statement against every candidate store
+# and prints the combined rows only when every candidate exists, passes the
+# path allowlist and answers without a sqlite error. Otherwise it prints
+# nothing and returns 1. Having no candidate at all also returns 1: from
+# here an absent store (an unmounted sandbox, a wrong OPENCLAW_HOME) looks
+# the same as one that has not been created yet, and the safe reading for a
+# cursor keeper is "not known".
+#
+# The *_strict wrappers return 0 on a complete read, 2 for an invalid
+# argument and 3 when the read was not complete.
+# ---------------------------------------------------------------------------
+store_strict_query() {
+  local sql="$1" _ss_raw _ss_db _ss_tmp
+  _ss_raw="$(store_db_paths_raw)"
+  [[ -n "${_ss_raw}" ]] || return 1
+  _ss_tmp="$(mktemp "${TMPDIR:-/tmp}/store-strict.XXXXXX")" || return 1
+  while IFS= read -r _ss_db; do
+    [[ -z "${_ss_db}" ]] && continue
+    if ! _store_valid_db_path "${_ss_db}" || [[ ! -f "${_ss_db}" ]] \
+      || ! store_sql "${_ss_db}" "${sql}" >> "${_ss_tmp}"; then
+      rm -f "${_ss_tmp}"
+      return 1
+    fi
+  done <<< "${_ss_raw}"
+  cat "${_ss_tmp}"
+  rm -f "${_ss_tmp}"
+  return 0
+}
+
+store_list_sessions_strict() {
+  store_strict_query "${_STORE_LIST_SESSIONS_SQL}" || return 3
+}
+
+store_session_events_seq_strict() {
+  local sid="${1:-}" after_seq="${2:--1}"
+  _store_valid_id "${sid}" || return 2
+  _store_valid_seq "${after_seq}" || return 2
+  store_strict_query "$(_store_events_seq_sql "$(_store_sql_quote "${sid}")" "${after_seq}")" || return 3
+}
+
+# store_max_seq_strict <sid> — like store_max_seq, but prints nothing and
+# returns 3 unless every store answered with an integer.
+store_max_seq_strict() {
+  local sid="${1:-}" _ss_rows _ss_val _ss_max=-1
+  _store_valid_id "${sid}" || return 2
+  _ss_rows="$(store_strict_query "SELECT coalesce(max(seq), -1) FROM transcript_events WHERE session_id = '$(_store_sql_quote "${sid}")';")" || return 3
+  [[ -n "${_ss_rows}" ]] || return 3
+  while IFS= read -r _ss_val; do
+    [[ "${_ss_val}" =~ ^-?[0-9]+$ ]] || return 3
+    [[ "${_ss_val}" -gt "${_ss_max}" ]] && _ss_max="${_ss_val}"
+  done <<< "${_ss_rows}"
+  printf '%s\n' "${_ss_max}"
+}
+
+# ---------------------------------------------------------------------------
 # store_session_key_for_id <session_id> — session_windows, NOT session_nodes:
 # session_nodes holds only the CURRENT session id per key, so a historical or
 # ended subagent window has no row there.
@@ -913,8 +984,9 @@ PY
 # BASH_SOURCE[0] to $0. This is how get-root-session-id.py (plan 19-05) and
 # the marker heredocs (plan 19-06) reach the store from Python without
 # sourcing bash. `probe` prints the resolved STORE_STATE on stdout and exits
-# 0 for READABLE/EMPTY, 2 for UNREADABLE. An unknown verb prints the verb
-# list to stderr and exits 64.
+# 0 for READABLE/EMPTY, 2 for UNREADABLE. The *-strict verbs exit 0, 2 or 3
+# as described at store_strict_query; every other verb exits 0. An unknown
+# verb prints the verb list to stderr and exits 64.
 # ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   _ss_verb="${1:-}"
@@ -984,13 +1056,25 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       store_null_event_count "$@"
       exit 0
       ;;
+    list-sessions-strict)
+      store_list_sessions_strict
+      exit $?
+      ;;
+    session-events-seq-strict)
+      store_session_events_seq_strict "$@"
+      exit $?
+      ;;
+    max-seq-strict)
+      store_max_seq_strict "$@"
+      exit $?
+      ;;
     write-status)
       store_write_status "$@"
       exit 0
       ;;
     *)
       echo "Usage: session-store.sh <verb> [args]" >&2
-      echo "Verbs: db-paths probe current-session-id last-completion-id session-key-for-id session-id-for-key parent-session-id root-session-id list-sessions session-events session-events-seq completions tool-calls max-seq null-event-count write-status" >&2
+      echo "Verbs: db-paths probe current-session-id last-completion-id session-key-for-id session-id-for-key parent-session-id root-session-id list-sessions session-events session-events-seq completions tool-calls max-seq null-event-count write-status list-sessions-strict session-events-seq-strict max-seq-strict" >&2
       exit 64
       ;;
   esac

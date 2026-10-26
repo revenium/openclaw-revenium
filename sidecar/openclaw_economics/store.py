@@ -5,19 +5,27 @@ through ``bash scripts/session-store.sh <verb>``, which owns the read-only
 connection, the busy timeout and the store path allowlist. This client runs
 the verbs from the host clone with OPENCLAW_HOME pointed at the arm's home:
 
-- ``list-sessions``: ``<sid>`` 0x1F ``<key>`` 0x1F ``<created_via>`` 0x1F
-  ``<updated_at>`` per line;
-- ``max-seq <sid>``: one integer, -1 for an empty session;
-- ``session-events-seq <sid> <after>``: ``<seq>`` 0x1F ``<event_json>`` per
-  line, in seq order;
+- ``list-sessions-strict``: ``<sid>`` 0x1F ``<key>`` 0x1F ``<created_via>``
+  0x1F ``<updated_at>`` per line;
+- ``max-seq-strict <sid>``: one integer, -1 for a session with no events;
+- ``session-events-seq-strict <sid> <after>``: ``<seq>`` 0x1F
+  ``<event_json>`` per line, in seq order;
 - ``null-event-count <sid>``: one integer.
+
+The lenient verbs report.sh uses exit 0 even when SQLite fails, printing an
+empty or partial answer. Cursors and the install baseline must never move on
+such an answer, so every read that decides a cursor uses a ``-strict`` verb,
+which exits 0 only when every candidate store answered completely and exits
+non-zero (with no output) otherwise. Those methods return None on failure,
+so "empty" and "failed" stay distinct. ``null-event-count`` only feeds a
+counter, so the lenient verb is enough there.
 
 Every session id is checked against the store's own id pattern before a
 subprocess starts, and it is passed as an argv element, never through a
 shell string. A timeout, a launch error or a non-zero exit counts one
-failure and yields an empty result, so a store problem can never raise into
-the infer stage. Output is decoded with replacement characters, so invalid
-UTF-8 in event JSON cannot raise either.
+failure, so a store problem can never raise into the infer stage. Output is
+decoded with replacement characters, so invalid UTF-8 in event JSON cannot
+raise either.
 """
 from __future__ import annotations
 
@@ -68,7 +76,8 @@ class StoreClient:
         self.runner = runner
         self.failures = 0
 
-    def _call(self, verb: str, *args: str) -> str:
+    def _call(self, verb: str, *args: str) -> str | None:
+        """Verb stdout, or None when the call failed (counted in failures)."""
         env = dict(os.environ)
         env["OPENCLAW_HOME"] = self.openclaw_home
         try:
@@ -82,18 +91,22 @@ class StoreClient:
             )
         except Exception:  # noqa: BLE001 - a store problem must never raise
             self.failures += 1
-            return ""
+            return None
         if proc.returncode != 0:
             self.failures += 1
-            return ""
+            return None
         out = proc.stdout
         if isinstance(out, bytes):
             return out.decode("utf-8", errors="replace")
         return out if isinstance(out, str) else ""
 
-    def list_sessions(self) -> list[SessionRow]:
+    def list_sessions(self) -> list[SessionRow] | None:
+        """Every non-cron session across all stores, or None if any store failed."""
+        out = self._call("list-sessions-strict")
+        if out is None:
+            return None
         rows: list[SessionRow] = []
-        for line in self._call("list-sessions").splitlines():
+        for line in out.splitlines():
             parts = line.split(_FIELD_SEP)
             if len(parts) != 4 or not valid_session_id(parts[0]):
                 continue
@@ -101,15 +114,21 @@ class StoreClient:
         return rows
 
     def max_seq(self, sid: str) -> int | None:
+        """Highest seq across all stores (-1 when none), or None on failure."""
         if not valid_session_id(sid):
             return None
-        return _parse_int(self._call("max-seq", sid))
+        out = self._call("max-seq-strict", sid)
+        return None if out is None else _parse_int(out)
 
-    def events_since(self, sid: str, after_seq: int) -> list[tuple[int, str]]:
+    def events_since(self, sid: str, after_seq: int) -> list[tuple[int, str]] | None:
+        """Rows with seq > after_seq in seq order, or None on failure."""
         if not valid_session_id(sid) or not isinstance(after_seq, int):
-            return []
+            return None
+        out = self._call("session-events-seq-strict", sid, str(after_seq))
+        if out is None:
+            return None
         rows: list[tuple[int, str]] = []
-        for line in self._call("session-events-seq", sid, str(after_seq)).splitlines():
+        for line in out.splitlines():
             seq_text, sep, event_json = line.partition(_FIELD_SEP)
             seq = _parse_int(seq_text) if sep else None
             if seq is None:
@@ -120,5 +139,5 @@ class StoreClient:
     def null_event_count(self, sid: str) -> int:
         if not valid_session_id(sid):
             return 0
-        value = _parse_int(self._call("null-event-count", sid))
+        value = _parse_int(self._call("null-event-count", sid) or "")
         return value if value is not None and value >= 0 else 0

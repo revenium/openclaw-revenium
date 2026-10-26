@@ -22,7 +22,9 @@ TestEdges covers change detection, the compacted-row count, idempotency,
 crash safety between the cache append and the cursor save, 64-bit seqs,
 invalid UTF-8, empty and failing stores, age and size retention, the soft
 deadline between sessions and dropping cursors of sessions gone from the
-store.
+store. A failing store is a real unreadable SQLite file read through the
+real session-store.sh, never a faked exit code: the lenient verbs exit 0 on
+a SQLite error, so only the real failure shape tests the real contract.
 """
 from __future__ import annotations
 
@@ -314,18 +316,47 @@ class TestToolCallMeta(unittest.TestCase):
         self.assertNotIn(planted.encode("utf-8"), lay.state_bytes())
 
 
-class CountingRunner:
-    """subprocess.run stand-in that records each verb and can fail them all."""
+def write_garbage(path: str) -> None:
+    """Make path an unreadable store: SQLite answers "file is not a database"."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(b"not a sqlite database " * 64)
 
-    def __init__(self, fail: bool = False) -> None:
+
+class CountingRunner:
+    """subprocess.run stand-in that records each verb.
+
+    ``broken`` maps a verb to the path of an unreadable store: that verb runs
+    the real session-store.sh with REVENIUM_SESSION_STORE pointed there, so
+    it fails exactly the way a busy, corrupt or drifted store does.
+    """
+
+    def __init__(self, broken: dict | None = None) -> None:
         self.verbs: list = []
-        self.fail = fail
+        self.broken = broken or {}
 
     def __call__(self, argv, **kwargs):
         self.verbs.append(argv[2])
-        if self.fail:
-            return subprocess.CompletedProcess(argv, 1, b"", b"")
+        bad = self.broken.get(argv[2])
+        if bad is not None:
+            kwargs["env"] = dict(kwargs.get("env") or os.environ, REVENIUM_SESSION_STORE=bad)
         return subprocess.run(argv, **kwargs)
+
+
+class BrokenStore:
+    """Context manager: the layout's store is unreadable while inside."""
+
+    def __init__(self, db: str) -> None:
+        self.db = db
+        self.saved = db + ".saved"
+
+    def __enter__(self):
+        os.replace(self.db, self.saved)
+        write_garbage(self.db)
+        return self
+
+    def __exit__(self, *exc) -> None:
+        os.replace(self.saved, self.db)
 
 
 def patch_runner(test: unittest.TestCase, runner: CountingRunner) -> None:
@@ -453,11 +484,11 @@ class TestEdges(unittest.TestCase):
             self.assertEqual(json.loads(before)["sessions"][SID_A]["cursor"], 0)
             self.assertFalse(os.path.exists(os.path.join(self.lay.state, cache.TURNS_DIR)))
 
-        with self.subTest("store script exits non-zero"):
+        with self.subTest("store cannot be read"):
             self.add_turns(SID_A, 1, 2, 170)
             before = self.cursors_bytes()
-            patch_runner(self, CountingRunner(fail=True))
-            doc = self.lay.infer()
+            with BrokenStore(self.lay.db):
+                doc = self.lay.infer()
             self.assertEqual(doc["reason"], "ok")
             self.assertGreater(doc["counters"]["storeFailures"], 0)
             self.assertEqual(self.cursors_bytes(), before)
@@ -476,11 +507,71 @@ class TestEdges(unittest.TestCase):
 
     def test_failing_store_on_first_run_does_not_baseline(self) -> None:
         lay = Layout(self)
-        fixture(("mk_store", lay.db), ("mk_session", lay.db, SID_B, "agent:main:main", "", 100))
-        patch_runner(self, CountingRunner(fail=True))
-        doc = lay.infer()
+        fixture(
+            ("mk_store", lay.db),
+            ("mk_session", lay.db, SID_B, "agent:main:main", "", 100),
+            ("mk_event", lay.db, SID_B, 0, event(0, "user", "fixture history before install")),
+        )
+        with BrokenStore(lay.db):
+            doc = lay.infer()
         self.assertEqual(doc["reason"], "ok")
+        self.assertGreater(doc["counters"]["storeFailures"], 0)
         self.assertFalse(os.path.exists(os.path.join(lay.state, cache.CURSORS_FILE)))
+
+        # Once the store answers, the baseline covers the existing history.
+        lay.infer()
+        self.assertEqual(lay.cursors_doc()["sessions"][SID_B]["cursor"], 0)
+        lay.infer()
+        self.assertEqual(lay.cached(SID_B), [])
+
+    def test_one_unreadable_agent_store_blocks_the_baseline(self) -> None:
+        lay = Layout(self)
+        other = os.path.join(lay.oc_home, "agents", "dev", "agent", "openclaw-agent.sqlite")
+        fixture(
+            ("mk_store", lay.db),
+            ("mk_session", lay.db, SID_B, "agent:main:main", "", 100),
+            ("mk_event", lay.db, SID_B, 0, event(0, "user", "fixture main history")),
+            ("mk_store", other),
+            ("mk_session", other, SID_C, "agent:dev:main", "", 100),
+            ("mk_event", other, SID_C, 0, event(0, "user", "fixture dev history")),
+        )
+        with BrokenStore(other):
+            doc = lay.infer()
+        self.assertEqual(doc["counters"]["baselined"], 0)
+        self.assertFalse(os.path.exists(os.path.join(lay.state, cache.CURSORS_FILE)))
+
+        lay.infer()
+        self.assertEqual(set(lay.cursors_doc()["sessions"]), {SID_B, SID_C})
+        lay.infer()
+        self.assertNotIn(b"history", lay.state_bytes())
+
+    def test_failed_max_seq_during_baseline_does_not_baseline(self) -> None:
+        lay = Layout(self)
+        fixture(
+            ("mk_store", lay.db),
+            ("mk_session", lay.db, SID_B, "agent:main:main", "", 100),
+            ("mk_event", lay.db, SID_B, 3, event(3, "user", "fixture history before install")),
+        )
+        bad = os.path.join(lay.base, "bad", "openclaw-agent.sqlite")
+        write_garbage(bad)
+        patch_runner(self, CountingRunner(broken={"max-seq-strict": bad}))
+        doc = lay.infer()
+        self.assertEqual(doc["counters"]["baselined"], 0)
+        self.assertFalse(os.path.exists(os.path.join(lay.state, cache.CURSORS_FILE)))
+
+    def test_store_client_keeps_failed_distinct_from_empty(self) -> None:
+        lay = Layout(self)
+        fixture(("mk_store", lay.db))
+        client = store.StoreClient(os.path.join(str(_REPO_ROOT), "scripts", "session-store.sh"), lay.oc_home)
+        self.assertEqual(client.list_sessions(), [])
+        self.assertEqual(client.max_seq(SID_A), -1)
+        self.assertEqual(client.events_since(SID_A, -1), [])
+        self.assertEqual(client.failures, 0)
+        with BrokenStore(lay.db):
+            self.assertIsNone(client.list_sessions())
+            self.assertIsNone(client.max_seq(SID_A))
+            self.assertIsNone(client.events_since(SID_A, -1))
+        self.assertEqual(client.failures, 3)
 
     def test_prune_deletes_files_older_than_seven_days(self) -> None:
         turn_cache = cache.TurnCache(self.lay.state)

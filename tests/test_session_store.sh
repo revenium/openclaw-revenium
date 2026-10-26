@@ -489,6 +489,97 @@ else
 fi
 
 # =============================================================================
+# GROUP: strict verbs (complete read or exit 3, never a quiet empty answer)
+# =============================================================================
+echo "--- GROUP: strict verbs ---"
+
+ST_A="aaaaaaaa-0000-4000-8000-0000000000a1"
+ST_B="bbbbbbbb-0000-4000-8000-0000000000b2"
+ST_HOME=$(new_tmp)
+ST_DB_MAIN="${ST_HOME}/agents/main/agent/openclaw-agent.sqlite"
+ST_DB_DEV="${ST_HOME}/agents/dev/agent/openclaw-agent.sqlite"
+mk_store "${ST_DB_MAIN}"
+mk_session "${ST_DB_MAIN}" "${ST_A}" "agent:main:main" "" 100
+mk_event "${ST_DB_MAIN}" "${ST_A}" 1 '{"type":"message","seq":1}'
+mk_event "${ST_DB_MAIN}" "${ST_A}" 4 '{"type":"message","seq":4}'
+mk_store "${ST_DB_DEV}"
+mk_session "${ST_DB_DEV}" "${ST_B}" "agent:dev:main" "" 200
+
+# _st <verb> [args] — run one executed-mode verb with no override and the
+# fixture home; prints stdout, then "rc=<n>" on its own line.
+_st() {
+  local _out _rc
+  _out=$(env -u REVENIUM_SESSION_STORE OPENCLAW_HOME="${ST_HOME}" bash "${SESSION_STORE_SH}" "$@" 2>/dev/null)
+  _rc=$?
+  printf '%s\nrc=%s' "${_out}" "${_rc}"
+}
+
+st_lenient=$(_st list-sessions)
+st_strict=$(_st list-sessions-strict)
+if [[ "${st_strict}" == "${st_lenient}" && "${st_strict}" == *"${ST_A}"* && "${st_strict}" == *"${ST_B}"* ]]; then
+  pass "strict: list-sessions-strict equals list-sessions when every store is healthy"
+else
+  fail "strict: healthy list-sessions-strict differs (strict='${st_strict}' lenient='${st_lenient}')"
+fi
+
+if [[ "$(_st max-seq-strict "${ST_A}")" == $'4\nrc=0' && "$(_st max-seq-strict "${ST_B}")" == $'-1\nrc=0' ]]; then
+  pass "strict: max-seq-strict reports the max seq, and -1 for a session with no events"
+else
+  fail "strict: max-seq-strict wrong: A='$(_st max-seq-strict "${ST_A}")' B='$(_st max-seq-strict "${ST_B}")'"
+fi
+
+st_ev=$(_st session-events-seq-strict "${ST_A}" 1)
+if [[ "$(_seq_fields "${st_ev%$'\n'rc=*}")" == "4" && "${st_ev}" == *$'\nrc=0' ]]; then
+  pass "strict: session-events-seq-strict returns the rows after the cursor"
+else
+  fail "strict: session-events-seq-strict wrong: ${st_ev}"
+fi
+
+if [[ "$(_st max-seq-strict "not-a-session")" == $'\nrc=2' && "$(_st session-events-seq-strict "${ST_A}" abc)" == $'\nrc=2' ]]; then
+  pass "strict: an invalid session id or cursor exits 2 with no output"
+else
+  fail "strict: invalid argument handling wrong"
+fi
+
+# A sibling store that cannot be read: the lenient verbs keep exiting 0
+# (report.sh relies on that); the strict verbs print nothing and exit 3.
+cp "${ST_DB_DEV}" "${ST_DB_DEV}.good"
+printf 'not a sqlite database %.0s' {1..64} > "${ST_DB_DEV}"
+st_lenient_bad=$(_st list-sessions)
+if [[ "${st_lenient_bad}" == *"${ST_A}"* && "${st_lenient_bad}" == *$'\nrc=0' ]]; then
+  pass "strict: lenient list-sessions still answers from the healthy store with exit 0"
+else
+  fail "strict: lenient list-sessions behaviour changed: ${st_lenient_bad}"
+fi
+st_all_fail=1
+for st_args in "list-sessions-strict" "max-seq-strict ${ST_A}" "session-events-seq-strict ${ST_A} -1"; do
+  # shellcheck disable=SC2086
+  st_got=$(_st ${st_args})
+  if [[ "${st_got}" != $'\nrc=3' ]]; then
+    st_all_fail=0
+    fail "strict: ${st_args} with an unreadable sibling store: expected no output and rc=3, got '${st_got}'"
+  fi
+done
+[[ "${st_all_fail}" -eq 1 ]] && pass "strict: every strict verb prints nothing and exits 3 when one store is unreadable"
+mv "${ST_DB_DEV}.good" "${ST_DB_DEV}"
+
+st_none=$(env -u REVENIUM_SESSION_STORE OPENCLAW_HOME="$(new_tmp)" bash "${SESSION_STORE_SH}" list-sessions-strict 2>/dev/null)
+st_none_rc=$?
+if [[ -z "${st_none}" && "${st_none_rc}" -eq 3 ]]; then
+  pass "strict: no store at all is not a complete read (exit 3)"
+else
+  fail "strict: no-store case wrong (rc=${st_none_rc} out='${st_none}')"
+fi
+
+st_missing=$(REVENIUM_SESSION_STORE="${ST_HOME}/missing.sqlite" bash "${SESSION_STORE_SH}" list-sessions-strict 2>/dev/null)
+st_missing_rc=$?
+if [[ -z "${st_missing}" && "${st_missing_rc}" -eq 3 ]]; then
+  pass "strict: an override naming a missing file exits 3"
+else
+  fail "strict: missing override wrong (rc=${st_missing_rc} out='${st_missing}')"
+fi
+
+# =============================================================================
 # GROUP: read-only connection enforcement (T-19-03)
 # =============================================================================
 echo "--- GROUP: read-only enforcement ---"

@@ -131,20 +131,27 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
     cursors = Cursors.load(ctx.state_dir)
     cache = TurnCache(ctx.state_dir)
 
-    sessions = client.list_sessions()
-    listing_ok = client.failures == 0
+    listed = client.list_sessions()
+    # None means at least one store did not answer: the listing is not
+    # complete, so it can neither baseline nor show that a session is gone.
+    listing_ok = listed is not None
+    sessions = listed or []
     counters["sessionsSeen"] = len(sessions)
 
     if cursors.baseline_needed:
-        # A failed listing would baseline nothing, and every session would
-        # then be read from the start once the store comes back. Wait for a
-        # clean listing instead.
+        # A baseline built from a failed or partial read would leave some
+        # sessions without a cursor, and each of them would be read from its
+        # first turn once the store answers. Wait for a complete read.
         if listing_ok:
+            complete = True
             for row in sessions:
                 top = client.max_seq(row.session_id)
-                cursors.set(row.session_id, -1 if top is None else top, row.updated_at)
-                counters["baselined"] += 1
-            if client.failures == 0:
+                if top is None:
+                    complete = False
+                    break
+                cursors.set(row.session_id, top, row.updated_at)
+            if complete:
+                counters["baselined"] = len(sessions)
                 cursors.mark_baselined()
                 cursors.save()
         counters["storeFailures"] = client.failures
@@ -160,10 +167,9 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
             counters["sessionsSkippedUnchanged"] += 1
             continue
         after = entry["cursor"] if entry else -1
-        failures_before = client.failures
         events = client.events_since(sid, after)
-        if client.failures != failures_before:
-            # Keep the old updatedAt so the next tick retries this session.
+        if events is None:
+            # Keep the old cursor and updatedAt so the next tick retries.
             continue
         counters["sessionsRead"] += 1
         last = after
