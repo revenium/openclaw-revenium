@@ -111,7 +111,12 @@ def clamp(text: str) -> str:
 
 
 def sanitize_turn(text: str, known_values: Iterable[str]) -> tuple[str, bool]:
-    """Return (sanitized text, omitted). Any failure yields (OMITTED, True)."""
+    """Return (sanitized text, omitted). Any failure yields (OMITTED, True).
+
+    Only Exception is caught. The stage deadline is a BaseException and
+    passes through: a turn cut off by the deadline was not redacted, it was
+    interrupted, and caching it as omitted would lose it for good.
+    """
     try:
         if not isinstance(text, str):
             raise TypeError("text must be str")

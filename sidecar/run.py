@@ -32,6 +32,7 @@ import argparse
 import importlib.util
 import os
 import signal
+import stat
 import sys
 import time
 
@@ -54,8 +55,20 @@ SOFT_MARGIN_SECONDS = 5
 LIBRARY_MODULE = "revenium_agent_economics"
 
 
-class DeadlineExceeded(Exception):
-    """Raised by the SIGALRM handler when the stage budget runs out."""
+# A temp file in the state dir older than this was left by a write that a
+# kill interrupted. Every stage budget is far shorter, so no live write (the
+# deliver stage can run at the same time as infer) is ever this old.
+STALE_TMP_SECONDS = 600
+
+
+class DeadlineExceeded(BaseException):
+    """Raised by the SIGALRM handler when the stage budget runs out.
+
+    A BaseException, so the ``except Exception`` handlers that keep a store
+    or redaction problem from failing the stage cannot swallow it. Swallowed,
+    it would let a turn interrupted mid-redaction be cached as omitted with
+    its cursor moved past it, and the one-shot alarm would never fire again.
+    """
 
 
 def _library_available() -> bool:
@@ -87,6 +100,24 @@ def _known_values(ctx: Context) -> tuple[str, ...]:
         ],
         key_files=[os.path.join(ctx.state_dir, "model.key")],
     )
+
+
+def _sweep_stale_tmp(state_dir: str, now: float) -> None:
+    """Remove ``.<name>.<random>.tmp`` files a killed write left behind."""
+    try:
+        names = os.listdir(state_dir)
+    except OSError:
+        return
+    for name in names:
+        if not (name.startswith(".") and name.endswith(".tmp")):
+            continue
+        path = os.path.join(state_dir, name)
+        try:
+            st = os.lstat(path)
+            if stat.S_ISREG(st.st_mode) and now - st.st_mtime > STALE_TMP_SECONDS:
+                os.unlink(path)
+        except OSError:
+            pass
 
 
 def _record(msg: turns.Message, text: str) -> dict:
@@ -126,6 +157,7 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
         "storeFailures": 0,
         "compactedUnread": 0,
     }
+    _sweep_stale_tmp(ctx.state_dir, time.time())
     client = StoreClient(ctx.store_script, ctx.openclaw_home)
     known = _known_values(ctx)
     cursors = Cursors.load(ctx.state_dir)

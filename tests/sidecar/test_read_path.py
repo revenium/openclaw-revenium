@@ -47,7 +47,7 @@ if str(_SIDECAR_DIR) not in sys.path:
     sys.path.insert(0, str(_SIDECAR_DIR))
 
 import run  # noqa: E402
-from openclaw_economics import cache, paths, store, turns  # noqa: E402
+from openclaw_economics import cache, paths, redact, store, turns  # noqa: E402
 
 FIXTURE_LIB = str(_REPO_ROOT / "tests" / "lib" / "mk-session-store.sh")
 
@@ -689,6 +689,91 @@ class TestEdges(unittest.TestCase):
         lay.infer()
         self.assertEqual(lay.cursors_doc()["sessions"][SID_C]["cursor"], 0)
         self.assertNotIn(b"dev history", lay.state_bytes())
+
+
+class TestDeadline(unittest.TestCase):
+    """The SIGALRM deadline must stop the stage, never be swallowed."""
+
+    def setUp(self) -> None:
+        self.lay = Layout(self)
+        fixture(
+            ("mk_store", self.lay.db),
+            ("mk_session", self.lay.db, SID_A, "agent:main:main", "", 100),
+            ("mk_event", self.lay.db, SID_A, 0, event(0, "user", "fixture before install")),
+        )
+        self.lay.infer()
+
+    def test_deadline_is_not_an_exception(self) -> None:
+        self.assertFalse(issubclass(run.DeadlineExceeded, Exception))
+
+    def test_sanitize_turn_lets_the_deadline_through(self) -> None:
+        with mock.patch.object(redact, "redact", side_effect=run.DeadlineExceeded()):
+            with self.assertRaises(run.DeadlineExceeded):
+                redact.sanitize_turn("fixture text", ())
+
+    def test_store_call_lets_the_deadline_through(self) -> None:
+        def runner(argv, **kwargs):
+            raise run.DeadlineExceeded()
+
+        client = store.StoreClient("/nonexistent/session-store.sh", self.lay.oc_home, runner=runner)
+        with self.assertRaises(run.DeadlineExceeded):
+            client.list_sessions()
+        self.assertEqual(client.failures, 0)
+
+    def test_turn_interrupted_mid_redaction_is_neither_omitted_nor_skipped(self) -> None:
+        fixture(
+            ("mk_event", self.lay.db, SID_A, 1, event(1, "user", "fixture first turn")),
+            ("mk_event", self.lay.db, SID_A, 2, event(2, "user", "fixture second turn")),
+            ("mk_touch_session", self.lay.db, SID_A, 150),
+        )
+        real = redact.redact
+        calls = []
+
+        def interrupted(text, known):
+            calls.append(text)
+            if len(calls) == 2:
+                raise run.DeadlineExceeded()
+            return real(text, known)
+
+        with mock.patch.object(redact, "redact", side_effect=interrupted):
+            rc = run.main(self.lay.argv(), find_library=lambda: True)
+        self.assertEqual(rc, run.EXIT_DEADLINE)
+        self.assertEqual(self.lay.status()["reason"], "timeout")
+        self.assertEqual(self.lay.cursors_doc()["sessions"][SID_A]["cursor"], 0)
+        self.assertNotIn(redact.OMITTED.encode("utf-8"), self.lay.state_bytes())
+
+        doc = self.lay.infer()
+        self.assertEqual(doc["counters"]["redactionOmitted"], 0)
+        self.assertEqual([r["text"] for r in self.lay.cached(SID_A)],
+                         ["fixture first turn", "fixture second turn"])
+        self.assertEqual(self.lay.cursors_doc()["sessions"][SID_A]["cursor"], 2)
+
+    def test_deadline_during_the_baseline_reports_timeout(self) -> None:
+        lay = Layout(self)
+        fixture(("mk_store", lay.db), ("mk_session", lay.db, SID_B, "agent:main:main", "", 100))
+
+        def runner(argv, **kwargs):
+            if argv[2] != "list-sessions-strict":
+                raise run.DeadlineExceeded()
+            return subprocess.run(argv, **kwargs)
+
+        patch_runner(self, runner)
+        rc = run.main(lay.argv(), find_library=lambda: True)
+        self.assertEqual(rc, run.EXIT_DEADLINE)
+        self.assertFalse(os.path.exists(os.path.join(lay.state, cache.CURSORS_FILE)))
+
+    def test_stale_temp_files_are_swept_and_fresh_ones_kept(self) -> None:
+        state = self.lay.state
+        stale = os.path.join(state, ".cursors.json.abc123.tmp")
+        fresh = os.path.join(state, ".deliver-status.json.def456.tmp")
+        for path in (stale, fresh):
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT, 0o600)
+            os.close(fd)
+        old = time.time() - run.STALE_TMP_SECONDS - 60
+        os.utime(stale, (old, old))
+        self.lay.infer()
+        self.assertFalse(os.path.exists(stale))
+        self.assertTrue(os.path.exists(fresh))
 
 
 if __name__ == "__main__":

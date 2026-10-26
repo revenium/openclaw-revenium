@@ -90,6 +90,8 @@ class StoreClient:
                 timeout=self.timeout,
             )
         except Exception:  # noqa: BLE001 - a store problem must never raise
+            # The stage deadline is a BaseException, so it is not counted
+            # here as a store failure; it stops the stage instead.
             self.failures += 1
             return None
         if proc.returncode != 0:
