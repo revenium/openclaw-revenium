@@ -843,7 +843,7 @@ class TestDeadline(unittest.TestCase):
             client.list_sessions()
         self.assertEqual(client.failures, 0)
 
-    def test_turn_interrupted_mid_redaction_is_neither_omitted_nor_skipped(self) -> None:
+    def test_turn_interrupted_mid_redaction_is_cached_later_not_omitted(self) -> None:
         fixture(
             ("mk_event", self.lay.db, SID_A, 1, event(1, "user", "fixture first turn")),
             ("mk_event", self.lay.db, SID_A, 2, event(2, "user", "fixture second turn")),
