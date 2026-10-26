@@ -25,6 +25,13 @@ deadline between sessions and dropping cursors of sessions gone from the
 store. A failing store is a real unreadable SQLite file read through the
 real session-store.sh, never a faked exit code: the lenient verbs exit 0 on
 a SQLite error, so only the real failure shape tests the real contract.
+
+TestRecheck covers the periodic max-seq recheck: change detection trusts
+the store to move ``updated_at`` with every new row, so every
+MAX_SEQ_RECHECK_SECONDS one grouped ``max-seq-all-strict`` call finds any
+session whose rows outran its ``updated_at``. ``maxSeqCheckedAt`` in
+cursors.json records the last complete recheck; a failed or deadline-cut
+recheck leaves it alone so the next tick tries again.
 """
 from __future__ import annotations
 
@@ -812,6 +819,192 @@ class TestEdges(unittest.TestCase):
         lay.infer()
         self.assertEqual(lay.cursors_doc()["sessions"][SID_C]["cursor"], 0)
         self.assertNotIn(b"dev history", lay.state_bytes())
+
+
+class TestRecheck(unittest.TestCase):
+    def setUp(self) -> None:
+        self.lay = Layout(self)
+        fixture(
+            ("mk_store", self.lay.db),
+            ("mk_session", self.lay.db, SID_A, "agent:main:main", "", 100),
+            ("mk_event", self.lay.db, SID_A, 0, event(0, "user", "fixture before install")),
+            ("mk_session", self.lay.db, SID_B, "agent:main:b", "", 100),
+            ("mk_event", self.lay.db, SID_B, 0, event(0, "user", "fixture b before install")),
+        )
+        self.lay.infer()
+
+    def cursors_path(self) -> str:
+        return os.path.join(self.lay.state, cache.CURSORS_FILE)
+
+    def cursors_bytes(self) -> bytes:
+        with open(self.cursors_path(), "rb") as handle:
+            return handle.read()
+
+    def age_check_time(self) -> int:
+        doc = self.lay.cursors_doc()
+        aged = int(time.time()) - run.MAX_SEQ_RECHECK_SECONDS - 1
+        doc["maxSeqCheckedAt"] = aged
+        with open(self.cursors_path(), "w", encoding="utf-8") as handle:
+            json.dump(doc, handle)
+        return aged
+
+    def add_silent_turn(self, sid: str, seq: int, text: str) -> None:
+        """A new row with no updated_at change, as a store that breaks the rule writes it."""
+        fixture(("mk_event", self.lay.db, sid, seq, event(seq, "user", text)))
+
+    def test_turn_added_without_an_updated_at_change_is_read_on_recheck(self) -> None:
+        self.add_silent_turn(SID_A, 1, "fixture silent turn")
+        doc = self.lay.infer()
+        self.assertEqual(self.lay.cached(SID_A), [])
+        self.assertEqual(doc["counters"]["sessionsReadOnRecheck"], 0)
+
+        self.age_check_time()
+        started = int(time.time())
+        doc = self.lay.infer()
+        self.assertEqual([r["text"] for r in self.lay.cached(SID_A)], ["fixture silent turn"])
+        self.assertEqual(doc["counters"]["sessionsReadOnRecheck"], 1)
+        self.assertEqual(self.lay.cursors_doc()["sessions"][SID_A]["cursor"], 1)
+        self.assertGreaterEqual(self.lay.cursors_doc()["maxSeqCheckedAt"], started)
+
+    def test_recheck_of_a_quiet_store_reads_no_events_and_then_waits(self) -> None:
+        aged = self.age_check_time()
+        runner = CountingRunner()
+        patch_runner(self, runner)
+        doc = self.lay.infer()
+        self.assertEqual(runner.verbs, ["list-sessions-strict", "max-seq-all-strict"])
+        self.assertEqual(doc["counters"]["sessionsRead"], 0)
+        self.assertEqual(doc["counters"]["sessionsReadOnRecheck"], 0)
+        self.assertGreater(self.lay.cursors_doc()["maxSeqCheckedAt"], aged)
+
+        before = self.cursors_bytes()
+        runner.verbs.clear()
+        self.lay.infer()
+        self.assertEqual(runner.verbs, ["list-sessions-strict"])
+        self.assertEqual(self.cursors_bytes(), before)
+
+    def test_recheck_tick_with_a_changed_session_calls_max_seq_all_once(self) -> None:
+        self.add_silent_turn(SID_A, 1, "fixture silent a")
+        fixture(
+            ("mk_event", self.lay.db, SID_B, 1, event(1, "user", "fixture touched b")),
+            ("mk_touch_session", self.lay.db, SID_B, 150),
+        )
+        self.age_check_time()
+        runner = CountingRunner()
+        patch_runner(self, runner)
+        doc = self.lay.infer()
+        self.assertEqual(runner.verbs.count("max-seq-all-strict"), 1)
+        self.assertEqual(doc["counters"]["sessionsRead"], 2)
+        self.assertEqual(doc["counters"]["sessionsReadOnRecheck"], 1)
+        self.assertEqual([r["text"] for r in self.lay.cached(SID_A)], ["fixture silent a"])
+        self.assertEqual([r["text"] for r in self.lay.cached(SID_B)], ["fixture touched b"])
+
+    def test_failed_recheck_keeps_the_old_check_time(self) -> None:
+        self.add_silent_turn(SID_A, 1, "fixture silent turn")
+        aged = self.age_check_time()
+        bad = os.path.join(self.lay.base, "bad", "openclaw-agent.sqlite")
+        write_garbage(bad)
+        runner = CountingRunner(broken={"max-seq-all-strict": bad})
+        patch_runner(self, runner)
+        doc = self.lay.infer()
+        self.assertIn("max-seq-all-strict", runner.verbs)
+        self.assertNotIn("session-events-seq-strict", runner.verbs)
+        self.assertGreater(doc["counters"]["storeFailures"], 0)
+        self.assertEqual(self.lay.cursors_doc()["maxSeqCheckedAt"], aged)
+        self.assertEqual(self.lay.cached(SID_A), [])
+
+        runner.broken.clear()
+        doc = self.lay.infer()
+        self.assertEqual(doc["counters"]["sessionsReadOnRecheck"], 1)
+        self.assertEqual([r["text"] for r in self.lay.cached(SID_A)], ["fixture silent turn"])
+        self.assertGreater(self.lay.cursors_doc()["maxSeqCheckedAt"], aged)
+
+    def test_deadline_cut_recheck_keeps_the_old_check_time(self) -> None:
+        self.add_silent_turn(SID_A, 1, "fixture silent a")
+        self.add_silent_turn(SID_B, 1, "fixture silent b")
+        aged = self.age_check_time()
+        counters = run.run_infer(self.lay.context(budget=30), clock=fake_clock(0.0, 0.0, 1e9))
+        self.assertGreater(counters["sessionsDeferred"], 0)
+        self.assertEqual(counters["sessionsReadOnRecheck"], 1)
+        self.assertEqual(self.lay.cursors_doc()["maxSeqCheckedAt"], aged)
+
+        counters = run.run_infer(self.lay.context(budget=30))
+        self.assertEqual(counters["sessionsDeferred"], 0)
+        self.assertEqual(counters["sessionsReadOnRecheck"], 1)
+        self.assertGreater(self.lay.cursors_doc()["maxSeqCheckedAt"], aged)
+        self.assertEqual(len(self.lay.cached(SID_A)) + len(self.lay.cached(SID_B)), 2)
+
+    def test_compacted_head_row_does_not_trigger_a_recheck_read(self) -> None:
+        fixture(
+            ("mk_event", self.lay.db, SID_A, 1, event(1, "user", "fixture turn")),
+            ("mk_compacted_event", self.lay.db, SID_A, 2),
+            ("mk_touch_session", self.lay.db, SID_A, 170),
+        )
+        self.lay.infer()
+        self.assertEqual(self.lay.cursors_doc()["sessions"][SID_A]["cursor"], 1)
+        self.age_check_time()
+        runner = CountingRunner()
+        patch_runner(self, runner)
+        doc = self.lay.infer()
+        self.assertIn("max-seq-all-strict", runner.verbs)
+        self.assertNotIn("session-events-seq-strict", runner.verbs)
+        self.assertEqual(doc["counters"]["sessionsReadOnRecheck"], 0)
+        self.assertEqual(doc["counters"]["sessionsSkippedUnchanged"], 2)
+
+    def test_baseline_records_the_check_time(self) -> None:
+        lay = Layout(self)
+        fixture(
+            ("mk_store", lay.db),
+            ("mk_session", lay.db, SID_C, "agent:main:c", "", 100),
+            ("mk_event", lay.db, SID_C, 4, event(4, "user", "fixture history")),
+        )
+        runner = CountingRunner()
+        patch_runner(self, runner)
+        started = int(time.time())
+        lay.infer()
+        self.assertEqual(runner.verbs, ["list-sessions-strict", "max-seq-all-strict"])
+        checked = lay.cursors_doc().get("maxSeqCheckedAt")
+        self.assertIsInstance(checked, int)
+        self.assertGreaterEqual(checked, started)
+
+        runner.verbs.clear()
+        doc = lay.infer()
+        self.assertEqual(runner.verbs, ["list-sessions-strict"])
+        self.assertEqual(doc["counters"]["sessionsReadOnRecheck"], 0)
+        self.assertEqual(lay.cursors_doc()["maxSeqCheckedAt"], checked)
+
+    def test_check_time_parsing_falls_back_to_due(self) -> None:
+        now = time.time()
+        interval = run.MAX_SEQ_RECHECK_SECONDS
+        base = {
+            "version": 1,
+            "baselinedAt": "2026-10-26T12:00:00Z",
+            "sessions": {
+                SID_A: {"cursor": 7, "updatedAt": "170"},
+                SID_B: {"cursor": -1, "updatedAt": ""},
+            },
+        }
+        missing = object()
+        cases = (
+            ("missing", missing, True),
+            ("boolean", True, True),
+            ("negative", -5, True),
+            ("string", str(int(now)), True),
+            ("float", float(int(now)), True),
+            ("far future", int(now) + interval + 100, True),
+            ("recent", int(now) - 5, False),
+        )
+        for label, value, due in cases:
+            with self.subTest(label):
+                doc = dict(base)
+                if value is not missing:
+                    doc["maxSeqCheckedAt"] = value
+                with open(self.cursors_path(), "w", encoding="utf-8") as handle:
+                    json.dump(doc, handle)
+                cursors = cache.Cursors.load(self.lay.state)
+                self.assertFalse(cursors.baseline_needed)
+                self.assertEqual(cursors.recheck_due(now, interval), due)
+                self.assertEqual(cursors.get(SID_A), {"cursor": 7, "updatedAt": "170"})
+                self.assertEqual(cursors.get(SID_B), {"cursor": -1, "updatedAt": ""})
 
 
 class TestDeadline(unittest.TestCase):
