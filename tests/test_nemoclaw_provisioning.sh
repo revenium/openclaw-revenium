@@ -958,7 +958,7 @@ SEED_L
 
 # Build a fixture tarball containing a top-level `revenium` file (mirrors the real
 # revenium-cli_*_linux_amd64.tar.gz layout that `tar xzf` + `install ./revenium` expect).
-FIXTURE_TGZ=$(mktemp "${TMPDIR:-/tmp}/test-nemo-revcli.XXXXXX.tgz")
+FIXTURE_TGZ=$(mktemp "${TMPDIR:-/tmp}/test-nemo-revcli.XXXXXX")
 TMP_HOMES+=("${FIXTURE_TGZ}")
 _fix_dir=$(mktemp -d "${TMPDIR:-/tmp}/test-nemo-revcli-src.XXXXXX")
 TMP_HOMES+=("${_fix_dir}")
@@ -1787,7 +1787,7 @@ fi
 # A pinned binary that cannot execute here (the linux_amd64 CLI on an arm64
 # host) must never be put on the cron PATH: the NUL bytes make bash report
 # "cannot execute binary file", the same failure a wrong-arch ELF produces.
-BADARCH_TGZ=$(mktemp "${TMPDIR:-/tmp}/test-nemo-revcli-bad.XXXXXX.tgz")
+BADARCH_TGZ=$(mktemp "${TMPDIR:-/tmp}/test-nemo-revcli-bad.XXXXXX")
 TMP_HOMES+=("${BADARCH_TGZ}")
 _bad_dir=$(mktemp -d "${TMPDIR:-/tmp}/test-nemo-revcli-badsrc.XXXXXX")
 TMP_HOMES+=("${_bad_dir}")

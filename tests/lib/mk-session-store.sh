@@ -158,7 +158,9 @@ mk_event() {
   local db="$1" sid="$2" seq="$3" event_json="$4"
   local q_sid tmp_sql
   q_sid="$(_mk_sql_quote "${sid}")"
-  tmp_sql=$(mktemp "${TMPDIR:-/tmp}/mk-event.XXXXXX.sql")
+  # BSD mktemp randomizes only a trailing X run; a suffix after it turns the
+  # template into a fixed name, so one leftover file breaks every later call.
+  tmp_sql=$(mktemp "${TMPDIR:-/tmp}/mk-event.XXXXXX")
   SID="${q_sid}" SEQ="${seq}" EVENT_JSON="${event_json}" python3 - "${tmp_sql}" <<'PY'
 import os, sys
 sql_path = sys.argv[1]
