@@ -239,23 +239,58 @@ install_metering_loop() {
     info "Metering loop installed (cron active for sandbox '${SANDBOX_NAME}')"
 }
 
+# skill_content_hash <skill_dir> — sha256 over the agent-facing skill files:
+# SKILL.md, BUDGET-GUARD.md, then references/*.md sorted under LC_ALL=C. Each
+# file contributes its relative path, a newline, then its bytes, so a rename
+# changes the hash as well as an edit.
+skill_content_hash() {
+    local dir="$1"
+    (
+        export LC_ALL=C
+        cd "${dir}" 2>/dev/null || exit 0
+        local f
+        for f in SKILL.md BUDGET-GUARD.md; do
+            [[ -f "${f}" ]] || continue
+            printf '%s\n' "${f}"
+            cat "${f}"
+        done
+        # if/fi, not `[[ ]] && printf`: a false test as the loop's last command
+        # would fail this pipeline under the caller's set -e and pipefail.
+        for f in references/*.md; do
+            if [[ -f "${f}" ]]; then printf '%s\n' "${f}"; fi
+        done | sort | while IFS= read -r f; do
+            printf '%s\n' "${f}"
+            cat "${f}"
+        done
+        exit 0
+    ) | sha256_stdin
+}
+
 # install_skill_nemoclaw — deploy the revenium skill into the sandbox via
 # nemoclaw skill install (D-08). Pulled into Phase 15 so the marker chain is
 # end-to-end verifiable before the plugin smoke gate runs.
-# Ledger key: skill-installed-nemoclaw
+# Ledger key: skill-installed-nemoclaw (value: skill_content_hash). Keying on
+# content means re-running the installer pushes an edited SKILL.md or reference
+# into the sandbox; the legacy value `1` never matches, so pre-upgrade installs
+# redeploy once.
 install_skill_nemoclaw() {
-    if ledger_has "skill-installed-nemoclaw"; then
-        info "Revenium skill already deployed to sandbox (ledger) — skipping."
-        return 0
-    fi
-
-    step "Deploying revenium skill into sandbox"
     # SCRIPT_DIR is scripts/; repo root (which IS the skill dir containing SKILL.md)
     # is one level up. REVENIUM_SKILL_DIR may be overridden by tests to point at
     # an alternate dir (e.g. to test the SKILL.md-absent guard on macOS without
     # affecting the real repo root).
-    local skill_dir
+    local skill_dir expected_skill_hash
     skill_dir="${REVENIUM_SKILL_DIR:-${SCRIPT_DIR}/..}"
+    expected_skill_hash="$(skill_content_hash "${skill_dir}")"
+
+    if ledger_has "skill-installed-nemoclaw"; then
+        if [[ "$(ledger_get "skill-installed-nemoclaw")" == "${expected_skill_hash}" ]]; then
+            info "Revenium skill already deployed to sandbox (ledger) — skipping."
+            return 0
+        fi
+        warn "skill content changed since the last deploy — redeploying to sandbox"
+    fi
+
+    step "Deploying revenium skill into sandbox"
 
     # Guard: SKILL.md must be present at the resolved path; if it is absent, the
     # path resolved to ~/ or another wrong location (e.g., due to SSHFS mounts).
@@ -282,7 +317,7 @@ install_skill_nemoclaw() {
     fi
     info "revenium skill confirmed ready in sandbox"
 
-    ledger_set "skill-installed-nemoclaw" "1"
+    ledger_set "skill-installed-nemoclaw" "${expected_skill_hash}"
     info "Revenium skill deployed to sandbox '${SANDBOX_NAME}'"
 }
 
@@ -637,10 +672,17 @@ deliver_revenium_cli_host() {
 
     # Honor an operator-provided revenium already on PATH (standalone install or a
     # system package) — do not clobber it; the metering cron will use it as-is.
+    # One below the floor lacks the outcome-metric verbs, so the pinned CLI is
+    # installed into ~/.local/bin beside it (the operator's binary is not touched).
     if command -v revenium >/dev/null 2>&1; then
-        info "revenium already on host PATH ($(command -v revenium)) — skipping host CLI install."
-        ledger_set "cli-delivered-host" "${expected_cli_ledger}"
-        return 0
+        if revenium_cli_meets_floor; then
+            info "revenium already on host PATH ($(command -v revenium)) — skipping host CLI install."
+            ledger_set "cli-delivered-host" "${expected_cli_ledger}"
+            return 0
+        fi
+        local detected_host_cli
+        detected_host_cli="$(revenium_cli_version_detected)"
+        warn "host revenium ${detected_host_cli:-unknown} is below ${REVENIUM_CLI_FLOOR} — installing the pinned ${REVENIUM_CLI_VERSION} to ~/.local/bin; an earlier PATH entry may still win at tick time, and the sidecar's capability probe will report it"
     fi
 
     step "Installing revenium CLI ${REVENIUM_CLI_VERSION} on host (for metering cron)"

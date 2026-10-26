@@ -1661,7 +1661,7 @@ _seed_all_but_skill() {
 }
 
 echo ""
-echo "  -- U-a: legacy skill-installed-nemoclaw=1 → redeploy --"
+echo "  -- U-a: legacy skill ledger value 1 → redeploy --"
 TMP_HOME_Ua=$(make_home)
 ARGV_Ua=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ua.XXXXXX")
 TMP_HOMES+=("${ARGV_Ua}")
