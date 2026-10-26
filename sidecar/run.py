@@ -47,6 +47,10 @@ EXIT_RUNTIME_MISSING = 3
 EXIT_UNSAFE_PATHS = 4
 EXIT_DEADLINE = 124
 
+# Infer stops starting new sessions this long before its budget runs out, so
+# it can save cursors and status before the hard SIGALRM deadline.
+SOFT_MARGIN_SECONDS = 5
+
 LIBRARY_MODULE = "revenium_agent_economics"
 
 
@@ -97,22 +101,30 @@ def _record(msg: turns.Message, text: str) -> dict:
     }
 
 
-def run_infer(ctx: Context) -> dict:
+def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
     """Read new turns from the store into the redacted turn cache.
 
     Returns the counters infer-status.json records. The first run (no
     cursors.json) only baselines every listed session at its current max
     seq, so history from before install is never read. A session first
     listed after the baseline starts at -1, so its first turn is kept.
+    A session whose store updated_at has not moved is not read at all,
+    which keeps quiet sessions off a slow SSHFS mount.
     """
+    began = clock()
+    budget = ctx.budget_seconds
+    soft_deadline = began + max(budget - SOFT_MARGIN_SECONDS, budget / 2)
     counters = {
         "sessionsSeen": 0,
         "sessionsRead": 0,
+        "sessionsSkippedUnchanged": 0,
+        "sessionsDeferred": 0,
         "baselined": 0,
         "turnsCached": 0,
         "redactionOmitted": 0,
         "eventsSkipped": 0,
         "storeFailures": 0,
+        "compactedUnread": 0,
     }
     client = StoreClient(ctx.store_script, ctx.openclaw_home)
     known = _known_values(ctx)
@@ -120,13 +132,14 @@ def run_infer(ctx: Context) -> dict:
     cache = TurnCache(ctx.state_dir)
 
     sessions = client.list_sessions()
+    listing_ok = client.failures == 0
     counters["sessionsSeen"] = len(sessions)
 
     if cursors.baseline_needed:
         # A failed listing would baseline nothing, and every session would
         # then be read from the start once the store comes back. Wait for a
         # clean listing instead.
-        if client.failures == 0:
+        if listing_ok:
             for row in sessions:
                 top = client.max_seq(row.session_id)
                 cursors.set(row.session_id, -1 if top is None else top, row.updated_at)
@@ -137,11 +150,21 @@ def run_infer(ctx: Context) -> dict:
         counters["storeFailures"] = client.failures
         return counters
 
-    for row in sessions:
+    for index, row in enumerate(sessions):
+        if clock() >= soft_deadline:
+            counters["sessionsDeferred"] = len(sessions) - index
+            break
         sid = row.session_id
         entry = cursors.get(sid)
+        if entry is not None and entry["updatedAt"] == row.updated_at:
+            counters["sessionsSkippedUnchanged"] += 1
+            continue
         after = entry["cursor"] if entry else -1
+        failures_before = client.failures
         events = client.events_since(sid, after)
+        if client.failures != failures_before:
+            # Keep the old updatedAt so the next tick retries this session.
+            continue
         counters["sessionsRead"] += 1
         last = after
         batch = []
@@ -158,8 +181,23 @@ def run_infer(ctx: Context) -> dict:
                 counters["redactionOmitted"] += 1
             batch.append(_record(msg, text))
         counters["turnsCached"] += cache.append(sid, batch)
-        if last != after or entry is None:
-            cursors.set(sid, last, row.updated_at)
+        counters["compactedUnread"] += client.null_event_count(sid)
+        cursors.set(sid, last, row.updated_at)
+        cursors.save()
+
+    cache.prune(time.time())
+
+    # An empty or failed listing says nothing about which sessions are gone,
+    # and dropping their cursors would re-read them from the start later.
+    if listing_ok and sessions:
+        listed = {row.session_id for row in sessions}
+        stale = [
+            sid for sid in list(cursors.sessions)
+            if sid not in listed and not os.path.exists(cache.path(sid))
+        ]
+        for sid in stale:
+            cursors.drop(sid)
+        if stale:
             cursors.save()
 
     counters["storeFailures"] = client.failures

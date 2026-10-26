@@ -14,6 +14,10 @@ sidecar has consumed and the store ``updated_at`` seen at that time::
 
 Cursors are JSON integers, so any 64-bit seq round-trips exactly.
 
+Retention: prune deletes a session file whose mtime is more than
+RETENTION_SECONDS old and cuts a file larger than SESSION_CAP_BYTES down to
+its newest whole lines that fit. Nothing else releases cached turns yet.
+
 Write order: records are appended and fsynced before the cursor that covers
 them is saved. A crash in between leaves the cursor behind the cache, the
 next run re-reads those rows, and append drops every seq at or below the
@@ -23,6 +27,8 @@ from __future__ import annotations
 
 import json
 import os
+import stat
+import tempfile
 from typing import Iterable
 
 from .status import atomic_write_json, utc_now_iso
@@ -32,6 +38,10 @@ TURNS_DIR = "turns"
 CURSORS_FILE = "cursors.json"
 CURSORS_VERSION = 1
 TAIL_READ_BYTES = 65536
+CACHE_SUFFIX = ".jsonl"
+
+RETENTION_SECONDS = 7 * 24 * 3600
+SESSION_CAP_BYTES = 512 * 1024
 
 
 def _encode(record: dict) -> bytes:
@@ -60,7 +70,7 @@ class TurnCache:
     def path(self, sid: str) -> str:
         if not valid_session_id(sid):
             raise ValueError("invalid session id")
-        return os.path.join(self.dir, sid + ".jsonl")
+        return os.path.join(self.dir, sid + CACHE_SUFFIX)
 
     def _ensure_dir(self) -> None:
         if not os.path.isdir(self.dir):
@@ -137,6 +147,81 @@ class TurnCache:
         return records
 
 
+    def prune(self, now: float) -> None:
+        """Apply the age and size caps to every session file."""
+        try:
+            names = os.listdir(self.dir)
+        except OSError:
+            return
+        for name in names:
+            path = os.path.join(self.dir, name)
+            try:
+                st = os.lstat(path)
+            except OSError:
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                continue
+            if name.startswith(".") and name.endswith(".tmp"):
+                # Left by a rewrite that was interrupted; infer runs under
+                # its lock, so no rewrite is in flight now.
+                self._unlink(path)
+                continue
+            sid = name[: -len(CACHE_SUFFIX)] if name.endswith(CACHE_SUFFIX) else ""
+            if not valid_session_id(sid):
+                continue
+            if now - st.st_mtime > RETENTION_SECONDS:
+                self._unlink(path)
+            elif st.st_size > SESSION_CAP_BYTES:
+                try:
+                    self._cut(path)
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _unlink(path: str) -> None:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+    def _cut(self, path: str) -> None:
+        try:
+            with open(path, "rb") as handle:
+                data = handle.read()
+        except OSError:
+            return
+        kept: list[bytes] = []
+        total = 0
+        for raw in reversed(data.split(b"\n")):
+            if not raw.strip():
+                continue
+            size = len(raw) + 1
+            if total + size > SESSION_CAP_BYTES:
+                break
+            kept.append(raw)
+            total += size
+        kept.reverse()
+        payload = b"".join(raw + b"\n" for raw in kept)
+        fd, tmp_path = tempfile.mkstemp(
+            dir=self.dir, prefix="." + os.path.basename(path) + ".", suffix=".tmp"
+        )
+        try:
+            os.fchmod(fd, 0o600)
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
+            os.fsync(fd)
+            os.close(fd)
+            fd = -1
+            os.replace(tmp_path, path)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if os.path.exists(tmp_path):
+                self._unlink(tmp_path)
+
+
 class Cursors:
     def __init__(self, state_dir: str) -> None:
         self.path = os.path.join(state_dir, CURSORS_FILE)
@@ -175,6 +260,9 @@ class Cursors:
 
     def set(self, sid: str, cursor: int, updated_at: str) -> None:
         self.sessions[sid] = {"cursor": int(cursor), "updatedAt": str(updated_at)}
+
+    def drop(self, sid: str) -> None:
+        self.sessions.pop(sid, None)
 
     def mark_baselined(self) -> None:
         self.baselined_at = utc_now_iso()
