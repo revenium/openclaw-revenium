@@ -28,9 +28,9 @@
 #              mechanism (BOUNDED_RUN_FORCE_PORTABLE=1)
 #   GROUP S-c: CR-02/WR-03 — wrapper/watchdog diagnostics are never reported to
 #              the operator as a measured in-sandbox Node version
-#   GROUP T: RUN-01/RUN-03  — economics sidecar provisioned per sandbox, fail-open,
+#   GROUP T: sidecar        — economics sidecar provisioned per sandbox, fail-open,
 #              after the host CLI step and before the metering loop
-#   GROUP U: OPS-02/RUN-04  — skill redeploy keyed on a content hash; a host
+#   GROUP U: redeploy, CLI  — skill redeploy keyed on a content hash; a host
 #              revenium below the 1.7.0 floor is replaced by the pinned CLI
 #
 # No group runs the real provisioner: run_provision and run_provision_no_ledger
@@ -1567,7 +1567,7 @@ else
 fi
 
 # ===========================================================================
-# GROUP T: economics sidecar provisioning (RUN-01/RUN-03)
+# GROUP T: economics sidecar provisioning (fail-open, per sandbox)
 #
 #   T-a: a run that reaches section 5 calls the provisioner with
 #        --sandbox <name> and exits 0.
@@ -1635,7 +1635,7 @@ else
 fi
 
 # ===========================================================================
-# GROUP U: content-hashed skill redeploy (OPS-02) and host CLI floor (RUN-04)
+# GROUP U: content-hashed skill redeploy and host CLI floor
 #
 #   U-a: legacy ledger value `1` → redeploy, "skill content changed", hash stored.
 #   U-b: ledger value == current content hash → skip, no `skill install` call.

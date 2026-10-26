@@ -388,14 +388,14 @@ else
 fi
 
 # ===========================================================================
-# GROUP VG-H: RUN-04 revenium CLI floor (revenium_cli_version_detected /
+# GROUP VG-H: revenium CLI floor (revenium_cli_version_detected /
 #   revenium_cli_meets_floor). Every case runs through
 #   STUB_REVENIUM_VERSION_OUTPUT, so no real revenium binary is needed; " " is
 #   the empty-output case (an empty override would fall through to the real
 #   CLI, as STUB_OPENCLAW_VERSION_OUTPUT does in VG-C).
 # ===========================================================================
 echo ""
-echo "--- GROUP VG-H: RUN-04 revenium CLI floor ---"
+echo "--- GROUP VG-H: revenium CLI floor ---"
 
 detected_vgh=$( (. "${VERSION_GATE_SH}" 2>/dev/null; STUB_REVENIUM_VERSION_OUTPUT="revenium 1.9.0 (8cf0e69)" revenium_cli_version_detected) 2>/dev/null )
 if [[ "${detected_vgh}" == "1.9.0" ]]; then

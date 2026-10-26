@@ -171,9 +171,11 @@ else
   info "revenium CLI installed: $(command -v revenium)"
 fi
 
-# --- revenium CLI version floor (RUN-04) ---
-# Metering works on older CLIs, so a CLI below the floor gets one upgrade
-# attempt and then a warning; it never fails the install.
+# --- revenium CLI version floor ---
+# The sidecar's outcome-metric delivery needs the jobs verbs that first
+# shipped in the floor release. Metering works on older CLIs, so a CLI below
+# the floor gets one upgrade attempt and then a warning; it never fails the
+# install.
 if ! revenium_cli_meets_floor && [[ "${SKIP_PREREQS}" == false ]] && command_exists brew; then
   warn "revenium CLI is below ${REVENIUM_CLI_FLOOR} — upgrading via Homebrew"
   brew upgrade revenium/tap/revenium || true

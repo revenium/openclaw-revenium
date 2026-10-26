@@ -131,8 +131,9 @@ resolve_state_dir() {
 }
 
 # ---------------------------------------------------------------------------
-# store_model_key — D-18. The printf builtin spawns no process, so the key
-# never appears in any argv; it is never echoed or logged.
+# store_model_key — keep the model-provider key in the state dir, outside
+# OPENCLAW_HOME, where the agent cannot read it. The printf builtin spawns no
+# process, so the key never appears in any argv; it is never echoed or logged.
 # ---------------------------------------------------------------------------
 store_model_key() {
   local tmp
@@ -200,8 +201,9 @@ read_pins() {
 }
 
 # ---------------------------------------------------------------------------
-# runtime_matches_pins — D-05: reuse only when uv, the Python request and the
-# wheel all match INSTALLED and the library imports.
+# runtime_matches_pins — reuse only when uv, the Python request and the
+# wheel all match INSTALLED and the library imports, so a re-run is cheap but
+# any pin change (an upgrade) rebuilds the venv.
 # ---------------------------------------------------------------------------
 runtime_matches_pins() {
   local manifest="${RT}/INSTALLED"
