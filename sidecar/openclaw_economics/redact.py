@@ -62,16 +62,27 @@ PATTERNS = (
     ("jwt", re.compile(
         r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
     ("bearer", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/-]{8,}=*")),
-    ("url-credentials", re.compile(r"(?<=://)[^/\s:@]+:[^/\s@]+(?=@)")),
+    # HTTP Basic credentials are base64. The lookahead asks for a digit,
+    # "+", "/" or a lower-to-upper case change, which base64 of any real
+    # user:password has and English prose ("basic understanding") lacks.
+    ("basic-auth", re.compile(
+        r"(?i)\bbasic\s+(?=[A-Za-z0-9+/]{0,512}?(?:[0-9+/]|(?-i:[a-z][A-Z])))[A-Za-z0-9+/]{8,}={0,2}")),
+    # The password may itself contain "@": the credentials run to the last
+    # "@" that is followed by a host and then "/", whitespace or the end.
+    ("url-credentials", re.compile(
+        r"(?<=://)[^/\s:@]+:[^/\s]+(?=@[^@/\s]*(?:[/\s]|$))")),
+    # The key may be quoted, as in JSON ("password": "...") or a Python
+    # dict; the same quote must close it before the separator.
     ("assignment", re.compile(
-        r"\b(" + _ASSIGNMENT_NAME + r")(\s*[:=]\s*)(\"[^\"\n]*\"|'[^'\n]*'|[^\s,;]+)",
+        r"([\"']?)\b(" + _ASSIGNMENT_NAME + r")\1(\s*[:=]\s*)(\"[^\"\n]*\"|'[^'\n]*'|[^\s,;}]+)",
         re.IGNORECASE,
     )),
 )
 
 
 def _assignment_replacement(match: "re.Match[str]") -> str:
-    return match.group(1) + match.group(2) + "[REDACTED:assignment]"
+    quote = match.group(1)
+    return quote + match.group(2) + quote + match.group(3) + "[REDACTED:assignment]"
 
 
 def precap(text: str) -> str:

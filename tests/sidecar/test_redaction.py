@@ -61,7 +61,20 @@ SECRETS = {
         "alice" + ":" + "Pw-" + "s3cr3tval9",
     ),
     "assignment": ("DB_PASSWORD = " + '"' + "hunter2-" + "hunter2" + '"', "hunter2-" + "hunter2"),
+    "basic-auth": ("Authorization: Basic " + "YWxpY2U6" + "UHctczNjcjN0", "YWxpY2U6" + "UHctczNjcjN0"),
 }
+
+# Shapes of an existing kind that its first pattern missed:
+# (kind, planted text, material that must not survive)
+EXTRA_SECRETS = (
+    ("assignment", '{"password": "' + "hunter3-" + 'hunter3"}', "hunter3-" + "hunter3"),
+    ("assignment", '{"api_key":"' + "abcd1234" + 'efgh5678"}', "abcd1234" + "efgh5678"),
+    ("assignment", "{'client_secret': '" + "s3cr3t-" + "v4lue'}", "s3cr3t-" + "v4lue"),
+    ("assignment", '{"apiKey":' + "plain" + "Val9Xyz}", "plain" + "Val9Xyz"),
+    ("url-credentials", "postgres://" + "user:" + "p@ss" + "W0rd-x@db.example.com/app",
+     "p@ss" + "W0rd-x"),
+    ("basic-auth", "basic " + "dXNlcjpw" + "YXNz", "dXNlcjpw" + "YXNz"),
+)
 
 
 def fragments(secret: str, size: int = 8):
@@ -82,6 +95,29 @@ class TestRegexPass(unittest.TestCase):
                 self.assertNoFragment(material, out)
                 self.assertTrue(out.startswith("Please review this config: "))
                 self.assertTrue(out.endswith(" before Friday."))
+
+    def test_extra_shapes_are_redacted(self) -> None:
+        for kind, planted, material in EXTRA_SECRETS:
+            with self.subTest(planted=planted):
+                out = redact.redact(f"config: {planted} done", ())
+                self.assertIn(f"[REDACTED:{kind}]", out)
+                self.assertNoFragment(material, out)
+                self.assertTrue(out.endswith(" done"))
+
+    def test_json_assignment_keeps_key_and_quotes(self) -> None:
+        planted = EXTRA_SECRETS[0][1]
+        self.assertEqual(redact.redact(planted, ()), '{"password": [REDACTED:assignment]}')
+
+    def test_url_credentials_keep_the_host(self) -> None:
+        planted = EXTRA_SECRETS[4][1]
+        self.assertEqual(redact.redact(planted, ()),
+                         "postgres://[REDACTED:url-credentials]@db.example.com/app")
+
+    def test_basic_in_prose_is_unchanged(self) -> None:
+        for text in ("I have a basic understanding of it.", "Basic Authentication is enabled",
+                     "the basic idea", "BASIC CONFIGURATION ahead"):
+            with self.subTest(text=text):
+                self.assertEqual(redact.redact(text, ()), text)
 
     def test_unterminated_pem_is_redacted_to_end_of_text(self) -> None:
         header = "-----BEGIN OPENSSH " + "PRIVATE KEY-----\n"
@@ -282,6 +318,21 @@ class TestAdversarialInputs(unittest.TestCase):
 
     def test_hyphenated_name_run(self) -> None:
         self.assertFast("a-" * (self.MIB // 2))
+
+    def test_repeated_url_scheme_with_at_signs(self) -> None:
+        self.assertFast(("://a:" + "b@" * 40 + " ") * (self.MIB // 90))
+
+    def test_url_credentials_with_long_password_and_no_host(self) -> None:
+        self.assertFast("://a:" + "b@c" * (self.MIB // 3))
+
+    def test_repeated_quoted_keys(self) -> None:
+        self.assertFast('"password"' * (self.MIB // 10))
+
+    def test_repeated_basic(self) -> None:
+        self.assertFast("basic " * (self.MIB // 6))
+
+    def test_basic_with_long_lowercase_run(self) -> None:
+        self.assertFast(("basic " + "a" * 600) * (self.MIB // 606))
 
     def test_many_pem_headers(self) -> None:
         self.assertFast(("-----BEGIN RSA " + "PRIVATE KEY-----\n") * (self.MIB // 32))

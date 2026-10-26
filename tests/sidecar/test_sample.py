@@ -42,7 +42,7 @@ for _path in (str(_SIDECAR_DIR), str(_TESTS_DIR)):
 from openclaw_economics import cache, redact  # noqa: E402
 from revenium_agent_economics import sample_transcript  # noqa: E402
 from test_read_path import SID_A, SID_B, Layout, event, fixture  # noqa: E402
-from test_redaction import KNOWN, SECRETS  # noqa: E402
+from test_redaction import EXTRA_SECRETS, KNOWN, SECRETS  # noqa: E402
 
 NEMOCLAW_FIXTURE = _TESTS_DIR / "fixtures" / "nemoclaw-events.jsonl"
 
@@ -68,12 +68,15 @@ def sample_module():
 
 def planted_suffix() -> str:
     parts = [planted for planted, _material in SECRETS.values()]
+    parts += [planted for _kind, planted, _material in EXTRA_SECRETS]
     parts.append(KNOWN)
     return "\n" + " ; ".join(parts)
 
 
 def secret_materials() -> list:
-    return [material for _planted, material in SECRETS.values()] + [KNOWN]
+    materials = [material for _planted, material in SECRETS.values()]
+    materials += [material for _kind, _planted, material in EXTRA_SECRETS]
+    return materials + [KNOWN]
 
 
 def with_secrets(line: dict) -> dict:
