@@ -1784,6 +1784,69 @@ else
   fail "GROUP-U-e: at-floor host CLI not honored (exit ${exit_code_ue}). Output: ${output_ue}"
 fi
 
+# A pinned binary that cannot execute here (the linux_amd64 CLI on an arm64
+# host) must never be put on the cron PATH: the NUL bytes make bash report
+# "cannot execute binary file", the same failure a wrong-arch ELF produces.
+BADARCH_TGZ=$(mktemp "${TMPDIR:-/tmp}/test-nemo-revcli-bad.XXXXXX.tgz")
+TMP_HOMES+=("${BADARCH_TGZ}")
+_bad_dir=$(mktemp -d "${TMPDIR:-/tmp}/test-nemo-revcli-badsrc.XXXXXX")
+TMP_HOMES+=("${_bad_dir}")
+printf '\177ELF\002\001\001\000\000\000\000\000\000\000\000\000\002\000\076\000' > "${_bad_dir}/revenium"
+chmod +x "${_bad_dir}/revenium"
+tar czf "${BADARCH_TGZ}" -C "${_bad_dir}" revenium
+
+echo ""
+echo "  -- U-f: pinned CLI cannot run, below-floor CLI in ~/.local/bin → kept --"
+TMP_HOME_Uf=$(make_home)
+ARGV_Uf=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-uf.XXXXXX")
+TMP_HOMES+=("${ARGV_Uf}")
+LEDGER_Uf="${TMP_HOME_Uf}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_all_but_host "${LEDGER_Uf}"
+_install_host_cli_stubs "${TMP_HOME_Uf}/.local/bin"
+printf '#!/bin/sh\n[ "$1" = version ] && echo "revenium 1.5.0 (old)"\nexit 0\n' > "${TMP_HOME_Uf}/.local/bin/revenium"
+chmod +x "${TMP_HOME_Uf}/.local/bin/revenium"
+old_sum_uf=$(cksum < "${TMP_HOME_Uf}/.local/bin/revenium")
+
+exit_code_uf=0
+output_uf=$(STUB_CURL_FIXTURE="${BADARCH_TGZ}" STUB_SHA256_VALUE="${PINNED_SHA}" \
+            PATH="${TMP_HOME_Uf}/.local/bin:/usr/bin:/bin" \
+            run_provision "${TMP_HOME_Uf}" "${ARGV_Uf}" 2>&1) || exit_code_uf=$?
+staged_uf=$(find "${TMP_HOME_Uf}/.local/bin" -name '.revenium.new.*' | head -1)
+
+if [[ "${exit_code_uf}" -eq 0 ]] \
+   && [[ "$(cksum < "${TMP_HOME_Uf}/.local/bin/revenium")" == "${old_sum_uf}" ]] \
+   && [[ -z "${staged_uf}" ]] \
+   && echo "${output_uf}" | grep -qF "does not run on this host" \
+   && ! grep -qE "^cli-delivered-host=" "${LEDGER_Uf}"; then
+  pass "GROUP-U-f: an unrunnable pinned CLI is not installed; the working CLI is kept and no ledger key is written"
+else
+  fail "GROUP-U-f: unrunnable pinned CLI handled wrongly (exit ${exit_code_uf}). Output: ${output_uf}"
+fi
+
+echo ""
+echo "  -- U-g: pinned CLI cannot run and no CLI on the host → install fails --"
+TMP_HOME_Ug=$(make_home)
+ARGV_Ug=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ug.XXXXXX")
+TMP_HOMES+=("${ARGV_Ug}")
+LEDGER_Ug="${TMP_HOME_Ug}/.nemoclaw/revenium-nemoclaw.ledger"
+_seed_all_but_host "${LEDGER_Ug}"
+_install_host_cli_stubs "${TMP_HOME_Ug}/.local/bin"
+
+exit_code_ug=0
+output_ug=$(STUB_CURL_FIXTURE="${BADARCH_TGZ}" STUB_SHA256_VALUE="${PINNED_SHA}" \
+            PATH="${TMP_HOME_Ug}/.local/bin:/usr/bin:/bin" \
+            run_provision "${TMP_HOME_Ug}" "${ARGV_Ug}" 2>&1) || exit_code_ug=$?
+
+if [[ "${exit_code_ug}" -ne 0 ]] \
+   && [[ ! -e "${TMP_HOME_Ug}/.local/bin/revenium" ]] \
+   && [[ -z "$(find "${TMP_HOME_Ug}/.local/bin" -name '.revenium.new.*')" ]] \
+   && echo "${output_ug}" | grep -qF "does not run on this host" \
+   && ! grep -qE "^cli-delivered-host=" "${LEDGER_Ug}"; then
+  pass "GROUP-U-g: no runnable CLI at all fails the install with guidance and installs nothing"
+else
+  fail "GROUP-U-g: expected a failing install (exit ${exit_code_ug}). Output: ${output_ug}"
+fi
+
 # ===========================================================================
 # Summary
 # ===========================================================================

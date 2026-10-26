@@ -656,6 +656,11 @@ deliver_revenium_cli() {
 # metering data ever reaches Revenium. Mirrors deliver_revenium_cli but host-side:
 # fetch the same pinned tarball, sha256-verify, install to ~/.local/bin/revenium.
 # Skips (no clobber) if the operator already has revenium on PATH.
+# The pinned tarball is linux_amd64. ~/.local/bin comes early on the cron PATH,
+# so a binary that cannot run here (an arm64 host) would shadow a working CLI
+# and stop all metering. The binary is therefore staged beside its final name
+# and swapped in only after `revenium version` runs; if it cannot run, an
+# existing CLI is kept (with a warning) and a host with none fails the install.
 # Ledger key: cli-delivered-host (value: version:tarball-sha256).
 deliver_revenium_cli_host() {
     local expected_cli_ledger="${REVENIUM_CLI_VERSION}:${REVENIUM_CLI_TARBALL_SHA256}"
@@ -674,12 +679,14 @@ deliver_revenium_cli_host() {
     # system package) — do not clobber it; the metering cron will use it as-is.
     # One below the floor lacks the outcome-metric verbs, so the pinned CLI is
     # installed into ~/.local/bin beside it (the operator's binary is not touched).
+    local existing_host_cli=""
     if command -v revenium >/dev/null 2>&1; then
         if revenium_cli_meets_floor; then
             info "revenium already on host PATH ($(command -v revenium)) — skipping host CLI install."
             ledger_set "cli-delivered-host" "${expected_cli_ledger}"
             return 0
         fi
+        existing_host_cli="$(command -v revenium)"
         local detected_host_cli
         detected_host_cli="$(revenium_cli_version_detected)"
         warn "host revenium ${detected_host_cli:-unknown} is below ${REVENIUM_CLI_FLOOR} — installing the pinned ${REVENIUM_CLI_VERSION} to ~/.local/bin; an earlier PATH entry may still win at tick time, and the sidecar's capability probe will report it"
@@ -688,6 +695,7 @@ deliver_revenium_cli_host() {
     step "Installing revenium CLI ${REVENIUM_CLI_VERSION} on host (for metering cron)"
 
     local host_bin_dir="${HOME}/.local/bin"
+    local staged="${host_bin_dir}/.revenium.new.$$"
     local tmpd cli_rc=0
     tmpd=$(mktemp -d "${TMPDIR:-/tmp}/revenium-host-cli.XXXXXX")
     (
@@ -702,15 +710,30 @@ deliver_revenium_cli_host() {
         fi
         tar xzf rev.tgz
         mkdir -p "${host_bin_dir}"
-        install -m755 ./revenium "${host_bin_dir}/revenium"
+        install -m755 ./revenium "${staged}"
     ) || cli_rc=$?
     rm -rf "${tmpd}"
 
     if [[ "${cli_rc}" -eq 2 ]]; then
+        rm -f "${staged}"
         fail "host revenium CLI sha256 mismatch — tarball may be tampered. Aborting install."
     elif [[ "${cli_rc}" -ne 0 ]]; then
+        rm -f "${staged}"
         fail "host revenium CLI install failed (exit ${cli_rc}) — the metering cron needs 'revenium' on the host PATH."
     fi
+
+    if ! "${staged}" version >/dev/null 2>&1; then
+        rm -f "${staged}"
+        local host_arch
+        host_arch="$(uname -m 2>/dev/null || echo unknown)"
+        if [[ -n "${existing_host_cli}" ]]; then
+            warn "the pinned revenium ${REVENIUM_CLI_VERSION} (linux_amd64) does not run on this host (${host_arch}) — keeping ${existing_host_cli}. Metering is unaffected; the sidecar's outcome-metric delivery stays off until a revenium >= ${REVENIUM_CLI_FLOOR} built for ${host_arch} is on the host PATH."
+            return 0
+        fi
+        fail "the pinned revenium ${REVENIUM_CLI_VERSION} (linux_amd64) does not run on this host (${host_arch}). Install a revenium >= ${REVENIUM_CLI_FLOOR} built for ${host_arch} on the host PATH and re-run."
+    fi
+    mv -f "${staged}" "${host_bin_dir}/revenium" \
+        || { rm -f "${staged}"; fail "could not move the revenium CLI into ${host_bin_dir}"; }
 
     # The metering crontab line sets PATH=~/.local/bin:... so the cron picks this up.
     ledger_set "cli-delivered-host" "${expected_cli_ledger}"
