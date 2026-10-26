@@ -36,7 +36,7 @@ import sys
 import time
 
 from openclaw_economics import cli_probe, redact, turns
-from openclaw_economics.cache import Cursors, TurnCache
+from openclaw_economics.cache import MISSES_BEFORE_DROP, Cursors, TurnCache
 from openclaw_economics.paths import Context, UnsafePathError, build_context
 from openclaw_economics.status import read_manifest, sanitize_token, write_stage_status
 from openclaw_economics.store import StoreClient
@@ -193,17 +193,22 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
 
     cache.prune(time.time())
 
-    # An empty or failed listing says nothing about which sessions are gone,
-    # and dropping their cursors would re-read them from the start later.
+    # Only a complete, non-empty listing says which sessions are gone. A
+    # dropped cursor makes a returning session be read from its first turn,
+    # so a cursor goes only after several such listings in a row have missed
+    # its session and its cache file has aged out.
     if listing_ok and sessions:
         listed = {row.session_id for row in sessions}
-        stale = [
-            sid for sid in list(cursors.sessions)
-            if sid not in listed and not os.path.exists(cache.path(sid))
-        ]
-        for sid in stale:
-            cursors.drop(sid)
-        if stale:
+        changed = False
+        for sid in list(cursors.sessions):
+            if sid in listed:
+                changed = cursors.clear_miss(sid) or changed
+                continue
+            changed = cursors.bump_miss(sid) or changed
+            if cursors.misses(sid) >= MISSES_BEFORE_DROP and not os.path.exists(cache.path(sid)):
+                cursors.drop(sid)
+                changed = True
+        if changed:
             cursors.save()
 
     counters["storeFailures"] = client.failures

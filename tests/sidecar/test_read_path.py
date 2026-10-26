@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -635,6 +636,9 @@ class TestEdges(unittest.TestCase):
             ("mk_session", self.lay.db, SID_A, "agent:main:main", "", 100),
             ("mk_event", self.lay.db, SID_A, 0, event(0, "user", "fixture before install")),
         )
+        for _ in range(cache.MISSES_BEFORE_DROP - 1):
+            self.lay.infer()
+            self.assertEqual(set(self.lay.cursors_doc()["sessions"]), {SID_A, SID_B, SID_C})
         self.lay.infer()
         self.assertEqual(set(self.lay.cursors_doc()["sessions"]), {SID_A, SID_C})
 
@@ -644,6 +648,47 @@ class TestEdges(unittest.TestCase):
         self.lay.infer()
         self.assertFalse(os.path.exists(path))
         self.assertEqual(set(self.lay.cursors_doc()["sessions"]), {SID_A})
+
+    def set_created_via(self, sid: str, value: str | None) -> None:
+        # The listing leaves out cron sessions, so this hides or shows one.
+        conn = sqlite3.connect(self.lay.db)
+        try:
+            conn.execute("UPDATE session_nodes SET created_via = ? WHERE current_session_id = ?", (value, sid))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_a_session_listed_again_resets_its_misses(self) -> None:
+        fixture(("mk_session", self.lay.db, SID_B, "agent:main:b", "", 300))
+        self.lay.infer()
+        self.set_created_via(SID_B, "cron")
+        for _ in range(cache.MISSES_BEFORE_DROP - 1):
+            self.lay.infer()
+        self.assertEqual(self.lay.cursors_doc()["sessions"][SID_B]["misses"], cache.MISSES_BEFORE_DROP - 1)
+        self.set_created_via(SID_B, None)
+        self.lay.infer()
+        self.assertNotIn("misses", self.lay.cursors_doc()["sessions"][SID_B])
+
+    def test_partial_listing_keeps_cursors_of_the_unread_store(self) -> None:
+        lay = Layout(self)
+        other = os.path.join(lay.oc_home, "agents", "dev", "agent", "openclaw-agent.sqlite")
+        fixture(
+            ("mk_store", lay.db),
+            ("mk_session", lay.db, SID_B, "agent:main:main", "", 100),
+            ("mk_store", other),
+            ("mk_session", other, SID_C, "agent:dev:main", "", 100),
+            ("mk_event", other, SID_C, 0, event(0, "user", "fixture dev history")),
+        )
+        lay.infer()
+        fixture(("mk_touch_session", lay.db, SID_B, 150))
+        for _ in range(cache.MISSES_BEFORE_DROP + 1):
+            with BrokenStore(other):
+                doc = lay.infer()
+            self.assertGreater(doc["counters"]["storeFailures"], 0)
+            self.assertIn(SID_C, lay.cursors_doc()["sessions"])
+        lay.infer()
+        self.assertEqual(lay.cursors_doc()["sessions"][SID_C]["cursor"], 0)
+        self.assertNotIn(b"dev history", lay.state_bytes())
 
 
 if __name__ == "__main__":

@@ -10,9 +10,17 @@ its size in bytes. The directory is 0700 and every file 0600.
 sidecar has consumed and the store ``updated_at`` seen at that time::
 
     {"version": 1, "baselinedAt": "<iso>",
-     "sessions": {"<sid>": {"cursor": <int>, "updatedAt": "<text>"}}}
+     "sessions": {"<sid>": {"cursor": <int>, "updatedAt": "<text>",
+                            "misses": <int, only when non-zero>}}}
 
 Cursors are JSON integers, so any 64-bit seq round-trips exactly.
+
+``misses`` counts consecutive complete listings that did not include the
+session. A cursor is dropped only after MISSES_BEFORE_DROP of them and once
+the session's cache file is gone: a session that reappears without a
+cursor is read from its first turn, so one odd listing (an agent store
+being replaced, a mount that briefly shows fewer stores) must not be
+enough.
 
 Retention: prune deletes a session file whose mtime is more than
 RETENTION_SECONDS old and cuts a file larger than SESSION_CAP_BYTES down to
@@ -42,6 +50,7 @@ CACHE_SUFFIX = ".jsonl"
 
 RETENTION_SECONDS = 7 * 24 * 3600
 SESSION_CAP_BYTES = 512 * 1024
+MISSES_BEFORE_DROP = 3
 
 
 def _encode(record: dict) -> bytes:
@@ -250,6 +259,9 @@ class Cursors:
                 "cursor": cursor,
                 "updatedAt": updated if isinstance(updated, str) else "",
             }
+            misses = entry.get("misses")
+            if isinstance(misses, int) and not isinstance(misses, bool) and misses > 0:
+                cursors.sessions[sid]["misses"] = min(misses, MISSES_BEFORE_DROP)
         baselined = doc.get("baselinedAt")
         cursors.baselined_at = baselined if isinstance(baselined, str) else ""
         cursors.baseline_needed = False
@@ -263,6 +275,26 @@ class Cursors:
 
     def drop(self, sid: str) -> None:
         self.sessions.pop(sid, None)
+
+    def misses(self, sid: str) -> int:
+        entry = self.sessions.get(sid)
+        return entry.get("misses", 0) if entry else 0
+
+    def bump_miss(self, sid: str) -> bool:
+        """Count one more listing without sid (capped); True if it changed."""
+        entry = self.sessions.get(sid)
+        if entry is None or entry.get("misses", 0) >= MISSES_BEFORE_DROP:
+            return False
+        entry["misses"] = entry.get("misses", 0) + 1
+        return True
+
+    def clear_miss(self, sid: str) -> bool:
+        """Forget earlier misses of a listed session; True if it changed."""
+        entry = self.sessions.get(sid)
+        if entry is None or "misses" not in entry:
+            return False
+        del entry["misses"]
+        return True
 
     def mark_baselined(self) -> None:
         self.baselined_at = utc_now_iso()
