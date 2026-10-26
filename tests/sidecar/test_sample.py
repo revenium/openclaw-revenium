@@ -20,7 +20,15 @@ and a forced redaction failure must cache ``[turn omitted]`` for every turn.
 Tool names are model-written too: a secret planted as a toolCall ``name``
 or as the last segment of the ``tool_call`` meta-tool's ``arguments.id``
 must reach neither the cache nor a sample, and a secret name already in an
-old cache line must render as ``[tool]``.
+old cache line must render as ``[tool]``. The whole wrapped id is checked,
+not only the segment kept as the name: a host-known value that contains
+``:`` or an ``api_key:<value>`` assignment would otherwise leave its tail
+behind as a clean-looking tool name.
+
+TestMetaToolIdRedaction calls turns.extract directly: ordinary wrapped ids
+keep their tool name (a hashed namespace segment does not drop it, because
+the token-shape check covers only the kept segment), and a redaction error
+on a wrapped id drops the name.
 """
 from __future__ import annotations
 
@@ -39,7 +47,7 @@ for _path in (str(_SIDECAR_DIR), str(_TESTS_DIR)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from openclaw_economics import cache, redact  # noqa: E402
+from openclaw_economics import cache, redact, turns  # noqa: E402
 from revenium_agent_economics import sample_transcript  # noqa: E402
 from test_read_path import SID_A, SID_B, Layout, event, fixture  # noqa: E402
 from test_redaction import EXTRA_SECRETS, KNOWN, SECRETS  # noqa: E402
@@ -304,6 +312,44 @@ class TestPlantedSecrets(unittest.TestCase):
         sample = self._assert_names_clean(lay, SID_B, planted)
         self.assertIn("[tool: exec]", sample)
 
+    def _assert_wrapped_value_dropped(self, lay: Layout, value: str) -> None:
+        tail = value.rpartition(":")[2]
+        items = [
+            {"type": "toolCall", "id": "c-1", "name": "tool_call",
+             "arguments": {"id": "openclaw:core:" + value, "args": {}}},
+            {"type": "toolCall", "id": "c-ok", "name": "tool_call",
+             "arguments": {"id": "openclaw:core:exec", "args": {}}},
+        ]
+        self.assertLessEqual(len("openclaw:core:" + value), 64)
+        fixture(
+            ("mk_session", lay.db, SID_B, "agent:main:main2", "", 200),
+            ("mk_event", lay.db, SID_B, 0, event(0, "assistant", items)),
+        )
+        lay.infer()
+        records = lay.cached(SID_B)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["tools"], ["", "exec"])
+        sample = self.assertClean(lay, SID_B)
+        blob = lay.state_bytes(exclude=("model.key",)).decode("utf-8", errors="replace")
+        for material in (value, tail):
+            for where, text in (("sample", sample), ("state dir", blob)):
+                self.assertNotIn(material, text, f"wrapped-id value survived in {where}")
+        self.assertIn("[tool]", sample)
+        self.assertIn("[tool: exec]", sample)
+
+    def test_known_value_with_a_colon_in_a_meta_tool_id_never_leaves_the_store(self) -> None:
+        lay = PlantedLayout(self)
+        value = "fixture-host-id" + ":" + "Correct-" + "Horse-" + "Battery"
+        with open(os.path.join(lay.oc_home, "revenium.env"), "w", encoding="utf-8") as handle:
+            handle.write(f"REVENIUM_FIXTURE_CRED={value}\n")
+        self._assert_wrapped_value_dropped(lay, value)
+
+    def test_assignment_in_a_meta_tool_id_never_leaves_the_store(self) -> None:
+        lay = PlantedLayout(self)
+        secret = "Purple-" + "Monkey-" + "Dishwasher"
+        self._assert_wrapped_value_dropped(lay, "api" + "_key:" + secret)
+        self.assertNotIn(secret.encode("utf-8"), lay.state_bytes(exclude=("model.key",)))
+
     def test_a_secret_name_already_in_the_cache_is_not_rendered(self) -> None:
         secret = SECRETS["github"][1]
         markers = sample_module().build_messages([
@@ -321,6 +367,36 @@ class TestPlantedSecrets(unittest.TestCase):
         self.assertEqual({r["text"] for r in records}, {redact.OMITTED})
         self.assertEqual(doc["counters"]["redactionOmitted"], len(records))
         self.assertClean(lay, SID_B)
+
+
+def _wrapped(*ids: str) -> str:
+    return event(5, "assistant", [
+        {"type": "toolCall", "id": f"c-{i}", "name": "tool_call", "arguments": {"id": wid, "args": {}}}
+        for i, wid in enumerate(ids)
+    ])
+
+
+class TestMetaToolIdRedaction(unittest.TestCase):
+    def test_ordinary_wrapped_ids_keep_their_tool_name(self) -> None:
+        msg = turns.extract(5, _wrapped(
+            "openclaw:core:exec",
+            "openclaw:core:sessions_spawn",
+            "plugin:" + "a1b2c3d4" + "e5f6a7b8" + ":search",
+        ))
+        self.assertEqual(msg.tools, ("exec", "sessions_spawn", "search"))
+
+    def test_ordinary_tool_names_are_unchanged(self) -> None:
+        names = ("exec", "web_search", "mcp__github__create_issue", "browser.navigate", "sha256sum")
+        msg = turns.extract(5, event(5, "assistant", [
+            {"type": "toolCall", "id": f"c-{i}", "name": name, "arguments": {}}
+            for i, name in enumerate(names)
+        ]))
+        self.assertEqual(msg.tools, names)
+
+    def test_redaction_error_on_a_wrapped_id_drops_the_name(self) -> None:
+        with mock.patch.object(redact, "redact", side_effect=RuntimeError("boom")):
+            msg = turns.extract(5, _wrapped("openclaw:core:exec"))
+        self.assertEqual(msg.tools, ("",))
 
 
 if __name__ == "__main__":
