@@ -251,3 +251,30 @@ text and ids: a string-content `user` row, an `assistant` row with a `text` item
 spike projection did not inspect `toolResult` keys outside `content`. The fixture gives those
 rows the standalone `toolCallId` and `toolName` keys. It contains no directive-bearing user row,
 because no directive bleed was observed.
+
+## Sidecar change detection
+
+Each infer tick lists the sessions in every agent store and skips any session whose
+`session_nodes.updated_at` equals the value recorded for it in `<state>/cursors.json`. A quiet
+session is therefore never read, which keeps idle sessions off a slow SSHFS mount.
+
+- **Precondition:** OpenClaw moves `session_nodes.updated_at` whenever it appends a
+  `transcript_events` row for that session.
+- **Where it was checked:** NemoClaw sandbox on OpenClaw 2026.9.2, 2026-10-26, live. A new
+  root-session turn advanced `updated_at` and the session's max seq (22 to 24), and the untouched
+  subagent session's `updated_at` stayed the same.
+- **Where it was not:** standalone. It has not been checked on a standalone build at or above the
+  2026.8.1 floor. The hermetic fixtures set `updated_at` by hand (`mk_touch_session`), so the test
+  suites do not prove it either.
+- **Fallback:** every 10 minutes (`MAX_SEQ_RECHECK_SECONDS` in `sidecar/run.py`), infer makes one
+  `max-seq-all-strict` query per agent store and reads every session whose highest readable seq is
+  above its cursor, even when its `updated_at` did not move. A tick never makes more than one such
+  query. The time of the last complete recheck is `maxSeqCheckedAt` in `<state>/cursors.json`. A
+  recheck that fails, or that the soft deadline cuts short, leaves it unchanged, so the next tick
+  rechecks.
+- **Operator signal:** `sessionsReadOnRecheck` in `<state>/infer-status.json`. It stays `0` on a
+  build that keeps the precondition. A non-zero value means new turns reach the turn cache up to
+  10 minutes late on this build; report the OpenClaw build.
+- **Manual check:** run `bash scripts/session-store.sh list-sessions` before and after a turn.
+  Fields are separated by the 0x1F unit separator, and the fourth field of that session's line
+  (`updated_at`) must change.

@@ -918,6 +918,16 @@ class TestRecheck(unittest.TestCase):
         self.assertEqual([r["text"] for r in self.lay.cached(SID_A)], ["fixture silent turn"])
         self.assertGreater(self.lay.cursors_doc()["maxSeqCheckedAt"], aged)
 
+    def test_failed_listing_keeps_the_old_check_time(self) -> None:
+        aged = self.age_check_time()
+        runner = CountingRunner()
+        patch_runner(self, runner)
+        with BrokenStore(self.lay.db):
+            doc = self.lay.infer()
+        self.assertGreater(doc["counters"]["storeFailures"], 0)
+        self.assertNotIn("max-seq-all-strict", runner.verbs)
+        self.assertEqual(self.lay.cursors_doc()["maxSeqCheckedAt"], aged)
+
     def test_deadline_cut_recheck_keeps_the_old_check_time(self) -> None:
         self.add_silent_turn(SID_A, 1, "fixture silent a")
         self.add_silent_turn(SID_B, 1, "fixture silent b")

@@ -55,6 +55,14 @@ SOFT_MARGIN_SECONDS = 5
 LIBRARY_MODULE = "revenium_agent_economics"
 
 
+# Change detection trusts the store to move session_nodes.updated_at with
+# every transcript_events insert, which has been checked live on one OpenClaw
+# build only. This often, infer compares each session's highest readable seq
+# with its cursor, so a build that breaks the rule delays new turns by this
+# long instead of hiding them. It is one grouped query per store, which keeps
+# the cost off a slow SSHFS mount.
+MAX_SEQ_RECHECK_SECONDS = 10 * 60
+
 # A temp file in the state dir older than this was left by a write that a
 # kill interrupted. Every stage budget is far shorter, so no live write (the
 # deliver stage can run at the same time as infer) is ever this old.
@@ -140,7 +148,9 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
     seq, so history from before install is never read. A session first
     listed after the baseline starts at -1, so its first turn is kept.
     A session whose store updated_at has not moved is not read at all,
-    which keeps quiet sessions off a slow SSHFS mount.
+    which keeps quiet sessions off a slow SSHFS mount. Every
+    MAX_SEQ_RECHECK_SECONDS, one max-seq query also reads any such session
+    whose highest readable seq is past its cursor.
     """
     began = clock()
     budget = ctx.budget_seconds
@@ -156,6 +166,7 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
         "eventsSkipped": 0,
         "storeFailures": 0,
         "compactedUnread": 0,
+        "sessionsReadOnRecheck": 0,
     }
     _sweep_stale_tmp(ctx.state_dir, time.time())
     client = StoreClient(ctx.store_script, ctx.openclaw_home)
@@ -182,31 +193,54 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
                 cursors.set(row.session_id, tops.get(row.session_id, (-1, -1))[0], row.updated_at)
             counters["baselined"] = len(sessions)
             cursors.mark_baselined()
+            cursors.mark_rechecked(time.time())
             cursors.save()
         counters["storeFailures"] = client.failures
         return counters
 
-    # Fetched once, on the first changed session: the highest readable seq
-    # per session, to check that each read reached the end of its session.
+    # Fetched at most once per tick: up front when the recheck is due,
+    # otherwise on the first changed session. It holds the highest readable
+    # seq per session, to check that each read reached the end of its
+    # session and, on a recheck, to find sessions whose rows outran their
+    # updated_at.
     tops: dict | None = None
     tops_fetched = False
+    # A failed listing shows no sessions, so a recheck run on it would be
+    # recorded as done without having compared anything.
+    recheck = listing_ok and cursors.recheck_due(time.time(), MAX_SEQ_RECHECK_SECONDS)
+    if recheck:
+        tops, tops_fetched = client.max_seq_all(), True
+    # A recheck counts as done only when every session it found was read to
+    # its end; otherwise the next tick runs it again.
+    recheck_complete = True
     for index, row in enumerate(sessions):
         if clock() >= soft_deadline:
             counters["sessionsDeferred"] = len(sessions) - index
             break
         sid = row.session_id
         entry = cursors.get(sid)
+        on_recheck = False
         if entry is not None and entry["updatedAt"] == row.updated_at:
-            counters["sessionsSkippedUnchanged"] += 1
-            continue
+            on_recheck = (
+                recheck
+                and tops is not None
+                and tops.get(sid, (-1, -1))[1] > entry["cursor"]
+            )
+            if not on_recheck:
+                counters["sessionsSkippedUnchanged"] += 1
+                continue
         after = entry["cursor"] if entry else -1
         if not tops_fetched:
             tops, tops_fetched = client.max_seq_all(), True
         events = client.events_since(sid, after)
         if events is None:
             # Keep the old cursor and updatedAt so the next tick retries.
+            if on_recheck:
+                recheck_complete = False
             continue
         counters["sessionsRead"] += 1
+        if on_recheck:
+            counters["sessionsReadOnRecheck"] += 1
         last = after
         batch = []
         for seq, event_json in events:
@@ -228,7 +262,13 @@ def run_infer(ctx: Context, *, clock=time.monotonic) -> dict:
         # known to have reached the session's last readable row; otherwise
         # keep the old one so the next tick reads on from the new cursor.
         reached = tops is not None and last >= tops.get(sid, (-1, -1))[1]
+        if on_recheck and not reached:
+            recheck_complete = False
         cursors.set(sid, last, row.updated_at if reached else (entry["updatedAt"] if entry else ""))
+        cursors.save()
+
+    if recheck and tops is not None and counters["sessionsDeferred"] == 0 and recheck_complete:
+        cursors.mark_rechecked(time.time())
         cursors.save()
 
     cache.prune(time.time())

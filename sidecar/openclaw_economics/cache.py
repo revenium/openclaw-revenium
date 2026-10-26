@@ -10,11 +10,16 @@ its size in bytes. The directory is 0700 and every file 0600.
 ``<state>/cursors.json`` records, per session, the highest store seq the
 sidecar has consumed and the store ``updated_at`` seen at that time::
 
-    {"version": 1, "baselinedAt": "<iso>",
+    {"version": 1, "baselinedAt": "<iso>", "maxSeqCheckedAt": <epoch int>,
      "sessions": {"<sid>": {"cursor": <int>, "updatedAt": "<text>",
                             "misses": <int, only when non-zero>}}}
 
 Cursors are JSON integers, so any 64-bit seq round-trips exactly.
+
+``maxSeqCheckedAt`` is when infer last compared every session's highest
+readable seq with its cursor. That periodic check catches rows a store
+added without moving ``updated_at``. A missing or unusable value makes the
+check due, which costs one store query, never a skipped read.
 
 ``misses`` counts consecutive complete listings that did not include the
 session. A cursor is dropped only after MISSES_BEFORE_DROP of them and once
@@ -293,6 +298,7 @@ class Cursors:
         self.path = os.path.join(state_dir, CURSORS_FILE)
         self.baseline_needed = True
         self.baselined_at = ""
+        self.max_seq_checked_at = 0
         self.sessions: dict[str, dict] = {}
 
     @classmethod
@@ -321,6 +327,9 @@ class Cursors:
                 cursors.sessions[sid]["misses"] = min(misses, MISSES_BEFORE_DROP)
         baselined = doc.get("baselinedAt")
         cursors.baselined_at = baselined if isinstance(baselined, str) else ""
+        checked = doc.get("maxSeqCheckedAt")
+        if isinstance(checked, int) and not isinstance(checked, bool) and checked >= 0:
+            cursors.max_seq_checked_at = checked
         cursors.baseline_needed = False
         return cursors
 
@@ -357,12 +366,25 @@ class Cursors:
         self.baselined_at = utc_now_iso()
         self.baseline_needed = False
 
+    def recheck_due(self, now: float, interval: int) -> bool:
+        """True when the max-seq recheck should run on this tick.
+
+        A check time in the future by more than interval means the clock
+        moved back, so it counts as due rather than postponing the check.
+        """
+        checked = self.max_seq_checked_at
+        return checked <= 0 or now - checked >= interval or checked - now > interval
+
+    def mark_rechecked(self, now: float) -> None:
+        self.max_seq_checked_at = int(now)
+
     def save(self) -> None:
         atomic_write_json(
             self.path,
             {
                 "version": CURSORS_VERSION,
                 "baselinedAt": self.baselined_at,
+                "maxSeqCheckedAt": self.max_seq_checked_at,
                 "sessions": self.sessions,
             },
         )
