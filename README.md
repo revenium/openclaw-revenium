@@ -329,8 +329,11 @@ The cron writes `~/.openclaw/skills/revenium/guardrail-status.json` with the lat
 
 ```bash
 bash ~/.openclaw/skills/revenium/scripts/uninstall-cron.sh
+bash ~/.openclaw/skills/revenium/scripts/uninstall-sidecar.sh
 rm -rf ~/.openclaw/skills/revenium
 ```
+
+`uninstall-sidecar.sh` removes the economics sidecar runtime but keeps its state (ledgers, cursors and redacted turn cache under `~/.local/state/revenium-economics/`), so a reinstall never sends anything to Revenium twice; add `--purge-cache` to also delete the turn cache.
 
 Optionally clean up your Revenium guardrail rules:
 
