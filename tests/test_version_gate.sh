@@ -388,6 +388,62 @@ else
 fi
 
 # ===========================================================================
+# GROUP VG-H: RUN-04 revenium CLI floor (revenium_cli_version_detected /
+#   revenium_cli_meets_floor). Every case runs through
+#   STUB_REVENIUM_VERSION_OUTPUT, so no real revenium binary is needed; " " is
+#   the empty-output case (an empty override would fall through to the real
+#   CLI, as STUB_OPENCLAW_VERSION_OUTPUT does in VG-C).
+# ===========================================================================
+echo ""
+echo "--- GROUP VG-H: RUN-04 revenium CLI floor ---"
+
+detected_vgh=$( (. "${VERSION_GATE_SH}" 2>/dev/null; STUB_REVENIUM_VERSION_OUTPUT="revenium 1.9.0 (8cf0e69)" revenium_cli_version_detected) 2>/dev/null )
+if [[ "${detected_vgh}" == "1.9.0" ]]; then
+  pass "VG-H: revenium_cli_version_detected prints 1.9.0 for 'revenium 1.9.0 (8cf0e69)'"
+else
+  fail "VG-H: revenium_cli_version_detected printed '${detected_vgh}', expected '1.9.0'"
+fi
+
+if (. "${VERSION_GATE_SH}" 2>/dev/null; STUB_REVENIUM_VERSION_OUTPUT="revenium 1.9.0 (8cf0e69)" revenium_cli_meets_floor) 2>/dev/null; then
+  pass "VG-H: revenium 1.9.0 meets the 1.7.0 floor"
+else
+  fail "VG-H: revenium 1.9.0 should meet the 1.7.0 floor"
+fi
+
+if (. "${VERSION_GATE_SH}" 2>/dev/null; STUB_REVENIUM_VERSION_OUTPUT="revenium 1.6.3 (abc)" revenium_cli_meets_floor) 2>/dev/null; then
+  fail "VG-H: revenium 1.6.3 should fail the 1.7.0 floor"
+else
+  pass "VG-H: revenium 1.6.3 fails the 1.7.0 floor"
+fi
+
+if (. "${VERSION_GATE_SH}" 2>/dev/null; STUB_REVENIUM_VERSION_OUTPUT="revenium 1.10.0 (abc)" revenium_cli_meets_floor) 2>/dev/null; then
+  pass "VG-H: revenium 1.10.0 meets the 1.7.0 floor (numeric, not lexical)"
+else
+  fail "VG-H: revenium 1.10.0 should meet the 1.7.0 floor"
+fi
+
+rc_vgh_empty=0
+detected_vgh_empty=$( (. "${VERSION_GATE_SH}" 2>/dev/null; STUB_REVENIUM_VERSION_OUTPUT=" " revenium_cli_version_detected) 2>/dev/null ) || rc_vgh_empty=$?
+if [[ -z "${detected_vgh_empty}" && "${rc_vgh_empty}" -eq 0 ]]; then
+  pass "VG-H: empty version output prints nothing and exits 0"
+else
+  fail "VG-H: empty version output printed '${detected_vgh_empty}' (rc=${rc_vgh_empty})"
+fi
+
+if (. "${VERSION_GATE_SH}" 2>/dev/null; STUB_REVENIUM_VERSION_OUTPUT=" " revenium_cli_meets_floor) 2>/dev/null; then
+  fail "VG-H: empty version output should fail the floor"
+else
+  pass "VG-H: empty version output fails the floor"
+fi
+
+floor_vgh=$( (. "${VERSION_GATE_SH}" 2>/dev/null; printf '%s' "${REVENIUM_CLI_FLOOR:-}") )
+if [[ "${floor_vgh}" == "1.7.0" ]]; then
+  pass "VG-H: REVENIUM_CLI_FLOOR is 1.7.0"
+else
+  fail "VG-H: REVENIUM_CLI_FLOOR is '${floor_vgh}', expected 1.7.0"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
