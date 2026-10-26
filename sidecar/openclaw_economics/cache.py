@@ -2,7 +2,8 @@
 
 ``<state>/turns/<session_id>.jsonl`` holds one JSON object per line with the
 keys ``seq``, ``id``, ``parentId``, ``role``, ``ts``, ``text`` (already
-redacted and clamped) and ``tools`` (validated tool names). Lines are UTF-8
+redacted and clamped), ``tools`` (checked tool names) and ``cachedAt``
+(epoch seconds when append wrote the line). Lines are UTF-8
 JSON written with ``ensure_ascii=False``, so the size of a file on disk is
 its size in bytes. The directory is 0700 and every file 0600.
 
@@ -22,9 +23,14 @@ cursor is read from its first turn, so one odd listing (an agent store
 being replaced, a mount that briefly shows fewer stores) must not be
 enough.
 
-Retention: prune deletes a session file whose mtime is more than
-RETENTION_SECONDS old and cuts a file larger than SESSION_CAP_BYTES down to
-its newest whole lines that fit. Nothing else releases cached turns yet.
+Retention: every record is kept at most RETENTION_SECONDS after it was
+cached. Each append refreshes the file's mtime, so the mtime only shows
+that the whole file is stale; prune deletes such a file, and rewrites any
+other file whose oldest record has expired, keeping only records inside
+the window. A record without ``cachedAt`` (written before the field
+existed) is aged by its transcript ``ts`` and dropped when that cannot be
+read. A file larger than SESSION_CAP_BYTES is cut down to its newest whole
+lines that fit. Nothing else releases cached turns yet.
 
 Write order: records are appended and fsynced before the cursor that covers
 them is saved. A crash in between leaves the cursor behind the cache, the
@@ -37,6 +43,8 @@ import json
 import os
 import stat
 import tempfile
+import time
+from datetime import datetime
 from typing import Iterable
 
 from .status import atomic_write_json, utc_now_iso
@@ -46,6 +54,7 @@ TURNS_DIR = "turns"
 CURSORS_FILE = "cursors.json"
 CURSORS_VERSION = 1
 TAIL_READ_BYTES = 65536
+HEAD_READ_BYTES = 65536
 CACHE_SUFFIX = ".jsonl"
 
 RETENTION_SECONDS = 7 * 24 * 3600
@@ -69,6 +78,33 @@ def _record_seq(raw: bytes) -> int | None:
     if isinstance(seq, int) and not isinstance(seq, bool):
         return seq
     return None
+
+
+def _record_time(record: dict) -> float | None:
+    """When the record was cached, from ``cachedAt`` or else its ``ts``."""
+    cached = record.get("cachedAt")
+    if isinstance(cached, (int, float)) and not isinstance(cached, bool):
+        return float(cached)
+    ts = record.get("ts")
+    if isinstance(ts, str) and ts:
+        try:
+            parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is not None:
+            return parsed.timestamp()
+    return None
+
+
+def _expired(raw: bytes, cutoff: float) -> bool:
+    try:
+        record = json.loads(raw.decode("utf-8", errors="replace"))
+    except ValueError:
+        return True
+    if not isinstance(record, dict):
+        return True
+    when = _record_time(record)
+    return when is None or when < cutoff
 
 
 class TurnCache:
@@ -106,15 +142,16 @@ class TurnCache:
                     return seq
         return -1
 
-    def append(self, sid: str, records: Iterable[dict]) -> int:
+    def append(self, sid: str, records: Iterable[dict], now: float | None = None) -> int:
         """Append records newer than the file's last seq; return the count."""
         path = self.path(sid)
         last = self.last_seq(sid)
+        cached_at = int(time.time() if now is None else now)
         fresh = []
         for record in records:
             seq = record.get("seq")
             if isinstance(seq, int) and seq > last:
-                fresh.append(record)
+                fresh.append(dict(record, cachedAt=cached_at))
                 last = seq
         if not fresh:
             return 0
@@ -178,11 +215,12 @@ class TurnCache:
             sid = name[: -len(CACHE_SUFFIX)] if name.endswith(CACHE_SUFFIX) else ""
             if not valid_session_id(sid):
                 continue
-            if now - st.st_mtime > RETENTION_SECONDS:
+            cutoff = now - RETENTION_SECONDS
+            if st.st_mtime < cutoff:
                 self._unlink(path)
-            elif st.st_size > SESSION_CAP_BYTES:
+            elif st.st_size > SESSION_CAP_BYTES or self._oldest_expired(path, cutoff):
                 try:
-                    self._cut(path)
+                    self._cut(path, cutoff)
                 except OSError:
                     pass
 
@@ -193,7 +231,23 @@ class TurnCache:
         except OSError:
             pass
 
-    def _cut(self, path: str) -> None:
+    @staticmethod
+    def _oldest_expired(path: str, cutoff: float) -> bool:
+        """True when the file's first complete record is past the cutoff."""
+        try:
+            with open(path, "rb") as handle:
+                head = handle.readline(HEAD_READ_BYTES)
+        except OSError:
+            return False
+        if not head.strip():
+            return False
+        return _expired(head.rstrip(b"\n"), cutoff)
+
+    def _cut(self, path: str, cutoff: float) -> None:
+        """Rewrite path keeping unexpired records, newest first, within the cap.
+
+        A file left with no records is deleted.
+        """
         try:
             with open(path, "rb") as handle:
                 data = handle.read()
@@ -202,7 +256,7 @@ class TurnCache:
         kept: list[bytes] = []
         total = 0
         for raw in reversed(data.split(b"\n")):
-            if not raw.strip():
+            if not raw.strip() or _expired(raw, cutoff):
                 continue
             size = len(raw) + 1
             if total + size > SESSION_CAP_BYTES:
@@ -210,6 +264,9 @@ class TurnCache:
             kept.append(raw)
             total += size
         kept.reverse()
+        if not kept:
+            self._unlink(path)
+            return
         payload = b"".join(raw + b"\n" for raw in kept)
         fd, tmp_path = tempfile.mkstemp(
             dir=self.dir, prefix="." + os.path.basename(path) + ".", suffix=".tmp"

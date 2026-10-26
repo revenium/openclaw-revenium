@@ -667,6 +667,47 @@ class TestEdges(unittest.TestCase):
         self.assertFalse(os.path.exists(turn_cache.path(SID_B)))
         self.assertTrue(os.path.exists(turn_cache.path(SID_C)))
 
+    def test_prune_drops_expired_records_from_an_active_session(self) -> None:
+        turn_cache = cache.TurnCache(self.lay.state)
+        now = time.time()
+        turn_cache.append(SID_B, [{"seq": i, "role": "user", "text": f"fixture old {i}", "tools": []}
+                                  for i in range(3)], now=now - 8 * 86400)
+        turn_cache.append(SID_B, [{"seq": 3, "role": "user", "text": "fixture new", "tools": []}], now=now)
+        turn_cache.prune(now)
+        self.assertEqual([r["seq"] for r in turn_cache.read(SID_B)], [3])
+        self.assertEqual(stat.S_IMODE(os.stat(turn_cache.path(SID_B)).st_mode), 0o600)
+        self.assertEqual(turn_cache.last_seq(SID_B), 3)
+
+    def test_prune_deletes_a_fresh_file_whose_records_all_expired(self) -> None:
+        turn_cache = cache.TurnCache(self.lay.state)
+        now = time.time()
+        turn_cache.append(SID_B, [{"seq": 0, "role": "user", "text": "fixture", "tools": []}],
+                          now=now - 8 * 86400)
+        turn_cache.prune(now)
+        self.assertFalse(os.path.exists(turn_cache.path(SID_B)))
+
+    def test_prune_ages_records_without_cached_at_by_their_ts(self) -> None:
+        turn_cache = cache.TurnCache(self.lay.state)
+        os.makedirs(turn_cache.dir, 0o700, exist_ok=True)
+        now = time.time()
+        old_ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(now - 9 * 86400))
+        new_ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(now - 3600))
+        lines = [
+            {"seq": 0, "role": "user", "ts": old_ts, "text": "fixture old", "tools": []},
+            {"seq": 1, "role": "user", "ts": "not a time", "text": "fixture bad", "tools": []},
+            {"seq": 2, "role": "user", "ts": new_ts, "text": "fixture new", "tools": []},
+        ]
+        fd = os.open(turn_cache.path(SID_B), os.O_WRONLY | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write("".join(json.dumps(r) + "\n" for r in lines))
+        turn_cache.prune(now)
+        self.assertEqual([r["seq"] for r in turn_cache.read(SID_B)], [2])
+
+    def test_appended_records_carry_cached_at(self) -> None:
+        turn_cache = cache.TurnCache(self.lay.state)
+        turn_cache.append(SID_B, [{"seq": 0, "role": "user", "text": "fixture", "tools": []}], now=1234.9)
+        self.assertEqual(turn_cache.read(SID_B)[0]["cachedAt"], 1234)
+
     def test_prune_cuts_an_oversized_file_to_its_newest_records(self) -> None:
         turn_cache = cache.TurnCache(self.lay.state)
         filler = "fixture é" * 250
