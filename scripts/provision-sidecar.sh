@@ -28,6 +28,7 @@
 #                               wheel_sha256, library_sha, conformance, installed_at
 #   <runtime>/PROVISION_STATUS  reason, at, uv_version, python_request
 #   <runtime>/provision.log     uv and conformance output from the last run
+#   <runtime>/.revenium-sidecar-runtime  ownership marker (see economics-paths.sh)
 #   <state>/model.key
 #
 # Exit codes: always 0. Every failure becomes a reason in PROVISION_STATUS
@@ -322,6 +323,31 @@ swap_venv() {
   return "${rc}"
 }
 
+# ---------------------------------------------------------------------------
+# claim_runtime_dir — 0 when RT may be built into: it already carries the
+# ownership marker, or it is empty and the marker was just written. A
+# non-empty dir without the marker is refused untouched, because uv, venv/,
+# python/ and the manifests would overwrite whatever it holds and the
+# uninstaller would later remove it.
+# ---------------------------------------------------------------------------
+claim_runtime_dir() {
+  econ_runtime_owned "${RT}" && return 0
+  if [[ -n "$(ls -A "${RT}" 2>/dev/null)" ]]; then
+    warn "Economics sidecar not provisioned: ${RT} is not empty and has no ${ECON_RUNTIME_MARKER} marker, so it was left untouched."
+    if [[ -f "${RT}/INSTALLED" || -f "${RT}/PROVISION_STATUS" ]]; then
+      warn "It looks like a sidecar runtime from an earlier version, which wrote no marker. Check that it holds only bin/uv, python/, venv/, cache/ and the INSTALLED, PROVISION_STATUS and provision.log files, remove it, then re-run post-install."
+    else
+      warn "Point REVENIUM_SIDECAR_HOME at a new or empty directory, then re-run post-install. Metering and budget enforcement are unaffected."
+    fi
+    return 1
+  fi
+  if ! econ_write_kv "${RT}/${ECON_RUNTIME_MARKER}" "owner=${ECON_RUNTIME_OWNER}" "created_at=$(econ_now_iso)"; then
+    warn "Economics sidecar not provisioned: could not write the ownership marker in ${RT}"
+    return 1
+  fi
+  return 0
+}
+
 prov_main() {
   local candidate="" reason python_version
   while [[ $# -gt 0 ]]; do
@@ -363,6 +389,9 @@ prov_main() {
     return 0
   fi
   RT="$(econ_real_dir "${RT}")" || return 0
+  if ! claim_runtime_dir; then
+    return 0
+  fi
   PROV_LOG="${RT}/provision.log"
   : > "${PROV_LOG}" 2>/dev/null || PROV_LOG="/dev/null"
 

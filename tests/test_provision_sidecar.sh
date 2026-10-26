@@ -10,7 +10,7 @@
 # from <runtime>/stub-uv-mode; its `venv` call plants a stub python that
 # answers the conformance, platform and import checks.
 #
-# Groups PS-A..PS-O. Set TAP=1 to print TAP instead of PASS:/FAIL: lines.
+# Groups PS-A..PS-P. Set TAP=1 to print TAP instead of PASS:/FAIL: lines.
 #
 # SECURITY: stub argv and outputs are compared as fixed strings, never
 #   evaluated or interpolated into commands.
@@ -155,6 +155,8 @@ new_env() {
   cp "${STUB_UV_SRC}" "${RT}/bin/uv"
   cp "${STUB_PY_SRC}" "${RT}/stub-python"
   chmod 755 "${RT}/bin/uv" "${RT}/stub-python"
+  # The seeded runtime stands for one an earlier run claimed.
+  printf 'owner=revenium-sidecar\ncreated_at=2026-10-26T00:00:00Z\n' > "${RT}/.revenium-sidecar-runtime"
   CURL_LOG="${H}/curl-calls.log"
 }
 
@@ -427,6 +429,59 @@ else
   fail "PS-O: an invalid request was not replaced by 3.13"
 fi
 assert_out_has "PS-O" "Ignoring REVENIUM_SIDECAR_PYTHON_VERSION" "warns about the invalid request"
+
+# ===========================================================================
+group "GROUP PS-P: runtime dir ownership marker"
+new_env
+rm -rf "${RT}"
+STUB_CURL_MODE="fail" run_prov
+assert_common "PS-P"
+if [[ "$(kv "${RT}/.revenium-sidecar-runtime" owner)" == "revenium-sidecar" ]]; then
+  pass "PS-P: a new runtime dir is claimed with the ownership marker"
+else
+  fail "PS-P: no ownership marker written into a new runtime dir"
+fi
+new_env
+rm -rf "${RT}"; mkdir -m 700 "${RT}"
+STUB_CURL_MODE="fail" run_prov
+if [[ "$(kv "${RT}/.revenium-sidecar-runtime" owner)" == "revenium-sidecar" ]]; then
+  pass "PS-P: an empty existing runtime dir is claimed"
+else
+  fail "PS-P: an empty runtime dir was not claimed"
+fi
+
+new_env
+rm -rf "${RT}"; mkdir -m 700 "${RT}" "${RT}/bin"
+printf 'operator uv\n' > "${RT}/bin/uv"
+chmod 755 "${RT}/bin/uv"
+printf 'keep me\n' > "${RT}/notes.txt"
+run_prov
+assert_common "PS-P"
+if [[ "$(cat "${RT}/bin/uv")" == "operator uv" && -f "${RT}/notes.txt" \
+   && ! -e "${RT}/.revenium-sidecar-runtime" && ! -e "${RT}/PROVISION_STATUS" \
+   && ! -e "${RT}/provision.log" && ! -e "${RT}/venv" ]]; then
+  pass "PS-P: a non-empty unmarked dir is refused and left untouched"
+else
+  fail "PS-P: a non-empty unmarked dir was written to"
+fi
+assert_out_has "PS-P" "REVENIUM_SIDECAR_HOME at a new or empty directory" "guidance names REVENIUM_SIDECAR_HOME"
+
+new_env
+rm -f "${RT}/.revenium-sidecar-runtime"
+seed_old_runtime
+run_prov
+if [[ "$(kv "${RT}/INSTALLED" library_sha)" == "old" && -f "${RT}/venv/sentinel" \
+   && ! -e "${RT}/.revenium-sidecar-runtime" ]]; then
+  pass "PS-P: an unmarked runtime from an earlier version is refused untouched"
+else
+  fail "PS-P: an unmarked earlier runtime was modified"
+fi
+assert_out_has "PS-P" "earlier version" "guidance explains the earlier-version runtime"
+
+new_env
+printf 'owner=someone-else\n' > "${RT}/.revenium-sidecar-runtime"
+run_prov
+if [[ ! -e "${RT}/PROVISION_STATUS" ]]; then pass "PS-P: a marker with the wrong owner is not trusted"; else fail "PS-P: a forged marker was trusted"; fi
 
 # ===========================================================================
 # Summary

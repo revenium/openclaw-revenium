@@ -19,11 +19,14 @@
 #
 # Exit codes:
 #   0  runtime removed, or nothing to remove
-#   1  refused (unsafe or unrecognised runtime dir, or bad usage); nothing removed
+#   1  refused (unsafe or unmarked runtime dir, or bad usage); nothing removed
 #
-# SECURITY: removes only a directory that carries a sidecar runtime marker
-#   (INSTALLED, PROVISION_STATUS or bin/uv), never `/` or $HOME, and never a
-#   state dir. With --purge-cache the only other removal target is a `turns`
+# SECURITY: acts only on a directory that carries the ownership marker the
+#   provisioner writes (.revenium-sidecar-runtime), never `/` or $HOME, and
+#   never a state dir. Inside it, only the entries the provisioner creates
+#   are removed; the directory itself is removed only when nothing else is
+#   left in it. A runtime built before the marker existed is refused with
+#   guidance. With --purge-cache the only other removal target is a `turns`
 #   subdirectory of a state dir the current user owns.
 #
 # BASH 3.x COMPATIBILITY: no bash-4-only constructs (macOS /bin/bash is 3.2).
@@ -98,9 +101,11 @@ else
     || refuse "Refusing: ${RUNTIME_DIR:0:200} is not a directory."
   [[ "${RUNTIME_DIR}" != "/" && "${RUNTIME_DIR}" != "${HOME_REAL}" ]] \
     || refuse "Refusing: the runtime path resolves to ${RUNTIME_DIR:0:200} (/ or your home directory). Check REVENIUM_SIDECAR_HOME."
-  if [[ ! -f "${RUNTIME_DIR}/INSTALLED" && ! -f "${RUNTIME_DIR}/PROVISION_STATUS" \
-        && ! -e "${RUNTIME_DIR}/bin/uv" ]]; then
-    refuse "Refusing: ${RUNTIME_DIR:0:200} has no sidecar runtime marker (INSTALLED, PROVISION_STATUS or bin/uv). Check REVENIUM_SIDECAR_HOME."
+  if ! econ_runtime_owned "${RUNTIME_DIR}"; then
+    if [[ -f "${RUNTIME_DIR}/INSTALLED" || -f "${RUNTIME_DIR}/PROVISION_STATUS" ]]; then
+      refuse "Refusing: ${RUNTIME_DIR:0:200} has no ${ECON_RUNTIME_MARKER} marker. It may be a runtime from an earlier version, which wrote none: check that it holds only bin/uv, python/, venv/, cache/ and the INSTALLED, PROVISION_STATUS and provision.log files, then remove it by hand."
+    fi
+    refuse "Refusing: ${RUNTIME_DIR:0:200} has no ${ECON_RUNTIME_MARKER} marker, so it is not a sidecar runtime this installer created. Check REVENIUM_SIDECAR_HOME."
   fi
   # A runtime that contains a state base would take the ledgers with it.
   if econ_is_under "${STANDALONE_BASE}" "${RUNTIME_DIR}" \
@@ -108,9 +113,24 @@ else
     refuse "Refusing: ${RUNTIME_DIR:0:200} contains sidecar state, which must be kept."
   fi
 
-  rm -rf -- "${RUNTIME_DIR}"
+  # Only what the provisioner creates. econ_write_kv's interrupted temp
+  # files are named .<file>.XXXXXX.
+  for entry in bin/uv python venv venv.new venv.old cache \
+               INSTALLED PROVISION_STATUS provision.log; do
+    rm -rf -- "${RUNTIME_DIR:?}/${entry}"
+  done
+  rm -f -- "${RUNTIME_DIR}"/.INSTALLED.* "${RUNTIME_DIR}"/.PROVISION_STATUS.* \
+    "${RUNTIME_DIR}/${ECON_RUNTIME_MARKER}".*
+  rmdir -- "${RUNTIME_DIR}/bin" 2>/dev/null || true  # kept when it holds other files
   REMOVED_RUNTIME=1
-  info "Removed the economics sidecar runtime at ${RUNTIME_DIR}"
+  if [[ "$(ls -A "${RUNTIME_DIR}")" == "${ECON_RUNTIME_MARKER}" ]]; then
+    rm -f -- "${RUNTIME_DIR}/${ECON_RUNTIME_MARKER}"
+    rmdir -- "${RUNTIME_DIR}" || warn "Could not remove the empty directory ${RUNTIME_DIR}"
+    info "Removed the economics sidecar runtime at ${RUNTIME_DIR}"
+  else
+    info "Removed the economics sidecar runtime from ${RUNTIME_DIR}"
+    warn "Kept ${RUNTIME_DIR} and its ${ECON_RUNTIME_MARKER} marker: it also holds files the provisioner did not create."
+  fi
 fi
 
 # ---------------------------------------------------------------------------

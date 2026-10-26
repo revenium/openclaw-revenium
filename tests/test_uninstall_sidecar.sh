@@ -16,6 +16,11 @@
 #   US-F: second run after US-B → exit 0, nothing to remove
 #   US-G: --purge-cache → only each state dir's turns/ removed
 #   US-H: more than one NemoClaw sandbox → shared-runtime warning
+#   US-I: runtime without the ownership marker (earlier provisioner, or a
+#         shared dir holding bin/uv) → exit 1, nothing removed, guidance
+#   US-J: marked runtime that also holds other files → only the
+#         provisioner's entries removed; the dir and its marker are kept
+#   US-K: marker with the wrong owner line, or a symlinked marker → refused
 #
 # SECURITY: never eval's or string-interpolates captured output into shell
 #   commands.
@@ -68,13 +73,21 @@ EOF
   echo "${d}"
 }
 
-# mk_runtime <dir> — a provisioned runtime: markers, bin/uv and a venv.
-mk_runtime() {
-  mkdir -p "$1/bin" "$1/venv/bin"
+# mk_unmarked_runtime <dir> — a runtime as an earlier provisioner left it:
+# manifests, bin/uv and a venv, but no ownership marker.
+mk_unmarked_runtime() {
+  mkdir -p "$1/bin" "$1/venv/bin" "$1/python/cpython"
   printf 'uv_version=0.12.19\n' > "$1/INSTALLED"
   printf 'reason=ok\n' > "$1/PROVISION_STATUS"
+  printf 'log\n' > "$1/provision.log"
   printf '#!/bin/sh\n' > "$1/bin/uv"
   printf '#!/bin/sh\n' > "$1/venv/bin/python"
+}
+
+# mk_runtime <dir> — a provisioned runtime, ownership marker included.
+mk_runtime() {
+  mk_unmarked_runtime "$1"
+  printf 'owner=revenium-sidecar\ncreated_at=2026-10-26T00:00:00Z\n' > "$1/.revenium-sidecar-runtime"
 }
 
 # mk_state <dir> — a state dir as the sidecar leaves it.
@@ -259,6 +272,72 @@ if echo "${out_h}" | grep -qx "rc=0" && echo "${out_h}" | grep -qF "shared by 2 
   pass "US-H: more than one sandbox → shared-runtime warning"
 else
   fail "US-H: shared-runtime warning missing: ${out_h}"
+fi
+
+# ===========================================================================
+echo ""
+echo "--- US-I: runtime without the ownership marker is refused ---"
+H_I=$(make_home)
+mk_unmarked_runtime "${H_I}/${RUNTIME_REL}"
+snap_i_before="$(snapshot "${H_I}/${RUNTIME_REL}")"
+out_i=$(run_uninstall "${H_I}"; echo "rc=${RUN_RC}")
+if echo "${out_i}" | grep -qx "rc=1" \
+   && [[ "$(snapshot "${H_I}/${RUNTIME_REL}")" == "${snap_i_before}" ]] \
+   && echo "${out_i}" | grep -qF "earlier version" \
+   && echo "${out_i}" | grep -qF "remove it by hand"; then
+  pass "US-I: unmarked earlier-version runtime refused with guidance, every file intact"
+else
+  fail "US-I: unmarked runtime not refused cleanly: ${out_i}"
+fi
+H_I2=$(make_home)
+mkdir -p "${H_I2}/tools/bin"
+printf '#!/bin/sh\n' > "${H_I2}/tools/bin/uv"
+printf 'keep me\n' > "${H_I2}/tools/bin/other-tool"
+EXTRA_ENV=("REVENIUM_SIDECAR_HOME=${H_I2}/tools")
+out_i2=$(run_uninstall "${H_I2}"; echo "rc=${RUN_RC}")
+EXTRA_ENV=()
+if echo "${out_i2}" | grep -qx "rc=1" && [[ -f "${H_I2}/tools/bin/uv" && -f "${H_I2}/tools/bin/other-tool" ]]; then
+  pass "US-I: a shared dir that merely holds bin/uv is refused and untouched"
+else
+  fail "US-I: shared dir with bin/uv not refused: ${out_i2}"
+fi
+
+# ===========================================================================
+echo ""
+echo "--- US-J: marked runtime with foreign files keeps them ---"
+H_J=$(make_home)
+mk_runtime "${H_J}/${RUNTIME_REL}"
+printf 'keep me\n' > "${H_J}/${RUNTIME_REL}/notes.txt"
+printf 'keep me\n' > "${H_J}/${RUNTIME_REL}/bin/other-tool"
+out_j=$(run_uninstall "${H_J}"; echo "rc=${RUN_RC}")
+RTJ="${H_J}/${RUNTIME_REL}"
+if echo "${out_j}" | grep -qx "rc=0" \
+   && [[ -f "${RTJ}/notes.txt" && -f "${RTJ}/bin/other-tool" && -f "${RTJ}/.revenium-sidecar-runtime" ]] \
+   && [[ ! -e "${RTJ}/bin/uv" && ! -e "${RTJ}/venv" && ! -e "${RTJ}/python" && ! -e "${RTJ}/INSTALLED" ]] \
+   && [[ ! -e "${RTJ}/PROVISION_STATUS" && ! -e "${RTJ}/provision.log" ]] \
+   && echo "${out_j}" | grep -qF "did not create"; then
+  pass "US-J: only the provisioner's entries removed; foreign files, the dir and its marker kept"
+else
+  fail "US-J: foreign files not preserved: ${out_j}"
+fi
+
+# ===========================================================================
+echo ""
+echo "--- US-K: a forged or symlinked marker is refused ---"
+H_K=$(make_home)
+mk_unmarked_runtime "${H_K}/${RUNTIME_REL}"
+printf 'owner=someone-else\n' > "${H_K}/${RUNTIME_REL}/.revenium-sidecar-runtime"
+out_k=$(run_uninstall "${H_K}"; echo "rc=${RUN_RC}")
+H_K2=$(make_home)
+mk_unmarked_runtime "${H_K2}/${RUNTIME_REL}"
+printf 'owner=revenium-sidecar\n' > "${H_K2}/real-marker"
+ln -s "${H_K2}/real-marker" "${H_K2}/${RUNTIME_REL}/.revenium-sidecar-runtime"
+out_k2=$(run_uninstall "${H_K2}"; echo "rc=${RUN_RC}")
+if echo "${out_k}" | grep -qx "rc=1" && [[ -f "${H_K}/${RUNTIME_REL}/INSTALLED" ]] \
+   && echo "${out_k2}" | grep -qx "rc=1" && [[ -f "${H_K2}/${RUNTIME_REL}/INSTALLED" ]]; then
+  pass "US-K: a marker with the wrong owner, or a symlinked marker, is refused"
+else
+  fail "US-K: bad marker accepted: ${out_k} / ${out_k2}"
 fi
 
 echo ""

@@ -139,6 +139,8 @@ The skill includes an economics sidecar: a Python process that runs on the host 
 | Per-install state (durable) | `${XDG_STATE_HOME:-$HOME/.local/state}/revenium-economics/standalone-<hash12>/`, where `<hash12>` is the first 12 hex characters of the sha256 of the resolved `~/.openclaw` path |
 | Log | `<state>/revenium-economics.log` |
 
+If you set `REVENIUM_SIDECAR_HOME`, point it at a new or empty directory. The provisioner claims the directory by writing a `.revenium-sidecar-runtime` marker and refuses to build into a non-empty directory without one. `uninstall-sidecar.sh` removes only a marked runtime, and inside it only the files the provisioner created. A runtime built before the marker existed is refused with instructions to check and remove it by hand.
+
 **Provisioning.** `post-install.sh` provisions the sidecar automatically, in its step "Provisioning the economics sidecar". It downloads a sha256-pinned [uv](https://github.com/astral-sh/uv) 0.12.19 and uses it to install a uv-managed CPython (3.13 by default; set `REVENIUM_SIDECAR_PYTHON_VERSION=3.11` or later to choose another). It then builds a venv that holds only the library wheel vendored in `sidecar/vendor/`, installed with `--no-index --require-hashes`, and runs the library's conformance kit before the venv is used. Provisioning never changes your system or Homebrew Python and never adds anything to your `PATH` (uv runs with `--no-bin`, so `~/.local/bin` is left alone).
 
 Install-time network access goes to two places only: `github.com` for the uv release tarball and `releases.astral.sh` for the CPython build. Ticks never download anything.

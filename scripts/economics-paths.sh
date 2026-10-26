@@ -86,6 +86,26 @@ econ_runtime_dir() {
 }
 
 # ---------------------------------------------------------------------------
+# Runtime ownership marker. REVENIUM_SIDECAR_HOME can name any directory, and
+# files such as bin/uv are common elsewhere (~/.local, ~/.cargo, Homebrew
+# prefixes), so neither the provisioner nor the uninstaller trusts a dir by
+# its contents. The provisioner writes this marker only into a dir that was
+# new or empty, builds only into a dir that carries it, and the uninstaller
+# removes only a dir that carries it.
+#
+#   econ_runtime_owned <dir>   0 when <dir> holds a regular, user-owned
+#                              marker with the expected owner line
+# ---------------------------------------------------------------------------
+ECON_RUNTIME_MARKER=".revenium-sidecar-runtime"
+ECON_RUNTIME_OWNER="revenium-sidecar"
+
+econ_runtime_owned() {
+  local marker="${1:-}/${ECON_RUNTIME_MARKER}"
+  [[ -n "${1:-}" && -f "${marker}" && ! -L "${marker}" && -O "${marker}" ]] || return 1
+  [[ "$(econ_read_kv "${marker}" owner)" == "${ECON_RUNTIME_OWNER}" ]]
+}
+
+# ---------------------------------------------------------------------------
 # econ_real_dir <dir> — print the physical path of <dir> (`cd -P`, no
 # realpath, which older macOS lacks). A missing tail is resolved through its
 # deepest existing ancestor, so a dir can be checked before it is created.

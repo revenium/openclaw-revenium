@@ -230,6 +230,8 @@ The economics sidecar is a Python process that the host metering cron runs on ev
 | Per-sandbox state (durable: cursors, ledgers, redacted turn cache, model key) | `~/.nemoclaw/revenium-economics/<sandbox>/` (mode 0700) |
 | Log | `~/.nemoclaw/revenium-economics/<sandbox>/revenium-economics.log` |
 
+If you set `REVENIUM_SIDECAR_HOME`, point it at a new or empty directory. The provisioner claims the directory by writing a `.revenium-sidecar-runtime` marker and refuses to build into a non-empty directory without one. `uninstall-sidecar.sh` removes only a marked runtime, and inside it only the files the provisioner created. A runtime built before the marker existed is refused with instructions to check and remove it by hand.
+
 The state dir is on the host and **off the SSHFS mount** on purpose: the sandboxed agent cannot read the model key or the turn cache, and cannot plant files the host cron would trust. Only a scalar health file, `economics-status.json`, is written into the mounted skill dir for the agent to read.
 
 **Install-time egress (host).** Provisioning downloads a sha256-pinned [uv](https://github.com/astral-sh/uv) release from `github.com` and a uv-managed CPython build from `releases.astral.sh`. Allow both from the host if it sits behind an egress proxy. The sandbox needs no new egress policy, and ticks never download anything. The library itself comes from the wheel vendored in `sidecar/vendor/`, installed with `--no-index --require-hashes`.
