@@ -37,6 +37,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # dev machines where the real probe would fail the OS gate). Production runs use
 # the shipped probe-host-compat.sh alongside this script.
 PROBE_SCRIPT="${PROBE_SCRIPT:-${SCRIPT_DIR}/probe-host-compat.sh}"
+# SIDECAR_PROVISION_SCRIPT may be overridden by tests to inject a stub, so the
+# hermetic suite never downloads uv or CPython. Production runs use the shipped
+# provision-sidecar.sh alongside this script.
+SIDECAR_PROVISION_SCRIPT="${SIDECAR_PROVISION_SCRIPT:-${SCRIPT_DIR}/provision-sidecar.sh}"
 
 # Phase 13 provisioning constants (D-02, D-07)
 # LEDGER_FILE may be overridden by tests or operators (do not hardcode the path
@@ -45,8 +49,8 @@ PROBE_SCRIPT="${PROBE_SCRIPT:-${SCRIPT_DIR}/probe-host-compat.sh}"
 # second sandbox — or a destroyed+recreated one — gets its own ledger instead of
 # being skipped wholesale by a stale host-global ledger.
 LEDGER_FILE="${LEDGER_FILE:-}"
-REVENIUM_CLI_VERSION="v1.2.0"
-REVENIUM_CLI_TARBALL_SHA256="cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67"
+REVENIUM_CLI_VERSION="v1.9.0"
+REVENIUM_CLI_TARBALL_SHA256="0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3"
 REVENIUM_CLI_URL="https://github.com/revenium/revenium-cli/releases/download/${REVENIUM_CLI_VERSION}/revenium-cli_${REVENIUM_CLI_VERSION#v}_linux_amd64.tar.gz"
 
 # ---------------------------------------------------------------------------
@@ -671,6 +675,17 @@ deliver_revenium_cli_host() {
     info "revenium CLI ${REVENIUM_CLI_VERSION} installed at ${host_bin_dir}/revenium"
 }
 
+# provision_economics_sidecar — build (or reuse) the shared economics runtime on
+# the host and the sandbox's host-local state dir. Not ledger-gated: the
+# provisioner compares its own manifest and reuses a matching runtime, so a
+# re-run is cheap and an upgrade rebuilds. Fail-open: the provisioner always
+# exits 0, and even if it could not run, metering and enforcement still install.
+provision_economics_sidecar() {
+    step "Provisioning the economics sidecar on the host"
+    bash "${SIDECAR_PROVISION_SCRIPT}" --sandbox "${SANDBOX_NAME}" \
+        || warn "economics sidecar provisioning did not complete — metering and budget enforcement are unaffected; re-run this installer to retry"
+}
+
 # write_revenium_creds — write REVENIUM_* env vars to /sandbox/.config/revenium/config.yaml
 # chmod 600. API key MUST NOT appear on a nemoclaw exec command line (D-05, T-13-KEY).
 # Ledger key: creds-written (value: sha256 of the config content, so a rotated
@@ -980,6 +995,7 @@ run_meter_probe
 #    and needs `revenium` on the host PATH, else every tick skips metering.
 # ---------------------------------------------------------------------------
 deliver_revenium_cli_host
+provision_economics_sidecar    # shared host runtime + per-sandbox state, before the cron that runs it
 install_metering_loop
 install_skill_nemoclaw         # D-08: deploy skill first (marker chain precondition)
 install_enforcement_plugin     # D-05/D-09/D-10/D-11: plugin + validation gate
@@ -998,6 +1014,7 @@ if [[ "${WORK_DONE}" -eq 1 ]]; then
     echo "  Probe:     meter-probe-passed"
     echo "  Plugin:    revenium-enforcement (validated)"
     echo "  Skill:     revenium (✓ ready)"
+    echo "  Sidecar:   host runtime + per-sandbox state (see docs/nemoclaw-setup.md)"
 else
     echo "  NemoClaw already provisioned — no changes (idempotent re-run)."
     echo ""

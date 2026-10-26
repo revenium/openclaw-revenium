@@ -15,7 +15,7 @@
 #   GROUP B: NCEGRESS-01 SC2 — open egress (HTTP=403) → egress confirmed
 #   GROUP C: NCCLI-01       — sha256 mismatch → install aborted non-zero
 #   GROUP D: NCCLI-01       — sha256 match   → CLI delivered, ledger updated
-#   GROUP E: NCCLI-01       — cli-delivered already in ledger → skip
+#   GROUP E: NCCLI-01       — cli-delivered (pinned v1.9.0:<sha256>) already in ledger → skip
 #   GROUP F: NCCLI-02       — meter-probe-passed in ledger → probe skipped
 #   GROUP G: all SC         — full success run → all 5 ledger keys present
 #   GROUP O: GATE-01        — in-sandbox refusal before any provisioning side effect
@@ -28,6 +28,11 @@
 #              mechanism (BOUNDED_RUN_FORCE_PORTABLE=1)
 #   GROUP S-c: CR-02/WR-03 — wrapper/watchdog diagnostics are never reported to
 #              the operator as a measured in-sandbox Node version
+#   GROUP T: RUN-01/RUN-03  — economics sidecar provisioned per sandbox, fail-open,
+#              after the host CLI step and before the metering loop
+#
+# No group runs the real provisioner: run_provision and run_provision_no_ledger
+# point SIDECAR_PROVISION_SCRIPT at a stub that records its argv.
 #
 # EXPECTED RESULT BEFORE PLAN 02:
 #   This test runs and produces a "Results:" summary, but MOST GROUPs will
@@ -112,6 +117,15 @@ echo "  ✓ [stub] host compatibility preflight passed (test mode)"
 exit 0
 EOF
   chmod +x "${d}/stub-probe-host-compat.sh"
+  # Stub economics sidecar provisioner: records its argv and exits with
+  # STUB_SIDECAR_PROVISION_RC, so no group downloads uv/CPython or writes the
+  # real runtime.
+  cat > "${d}/stub-provision-sidecar.sh" << EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "${d}/sidecar-provision-argv"
+exit "\${STUB_SIDECAR_PROVISION_RC:-0}"
+EOF
+  chmod +x "${d}/stub-provision-sidecar.sh"
   echo "${d}"
 }
 
@@ -141,6 +155,7 @@ run_provision() {
   REVENIUM_SANDBOX_NAME="${REVENIUM_SANDBOX_NAME:-test-sandbox}" \
   REVENIUM_API_KEY="${REVENIUM_API_KEY:-test-key}" \
   PROBE_SCRIPT="${stub_probe}" \
+  SIDECAR_PROVISION_SCRIPT="${home_dir}/stub-provision-sidecar.sh" \
   "$@" \
   bash "${PROVISION_SH}" 2>&1
 }
@@ -268,7 +283,7 @@ fi
 
 # ===========================================================================
 # GROUP E: NCCLI-01 — cli-delivered already in ledger → re-run skips delivery
-#   Pre-populate LEDGER_FILE with cli-delivered=v1.2.0:<sha256>;
+#   Pre-populate LEDGER_FILE with cli-delivered=v1.9.0:<sha256>;
 #   re-run should skip delivery (output mentions "skipping" for CLI step).
 # ===========================================================================
 echo ""
@@ -280,7 +295,7 @@ TMP_HOMES+=("${ARGV_E}")
 LEDGER_E="${TMP_HOME_E}/.nemoclaw/revenium-nemoclaw.ledger"
 
 # Pre-populate ledger with cli-delivered
-echo "cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67" \
+echo "cli-delivered=v1.9.0:0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3" \
   > "${LEDGER_E}"
 
 exit_code_e=0
@@ -353,7 +368,7 @@ for key in revenium-policy-applied gh-release-policy-applied cli-delivered creds
 done
 
 # IN-01: assert the cli-delivered VALUE (version:sha256), not just key presence.
-if [[ -f "${LEDGER_G}" ]] && grep -qE '^cli-delivered=v1\.2\.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67$' "${LEDGER_G}" 2>/dev/null; then
+if [[ -f "${LEDGER_G}" ]] && grep -qE '^cli-delivered=v1\.9\.0:0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3$' "${LEDGER_G}" 2>/dev/null; then
   pass "GROUP-G: cli-delivered ledger value is the pinned version:sha256"
 else
   fail "GROUP-G: cli-delivered ledger value is not the pinned version:sha256"
@@ -493,7 +508,7 @@ _seed_phase13_14_ledger() {
   cat >> "${ledger_file}" << 'SEED'
 revenium-policy-applied=1
 gh-release-policy-applied=1
-cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
+cli-delivered=v1.9.0:0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3
 creds-written=f64cb6da2c257701ff8580e3ed5f65fa2be762728fe6a3e3722795f24deb4bb9
 meter-probe-passed=1
 metering-loop-installed=1
@@ -670,7 +685,7 @@ _seed_through_skill() {
   cat >> "${ledger_file}" << 'SEED_J'
 revenium-policy-applied=1
 gh-release-policy-applied=1
-cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
+cli-delivered=v1.9.0:0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3
 creds-written=f64cb6da2c257701ff8580e3ed5f65fa2be762728fe6a3e3722795f24deb4bb9
 meter-probe-passed=1
 metering-loop-installed=1
@@ -885,7 +900,7 @@ fi
 echo ""
 echo "--- GROUP L: host-side revenium CLI delivery (metering cron prerequisite) ---"
 
-PINNED_SHA="cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67"
+PINNED_SHA="0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3"
 
 # Seed every ledger key except cli-delivered-host so only the host CLI step runs.
 _seed_all_but_host() {
@@ -893,7 +908,7 @@ _seed_all_but_host() {
   cat >> "${ledger_file}" << 'SEED_L'
 revenium-policy-applied=1
 gh-release-policy-applied=1
-cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
+cli-delivered=v1.9.0:0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3
 creds-written=f64cb6da2c257701ff8580e3ed5f65fa2be762728fe6a3e3722795f24deb4bb9
 meter-probe-passed=1
 metering-loop-installed=1
@@ -990,7 +1005,7 @@ if [[ "${exit_code_lb}" -eq 0 ]] && [[ -x "${TMP_HOME_Lb}/.local/bin/revenium" ]
 else
   fail "GROUP-L-b: revenium NOT installed to host ~/.local/bin (exit ${exit_code_lb})"
 fi
-if grep -qE "^cli-delivered-host=v1\.2\.0:${PINNED_SHA}$" "${LEDGER_Lb}" 2>/dev/null; then
+if grep -qE "^cli-delivered-host=v1\.9\.0:${PINNED_SHA}$" "${LEDGER_Lb}" 2>/dev/null; then
   pass "GROUP-L-b: cli-delivered-host ledger value is the pinned version:sha256"
 else
   fail "GROUP-L-b: cli-delivered-host ledger value missing/incorrect"
@@ -1053,6 +1068,7 @@ run_provision_no_ledger() {
   REVENIUM_SANDBOX_NAME="${REVENIUM_SANDBOX_NAME:-test-sandbox}" \
   REVENIUM_API_KEY="${REVENIUM_API_KEY:-test-key}" \
   PROBE_SCRIPT="${stub_probe}" \
+  SIDECAR_PROVISION_SCRIPT="${home_dir}/stub-provision-sidecar.sh" \
   "$@" \
   bash "${PROVISION_SH}" 2>&1
 }
@@ -1063,10 +1079,10 @@ _seed_full() {
   cat >> "$1" << 'SEED_FULL'
 revenium-policy-applied=1
 gh-release-policy-applied=1
-cli-delivered=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
+cli-delivered=v1.9.0:0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3
 creds-written=f64cb6da2c257701ff8580e3ed5f65fa2be762728fe6a3e3722795f24deb4bb9
 meter-probe-passed=1
-cli-delivered-host=v1.2.0:cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67
+cli-delivered-host=v1.9.0:0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3
 metering-loop-installed=1
 skill-installed-nemoclaw=1
 enforcement-plugin-installed=1
@@ -1509,6 +1525,74 @@ if echo "${output_sc}" | grep -qF "Applying revenium egress policy"; then
   pass "GROUP-S-c: provisioning still reaches 'Applying revenium egress policy' after the honest undetectable-Node branch"
 else
   fail "GROUP-S-c: provisioning did NOT continue past the honest undetectable-Node branch (exit ${exit_code_sc})"
+fi
+
+# ===========================================================================
+# GROUP T: economics sidecar provisioning (RUN-01/RUN-03)
+#
+#   T-a: a run that reaches section 5 calls the provisioner with
+#        --sandbox <name> and exits 0.
+#   T-b: a failing provisioner only warns; the install still exits 0.
+#   T-c: the provisioning step sits after the host CLI step and before the
+#        metering-loop step (the cron that runs the sidecar comes last).
+#
+# Every key except the sidecar step is seeded, so the run is hermetic.
+# ===========================================================================
+echo ""
+echo "--- GROUP T: economics sidecar provisioning per sandbox (fail-open) ---"
+
+T_SANDBOX="${REVENIUM_SANDBOX_NAME:-test-sandbox}"
+
+_seed_for_sidecar() {
+  _seed_all_but_host "$1"
+  printf 'cli-delivered-host=%s:%s\n' "v1.9.0" "${PINNED_SHA}" >> "$1"
+}
+
+echo ""
+echo "  -- T-a: provisioner called with --sandbox <name> --"
+TMP_HOME_Ta=$(make_home)
+ARGV_Ta=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-ta.XXXXXX")
+TMP_HOMES+=("${ARGV_Ta}")
+_seed_for_sidecar "${TMP_HOME_Ta}/.nemoclaw/revenium-nemoclaw.ledger"
+
+exit_code_ta=0
+output_ta=$(run_provision "${TMP_HOME_Ta}" "${ARGV_Ta}" 2>&1) || exit_code_ta=$?
+
+if [[ "${exit_code_ta}" -eq 0 ]] \
+   && grep -qxF -- "--sandbox ${T_SANDBOX}" "${TMP_HOME_Ta}/sidecar-provision-argv" 2>/dev/null; then
+  pass "GROUP-T-a: provisioner invoked with '--sandbox ${T_SANDBOX}' and install exits 0"
+else
+  fail "GROUP-T-a: provisioner not invoked with --sandbox ${T_SANDBOX} (exit ${exit_code_ta}). Output: ${output_ta}"
+fi
+
+echo ""
+echo "  -- T-b: provisioner failure only warns --"
+TMP_HOME_Tb=$(make_home)
+ARGV_Tb=$(mktemp "${TMPDIR:-/tmp}/test-nemo-argv-tb.XXXXXX")
+TMP_HOMES+=("${ARGV_Tb}")
+_seed_for_sidecar "${TMP_HOME_Tb}/.nemoclaw/revenium-nemoclaw.ledger"
+
+exit_code_tb=0
+output_tb=$(STUB_SIDECAR_PROVISION_RC=1 \
+            run_provision "${TMP_HOME_Tb}" "${ARGV_Tb}" 2>&1) || exit_code_tb=$?
+
+if [[ "${exit_code_tb}" -eq 0 ]] \
+   && echo "${output_tb}" | grep -qF "economics sidecar provisioning did not complete"; then
+  pass "GROUP-T-b: failing provisioner warns and the install still exits 0"
+else
+  fail "GROUP-T-b: provisioner failure was not fail-open (exit ${exit_code_tb}). Output: ${output_tb}"
+fi
+
+echo ""
+echo "  -- T-c: sidecar step ordered between host CLI and metering loop --"
+t_host_line=$(echo "${output_ta}" | grep -nE "installed on host \(ledger\)|on host \(for metering cron\)|already on host PATH" | head -1 | cut -d: -f1)
+t_sidecar_line=$(echo "${output_ta}" | grep -nF "Provisioning the economics sidecar on the host" | head -1 | cut -d: -f1)
+t_loop_line=$(echo "${output_ta}" | grep -nE "Installing host-side metering loop|metering loop already installed" | head -1 | cut -d: -f1)
+if [[ -n "${t_host_line}" && -n "${t_sidecar_line}" && -n "${t_loop_line}" ]] \
+   && [[ "${t_host_line}" -lt "${t_sidecar_line}" && "${t_sidecar_line}" -lt "${t_loop_line}" ]]; then
+  pass "GROUP-T-c: sidecar step (line ${t_sidecar_line}) after host CLI (${t_host_line}) and before metering loop (${t_loop_line})"
+else
+  fail "GROUP-T-c: wrong order — host CLI '${t_host_line}', sidecar '${t_sidecar_line}', metering loop '${t_loop_line}'"
 fi
 
 # ===========================================================================

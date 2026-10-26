@@ -244,7 +244,7 @@ if [[ "${2:-}" == "exec" ]]; then
       exit 2
     else
       # Emit the pinned tarball sha256 followed by CLI_DELIVERED_OK
-      echo "cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67  rev.tgz"
+      echo "0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3  rev.tgz"
       echo "CLI_DELIVERED_OK"
       exit 0
     fi
