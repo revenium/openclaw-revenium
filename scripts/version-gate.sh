@@ -40,6 +40,9 @@ declare -F warn >/dev/null 2>&1 || warn() { echo "  ⚠ $*"; }
 # ---------------------------------------------------------------------------
 OPENCLAW_VERSION_FLOOR="2026.8.1"
 NODE_VERSION_FLOOR_TEXT=">=24.16.0 <25.0.0, or >=26.1.0"
+# The revenium CLI release that carries the outcome-metric verbs the economics
+# sidecar delivers through. Older CLIs still meter, so this floor only warns.
+REVENIUM_CLI_FLOOR="1.7.0"
 
 # ---------------------------------------------------------------------------
 # version_ge DETECTED REQUIRED — returns 0 if DETECTED >= REQUIRED.
@@ -98,6 +101,41 @@ openclaw_version_detected() {
   # nothing and forcing exit 0 here is correct — the empty-string case IS the
   # documented behavior; require_openclaw_version is what actually fails it.
   echo "${_raw}" | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+' | head -1 || true
+}
+
+# ---------------------------------------------------------------------------
+# revenium_cli_version_detected — echoes the dotted numeric triple (e.g.
+# "1.9.0") detected from `revenium version`, or from
+# STUB_REVENIUM_VERSION_OUTPUT when set (hermetic test override). The live
+# output shape is "revenium 1.9.0 (8cf0e69)". The CLI has a `version`
+# subcommand and no `--version` flag (`revenium --version` is rejected as an
+# unknown flag), so that is what is run. Echoes nothing when the binary is
+# absent or nothing parses; never fails, for the same caller-`set -e` reason
+# as openclaw_version_detected.
+# ---------------------------------------------------------------------------
+revenium_cli_version_detected() {
+  local _raw
+
+  # stderr, not stdout: this function's stdout is its return value (see
+  # openclaw_version_detected's NOTE).
+  if [[ -n "${STUB_REVENIUM_VERSION_OUTPUT:-}" ]]; then
+    warn "STUB_REVENIUM_VERSION_OUTPUT is set — using a test override instead of the real 'revenium version' output." >&2
+  fi
+
+  _raw="${STUB_REVENIUM_VERSION_OUTPUT:-$(revenium version 2>/dev/null)}"
+  printf '%s\n' "${_raw}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true
+}
+
+# ---------------------------------------------------------------------------
+# revenium_cli_meets_floor — returns 0 when the detected revenium CLI version
+# is >= REVENIUM_CLI_FLOOR; 1 when it is older or cannot be determined. A
+# predicate, not a gate: callers decide whether to upgrade or warn.
+# ---------------------------------------------------------------------------
+revenium_cli_meets_floor() {
+  local _detected
+  _detected="$(revenium_cli_version_detected)"
+  [[ -n "${_detected}" ]] || return 1
+  version_ge "${_detected}" "${REVENIUM_CLI_FLOOR}"
 }
 
 # ---------------------------------------------------------------------------

@@ -37,6 +37,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # dev machines where the real probe would fail the OS gate). Production runs use
 # the shipped probe-host-compat.sh alongside this script.
 PROBE_SCRIPT="${PROBE_SCRIPT:-${SCRIPT_DIR}/probe-host-compat.sh}"
+# SIDECAR_PROVISION_SCRIPT may be overridden by tests to inject a stub, so the
+# hermetic suite never downloads uv or CPython. Production runs use the shipped
+# provision-sidecar.sh alongside this script.
+SIDECAR_PROVISION_SCRIPT="${SIDECAR_PROVISION_SCRIPT:-${SCRIPT_DIR}/provision-sidecar.sh}"
 
 # Phase 13 provisioning constants (D-02, D-07)
 # LEDGER_FILE may be overridden by tests or operators (do not hardcode the path
@@ -45,8 +49,8 @@ PROBE_SCRIPT="${PROBE_SCRIPT:-${SCRIPT_DIR}/probe-host-compat.sh}"
 # second sandbox — or a destroyed+recreated one — gets its own ledger instead of
 # being skipped wholesale by a stale host-global ledger.
 LEDGER_FILE="${LEDGER_FILE:-}"
-REVENIUM_CLI_VERSION="v1.2.0"
-REVENIUM_CLI_TARBALL_SHA256="cc4b07e94589af082dc21ecba7e235ebc1dd52f010238fd932dec6003a816f67"
+REVENIUM_CLI_VERSION="v1.9.0"
+REVENIUM_CLI_TARBALL_SHA256="0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3"
 REVENIUM_CLI_URL="https://github.com/revenium/revenium-cli/releases/download/${REVENIUM_CLI_VERSION}/revenium-cli_${REVENIUM_CLI_VERSION#v}_linux_amd64.tar.gz"
 
 # ---------------------------------------------------------------------------
@@ -235,23 +239,58 @@ install_metering_loop() {
     info "Metering loop installed (cron active for sandbox '${SANDBOX_NAME}')"
 }
 
+# skill_content_hash <skill_dir> — sha256 over the agent-facing skill files:
+# SKILL.md, BUDGET-GUARD.md, then references/*.md sorted under LC_ALL=C. Each
+# file contributes its relative path, a newline, then its bytes, so a rename
+# changes the hash as well as an edit.
+skill_content_hash() {
+    local dir="$1"
+    (
+        export LC_ALL=C
+        cd "${dir}" 2>/dev/null || exit 0
+        local f
+        for f in SKILL.md BUDGET-GUARD.md; do
+            [[ -f "${f}" ]] || continue
+            printf '%s\n' "${f}"
+            cat "${f}"
+        done
+        # if/fi, not `[[ ]] && printf`: a false test as the loop's last command
+        # would fail this pipeline under the caller's set -e and pipefail.
+        for f in references/*.md; do
+            if [[ -f "${f}" ]]; then printf '%s\n' "${f}"; fi
+        done | sort | while IFS= read -r f; do
+            printf '%s\n' "${f}"
+            cat "${f}"
+        done
+        exit 0
+    ) | sha256_stdin
+}
+
 # install_skill_nemoclaw — deploy the revenium skill into the sandbox via
 # nemoclaw skill install (D-08). Pulled into Phase 15 so the marker chain is
 # end-to-end verifiable before the plugin smoke gate runs.
-# Ledger key: skill-installed-nemoclaw
+# Ledger key: skill-installed-nemoclaw (value: skill_content_hash). Keying on
+# content means re-running the installer pushes an edited SKILL.md or reference
+# into the sandbox; the legacy value `1` never matches, so pre-upgrade installs
+# redeploy once.
 install_skill_nemoclaw() {
-    if ledger_has "skill-installed-nemoclaw"; then
-        info "Revenium skill already deployed to sandbox (ledger) — skipping."
-        return 0
-    fi
-
-    step "Deploying revenium skill into sandbox"
     # SCRIPT_DIR is scripts/; repo root (which IS the skill dir containing SKILL.md)
     # is one level up. REVENIUM_SKILL_DIR may be overridden by tests to point at
     # an alternate dir (e.g. to test the SKILL.md-absent guard on macOS without
     # affecting the real repo root).
-    local skill_dir
+    local skill_dir expected_skill_hash
     skill_dir="${REVENIUM_SKILL_DIR:-${SCRIPT_DIR}/..}"
+    expected_skill_hash="$(skill_content_hash "${skill_dir}")"
+
+    if ledger_has "skill-installed-nemoclaw"; then
+        if [[ "$(ledger_get "skill-installed-nemoclaw")" == "${expected_skill_hash}" ]]; then
+            info "Revenium skill already deployed to sandbox (ledger) — skipping."
+            return 0
+        fi
+        warn "skill content changed since the last deploy — redeploying to sandbox"
+    fi
+
+    step "Deploying revenium skill into sandbox"
 
     # Guard: SKILL.md must be present at the resolved path; if it is absent, the
     # path resolved to ~/ or another wrong location (e.g., due to SSHFS mounts).
@@ -278,7 +317,7 @@ install_skill_nemoclaw() {
     fi
     info "revenium skill confirmed ready in sandbox"
 
-    ledger_set "skill-installed-nemoclaw" "1"
+    ledger_set "skill-installed-nemoclaw" "${expected_skill_hash}"
     info "Revenium skill deployed to sandbox '${SANDBOX_NAME}'"
 }
 
@@ -617,6 +656,11 @@ deliver_revenium_cli() {
 # metering data ever reaches Revenium. Mirrors deliver_revenium_cli but host-side:
 # fetch the same pinned tarball, sha256-verify, install to ~/.local/bin/revenium.
 # Skips (no clobber) if the operator already has revenium on PATH.
+# The pinned tarball is linux_amd64. ~/.local/bin comes early on the cron PATH,
+# so a binary that cannot run here (an arm64 host) would shadow a working CLI
+# and stop all metering. The binary is therefore staged beside its final name
+# and swapped in only after `revenium version` runs; if it cannot run, an
+# existing CLI is kept (with a warning) and a host with none fails the install.
 # Ledger key: cli-delivered-host (value: version:tarball-sha256).
 deliver_revenium_cli_host() {
     local expected_cli_ledger="${REVENIUM_CLI_VERSION}:${REVENIUM_CLI_TARBALL_SHA256}"
@@ -633,15 +677,25 @@ deliver_revenium_cli_host() {
 
     # Honor an operator-provided revenium already on PATH (standalone install or a
     # system package) — do not clobber it; the metering cron will use it as-is.
+    # One below the floor lacks the outcome-metric verbs, so the pinned CLI is
+    # installed into ~/.local/bin beside it (the operator's binary is not touched).
+    local existing_host_cli=""
     if command -v revenium >/dev/null 2>&1; then
-        info "revenium already on host PATH ($(command -v revenium)) — skipping host CLI install."
-        ledger_set "cli-delivered-host" "${expected_cli_ledger}"
-        return 0
+        if revenium_cli_meets_floor; then
+            info "revenium already on host PATH ($(command -v revenium)) — skipping host CLI install."
+            ledger_set "cli-delivered-host" "${expected_cli_ledger}"
+            return 0
+        fi
+        existing_host_cli="$(command -v revenium)"
+        local detected_host_cli
+        detected_host_cli="$(revenium_cli_version_detected)"
+        warn "host revenium ${detected_host_cli:-unknown} is below ${REVENIUM_CLI_FLOOR} — installing the pinned ${REVENIUM_CLI_VERSION} to ~/.local/bin; an earlier PATH entry may still win at tick time, and the sidecar's capability probe will report it"
     fi
 
     step "Installing revenium CLI ${REVENIUM_CLI_VERSION} on host (for metering cron)"
 
     local host_bin_dir="${HOME}/.local/bin"
+    local staged="${host_bin_dir}/.revenium.new.$$"
     local tmpd cli_rc=0
     tmpd=$(mktemp -d "${TMPDIR:-/tmp}/revenium-host-cli.XXXXXX")
     (
@@ -656,19 +710,45 @@ deliver_revenium_cli_host() {
         fi
         tar xzf rev.tgz
         mkdir -p "${host_bin_dir}"
-        install -m755 ./revenium "${host_bin_dir}/revenium"
+        install -m755 ./revenium "${staged}"
     ) || cli_rc=$?
     rm -rf "${tmpd}"
 
     if [[ "${cli_rc}" -eq 2 ]]; then
+        rm -f "${staged}"
         fail "host revenium CLI sha256 mismatch — tarball may be tampered. Aborting install."
     elif [[ "${cli_rc}" -ne 0 ]]; then
+        rm -f "${staged}"
         fail "host revenium CLI install failed (exit ${cli_rc}) — the metering cron needs 'revenium' on the host PATH."
     fi
+
+    if ! "${staged}" version >/dev/null 2>&1; then
+        rm -f "${staged}"
+        local host_arch
+        host_arch="$(uname -m 2>/dev/null || echo unknown)"
+        if [[ -n "${existing_host_cli}" ]]; then
+            warn "the pinned revenium ${REVENIUM_CLI_VERSION} (linux_amd64) does not run on this host (${host_arch}) — keeping ${existing_host_cli}. Metering is unaffected; the sidecar's outcome-metric delivery stays off until a revenium >= ${REVENIUM_CLI_FLOOR} built for ${host_arch} is on the host PATH."
+            return 0
+        fi
+        fail "the pinned revenium ${REVENIUM_CLI_VERSION} (linux_amd64) does not run on this host (${host_arch}). Install a revenium >= ${REVENIUM_CLI_FLOOR} built for ${host_arch} on the host PATH and re-run."
+    fi
+    mv -f "${staged}" "${host_bin_dir}/revenium" \
+        || { rm -f "${staged}"; fail "could not move the revenium CLI into ${host_bin_dir}"; }
 
     # The metering crontab line sets PATH=~/.local/bin:... so the cron picks this up.
     ledger_set "cli-delivered-host" "${expected_cli_ledger}"
     info "revenium CLI ${REVENIUM_CLI_VERSION} installed at ${host_bin_dir}/revenium"
+}
+
+# provision_economics_sidecar — build (or reuse) the shared economics runtime on
+# the host and the sandbox's host-local state dir. Not ledger-gated: the
+# provisioner compares its own manifest and reuses a matching runtime, so a
+# re-run is cheap and an upgrade rebuilds. Fail-open: the provisioner always
+# exits 0, and even if it could not run, metering and enforcement still install.
+provision_economics_sidecar() {
+    step "Provisioning the economics sidecar on the host"
+    bash "${SIDECAR_PROVISION_SCRIPT}" --sandbox "${SANDBOX_NAME}" \
+        || warn "economics sidecar provisioning did not complete — metering and budget enforcement are unaffected; re-run this installer to retry"
 }
 
 # write_revenium_creds — write REVENIUM_* env vars to /sandbox/.config/revenium/config.yaml
@@ -980,6 +1060,7 @@ run_meter_probe
 #    and needs `revenium` on the host PATH, else every tick skips metering.
 # ---------------------------------------------------------------------------
 deliver_revenium_cli_host
+provision_economics_sidecar    # shared host runtime + per-sandbox state, before the cron that runs it
 install_metering_loop
 install_skill_nemoclaw         # D-08: deploy skill first (marker chain precondition)
 install_enforcement_plugin     # D-05/D-09/D-10/D-11: plugin + validation gate
@@ -998,6 +1079,7 @@ if [[ "${WORK_DONE}" -eq 1 ]]; then
     echo "  Probe:     meter-probe-passed"
     echo "  Plugin:    revenium-enforcement (validated)"
     echo "  Skill:     revenium (✓ ready)"
+    echo "  Sidecar:   host runtime + per-sandbox state (see docs/nemoclaw-setup.md)"
 else
     echo "  NemoClaw already provisioned — no changes (idempotent re-run)."
     echo ""

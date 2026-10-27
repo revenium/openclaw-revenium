@@ -60,6 +60,31 @@ The guardrail status is maintained by a background cron job that checks Revenium
 
    **Else (both `halted` and `warned` are `false`):** Proceed silently. Do NOT mention the guardrail status to the user.
 
+4. **Sidecar notice (informational, at most once per outage).** Skip this step when `halted` is `true`. Read `~/.openclaw/skills/revenium/economics-status.json`. If it is missing or unreadable, say nothing about it and continue. Otherwise extract `state`, `reason`, `detail`, `updatedAt`, `outageId` and `_maxAgeSeconds`, and pick a notice key with the first rule that matches:
+
+   - `reason` is `not_provisioned` and `outageId` is empty: no key. The sidecar was never set up; `/revenium` reports that, and you say nothing.
+   - `state` is `off` and `outageId` is non-empty: the key is the `outageId`.
+   - `_maxAgeSeconds` is present and more than `_maxAgeSeconds` seconds have passed since `updatedAt`: the key is `stale:` followed by `updatedAt`.
+   - Otherwise: no key.
+
+   Read `ackedOutageId` from `~/.openclaw/skills/revenium/economics-notice-ack.json` (a missing or unreadable file means nothing has been acknowledged). If there is a key and it differs from `ackedOutageId`, tell the user once, in the same reply as the requested work:
+
+   > Revenium job tracking has stopped (reason: [reason, or 'no recent heartbeat' for a stale key]). Metering and budget enforcement are unaffected. On the host, check revenium-economics.log in the sidecar state directory, and re-run post-install if the sidecar runtime is missing.
+
+   Then record the key so the notice does not repeat for this outage, using an atomic temp-then-rename write (the same pattern as the `_legacyNoticeShown` write under `/revenium`):
+
+   ```python
+   import json, os
+   path = os.path.expanduser("~/.openclaw/skills/revenium/economics-notice-ack.json")
+   tmp = path + ".tmp"
+   with open(tmp, "w") as f:
+       json.dump({"ackedOutageId": "<key>"}, f)
+       f.write("\n")
+   os.replace(tmp, path)
+   ```
+
+   This step never waits for an answer and never stops or delays the requested operation. When step 3 already asked the user a question, include the notice in that same message.
+
 ### If guardrail-status.json is missing or unreadable
 
 - Tell the user: "Guardrail status unavailable. Proceeding with caution."
@@ -341,6 +366,12 @@ Phase 3 introduced `--agent "openclaw-{root_session_id}"` per-session naming (D-
    - **Autonomous mode:** enabled or disabled
    - **Halt status:** Read `~/.openclaw/skills/revenium/guardrail-status.json` and check `halted`. Display "ACTIVE (since [haltedAt])" if `halted` is `true`, or "inactive" if `false`.
    - If halt is active, also show: "To resume operations, run: `bash ~/.openclaw/skills/revenium/scripts/clear-halt.sh`"
+   - **Sidecar:** Read `~/.openclaw/skills/revenium/economics-status.json` and display one of:
+     - `running (last run [updatedAt])` when `state` is `ok` and the file is fresh (no `_maxAgeSeconds`, or no more than `_maxAgeSeconds` seconds since `updatedAt`)
+     - `stale (last heartbeat [updatedAt])` when `state` is `ok` but more than `_maxAgeSeconds` seconds have passed since `updatedAt`
+     - `not provisioned ([detail]) — re-run post-install on the host to enable it` when `reason` is `not_provisioned` (omit the parenthesis when `detail` is empty)
+     - `stopped ([reason]) since [outageId, or updatedAt when outageId is empty]` for any other `off` state
+     - `no status yet (the metering cron has not run)` when the file is missing
 
 3. **Offer actions.** Ask the user: "Would you like to **reconfigure** (change rules/settings) or **done**?"
 

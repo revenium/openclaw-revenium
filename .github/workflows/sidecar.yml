@@ -1,0 +1,75 @@
+name: Sidecar
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # Provisions the economics sidecar exactly as post-install does, on the
+  # x86_64 Linux runner, then runs the conformance kit and every sidecar suite
+  # against that runtime. The provisioner downloads its own sha256-pinned uv,
+  # so no separate uv installer action is used.
+  sidecar:
+    name: sidecar (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    env:
+      PY_VERSION: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install sqlite3
+        run: command -v sqlite3 || (sudo apt-get update && sudo apt-get install -y sqlite3)
+
+      - name: Vendored wheel matches its pins
+        run: bash tests/test_vendored_wheel.sh
+
+      - name: Installer keeps its pinning flags
+        run: |
+          for flag in --no-bin --no-index --require-hashes --managed-python; do
+            if ! grep -v '^[[:space:]]*#' scripts/provision-sidecar.sh | grep -q -e "${flag}"; then
+              echo "::error::scripts/provision-sidecar.sh no longer passes ${flag}"
+              exit 1
+            fi
+          done
+
+      - name: Provision end to end
+        run: |
+          before="$(ls -A "$HOME/.local/bin" 2>/dev/null | grep '^python' || true)"
+          REVENIUM_SIDECAR_HOME="$RUNNER_TEMP/rt" REVENIUM_SIDECAR_PYTHON_VERSION="${PY_VERSION}" \
+            bash scripts/provision-sidecar.sh
+          cat "$RUNNER_TEMP/rt/PROVISION_STATUS"
+          grep -qx 'reason=ok' "$RUNNER_TEMP/rt/PROVISION_STATUS"
+          test -f "$RUNNER_TEMP/rt/INSTALLED"
+          cat "$RUNNER_TEMP/rt/INSTALLED"
+          after="$(ls -A "$HOME/.local/bin" 2>/dev/null | grep '^python' || true)"
+          if [ "${before}" != "${after}" ]; then
+            echo "::error::provisioning changed the python entries in ~/.local/bin"
+            exit 1
+          fi
+          version="$("$RUNNER_TEMP/rt/venv/bin/python" -I -c 'import platform; print(platform.python_version())')"
+          case "${version}" in
+            "${PY_VERSION}".*) echo "venv interpreter ${version}" ;;
+            *) echo "::error::venv interpreter is ${version}, expected ${PY_VERSION}.x"; exit 1 ;;
+          esac
+
+      - name: Conformance kit
+        run: |
+          last="$("$RUNNER_TEMP/rt/venv/bin/python" -I -m revenium_agent_economics.conformance | tail -n 1)"
+          echo "${last}"
+          test "${last}" = "24 scenarios, 0 failing"
+
+      - name: Sidecar suites
+        run: SIDECAR_TEST_RUNTIME="$RUNNER_TEMP/rt" bash tests/run-sidecar-tests.sh
+
+      - name: Shim and provisioner suites
+        run: |
+          bash tests/test_economics_shim.sh
+          bash tests/test_provision_sidecar.sh

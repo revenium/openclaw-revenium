@@ -53,6 +53,10 @@ command_exists() { command -v "$1" &>/dev/null; }
 # exercise a real ceiling expiry in seconds instead of two minutes.
 DOCTOR_TIMEOUT_SECONDS="${DOCTOR_TIMEOUT_SECONDS:-120}"
 
+# The economics sidecar provisioner. Overridable so the hermetic installer
+# suites can point it at a no-op stub instead of downloading uv and CPython.
+SIDECAR_PROVISION_SCRIPT="${SIDECAR_PROVISION_SCRIPT:-${SCRIPT_DIR}/provision-sidecar.sh}"
+
 # ---------------------------------------------------------------------------
 # 0. Runtime version gate (GATE-01/GATE-02/GATE-04) — defense in depth
 # ---------------------------------------------------------------------------
@@ -165,6 +169,22 @@ else
   install_with_brew "revenium/tap/revenium" "revenium/tap"
   command_exists revenium || fail "revenium CLI installation failed. Install manually from https://docs.revenium.io/for-ai-agents"
   info "revenium CLI installed: $(command -v revenium)"
+fi
+
+# --- revenium CLI version floor ---
+# The sidecar's outcome-metric delivery needs the jobs verbs that first
+# shipped in the floor release. Metering works on older CLIs, so a CLI below
+# the floor gets one upgrade attempt and then a warning; it never fails the
+# install.
+if ! revenium_cli_meets_floor && [[ "${SKIP_PREREQS}" == false ]] && command_exists brew; then
+  warn "revenium CLI is below ${REVENIUM_CLI_FLOOR} — upgrading via Homebrew"
+  brew upgrade revenium/tap/revenium || true
+fi
+_revenium_cli_version="$(revenium_cli_version_detected)"
+if revenium_cli_meets_floor; then
+  info "revenium CLI ${_revenium_cli_version} meets the ${REVENIUM_CLI_FLOOR} floor"
+else
+  warn "revenium CLI ${_revenium_cli_version:-unknown} is below ${REVENIUM_CLI_FLOOR} — the sidecar's outcome-metric delivery stays off until it is upgraded (brew upgrade revenium/tap/revenium); metering is unaffected"
 fi
 
 # --- jq ---
@@ -869,6 +889,16 @@ if [[ -n "${REVENIUM_BUDGET_LIMIT:-}" && -n "${REVENIUM_BUDGET_PERIOD:-}" ]]; th
 fi
 
 # ---------------------------------------------------------------------------
+# 8c. Provision the economics sidecar (fail-open)
+# ---------------------------------------------------------------------------
+# Executed, never sourced, so nothing inside it can trip this script's
+# `set -e`; it always exits 0 and records why it stopped in its runtime dir.
+# Re-running post-install is the upgrade path: a runtime matching the pins is
+# reused.
+step "Provisioning the economics sidecar"
+bash "${SIDECAR_PROVISION_SCRIPT}" --openclaw-home "${OPENCLAW_HOME}" || warn "economics sidecar provisioning did not complete — metering and budget enforcement are unaffected; re-run post-install to retry"
+
+# ---------------------------------------------------------------------------
 # 9. Verify
 # ---------------------------------------------------------------------------
 step "Verifying installation"
@@ -924,4 +954,5 @@ echo "  Useful commands:"
 echo "    openclaw skills list          — verify skill is loaded"
 echo "    /revenium                     — view budget or reconfigure"
 echo "    bash ${SKILL_DIR}/scripts/uninstall-cron.sh  — remove cron"
+echo "    bash ${SKILL_DIR}/scripts/uninstall-sidecar.sh  — remove the sidecar runtime, keeps its state"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

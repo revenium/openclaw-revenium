@@ -401,6 +401,200 @@ else
 fi
 
 # =============================================================================
+# GROUP: store_session_events_seq (seq-tagged rows, cursor boundaries)
+# =============================================================================
+echo "--- GROUP: store_session_events_seq ---"
+
+SEQ_SID="aaaaaaaa-0000-0000-0000-00000000000c"
+D7S=$(new_tmp)
+DB7S="${D7S}/agents/main/agent/openclaw-agent.sqlite"
+mk_store "${DB7S}"
+mk_session "${DB7S}" "${SEQ_SID}" "agent:main:main" "" 100
+mk_event "${DB7S}" "${SEQ_SID}" 1 '{"type":"message","seq":1}'
+sqlite3 "${DB7S}" "INSERT INTO transcript_events (session_id, seq, event_json, created_at, event_zstd, event_utf8_bytes, navigation_json) VALUES ('${SEQ_SID}', 2, NULL, 2, X'01', 1, '{\"version\":1,\"report\":{\"kind\":\"canonical\"},\"navigation\":{},\"reset\":{},\"model\":{},\"modelBytes\":0,\"modelWithoutCheckpointBytes\":0,\"withoutCustomDataBytes\":0}');"
+mk_event "${DB7S}" "${SEQ_SID}" 3 '{"type":"message","seq":3}'
+mk_event "${DB7S}" "${SEQ_SID}" 5 '{"type":"message",
+"seq":5}'
+
+# _seq_fields <rows> — the seq field (text before the first 0x1F) of each row,
+# space-joined, so ordering can be compared as one string.
+_seq_fields() {
+  local _row _out=""
+  while IFS= read -r _row; do
+    [[ -z "${_row}" ]] && continue
+    _out="${_out:+${_out} }${_row%%$'\x1f'*}"
+  done <<< "$1"
+  printf '%s' "${_out}"
+}
+
+sq_rows=$(REVENIUM_SESSION_STORE="${DB7S}" store_session_events_seq "${SEQ_SID}" -1)
+sq_count=$(printf '%s\n' "${sq_rows}" | grep -c . || true)
+sq_seqs=$(_seq_fields "${sq_rows}")
+if [[ "${sq_count}" -eq 3 && "${sq_seqs}" == "1 3 5" ]]; then
+  pass "store_session_events_seq: after_seq -1 yields three rows with seq 1, 3, 5 in order (NULL row skipped)"
+else
+  fail "store_session_events_seq: expected seqs '1 3 5', got count=${sq_count} seqs='${sq_seqs}'"
+fi
+
+sq_row5=$(printf '%s\n' "${sq_rows}" | grep "^5"$'\x1f' || true)
+sq_row5_lines=$(printf '%s\n' "${sq_row5}" | grep -c . || true)
+if [[ "${sq_row5_lines}" -eq 1 ]] && printf '%s' "${sq_row5#*$'\x1f'}" | python3 -c 'import json,sys; json.loads(sys.stdin.read())' 2>/dev/null; then
+  pass "store_session_events_seq: the seq-5 row with an embedded newline is one line and its JSON parses"
+else
+  fail "store_session_events_seq: seq-5 row malformed (lines=${sq_row5_lines}): ${sq_row5}"
+fi
+
+sq_after3=$(REVENIUM_SESSION_STORE="${DB7S}" store_session_events_seq "${SEQ_SID}" 3)
+if [[ "$(_seq_fields "${sq_after3}")" == "5" ]]; then
+  pass "store_session_events_seq: after_seq 3 yields only the seq-5 row"
+else
+  fail "store_session_events_seq: after_seq 3 expected only seq 5, got: ${sq_after3}"
+fi
+
+sq_after4=$(REVENIUM_SESSION_STORE="${DB7S}" store_session_events_seq "${SEQ_SID}" 4)
+if [[ "$(_seq_fields "${sq_after4}")" == "5" ]]; then
+  pass "store_session_events_seq: after_seq one below the max seq yields exactly the last row"
+else
+  fail "store_session_events_seq: after_seq 4 expected only seq 5, got: ${sq_after4}"
+fi
+
+sq_after5=$(REVENIUM_SESSION_STORE="${DB7S}" store_session_events_seq "${SEQ_SID}" 5)
+if [[ -z "${sq_after5}" ]]; then
+  pass "store_session_events_seq: after_seq equal to the max seq yields no rows"
+else
+  fail "store_session_events_seq: after_seq 5 expected no rows, got: ${sq_after5}"
+fi
+
+sq_abc=$(REVENIUM_SESSION_STORE="${DB7S}" store_session_events_seq "${SEQ_SID}" abc 2>/dev/null)
+if [[ "$(_seq_fields "${sq_abc}")" == "1 3 5" ]]; then
+  pass "store_session_events_seq: non-numeric after_seq is treated as -1"
+else
+  fail "store_session_events_seq: after_seq abc expected seqs '1 3 5', got: ${sq_abc}"
+fi
+
+sq_unknown=$(REVENIUM_SESSION_STORE="${DB7S}" store_session_events_seq "bbbbbbbb-0000-0000-0000-0000000000ff" -1)
+sq_unknown_rc=$?
+if [[ -z "${sq_unknown}" && "${sq_unknown_rc}" -eq 0 ]]; then
+  pass "store_session_events_seq: a valid but unknown session id yields no output and exit 0"
+else
+  fail "store_session_events_seq: unknown session id misbehaved (rc=${sq_unknown_rc} out='${sq_unknown}')"
+fi
+
+sq_cli=$(REVENIUM_SESSION_STORE="${DB7S}" bash "${SESSION_STORE_SH}" session-events-seq "${SEQ_SID}" -1)
+sq_cli_rc=$?
+if [[ "${sq_cli_rc}" -eq 0 && "${sq_cli}" == "${sq_rows}" && "$(_seq_fields "${sq_cli}")" == "1 3 5" ]]; then
+  pass "store_session_events_seq: executed-mode session-events-seq verb prints the same three rows"
+else
+  fail "store_session_events_seq: CLI verb output differs (rc=${sq_cli_rc}): ${sq_cli}"
+fi
+
+# =============================================================================
+# GROUP: strict verbs (complete read or exit 3, never a quiet empty answer)
+# =============================================================================
+echo "--- GROUP: strict verbs ---"
+
+ST_A="aaaaaaaa-0000-4000-8000-0000000000a1"
+ST_B="bbbbbbbb-0000-4000-8000-0000000000b2"
+ST_HOME=$(new_tmp)
+ST_DB_MAIN="${ST_HOME}/agents/main/agent/openclaw-agent.sqlite"
+ST_DB_DEV="${ST_HOME}/agents/dev/agent/openclaw-agent.sqlite"
+mk_store "${ST_DB_MAIN}"
+mk_session "${ST_DB_MAIN}" "${ST_A}" "agent:main:main" "" 100
+mk_event "${ST_DB_MAIN}" "${ST_A}" 1 '{"type":"message","seq":1}'
+mk_event "${ST_DB_MAIN}" "${ST_A}" 4 '{"type":"message","seq":4}'
+mk_store "${ST_DB_DEV}"
+mk_session "${ST_DB_DEV}" "${ST_B}" "agent:dev:main" "" 200
+
+# _st <verb> [args] — run one executed-mode verb with no override and the
+# fixture home; prints stdout, then "rc=<n>" on its own line.
+_st() {
+  local _out _rc
+  _out=$(env -u REVENIUM_SESSION_STORE OPENCLAW_HOME="${ST_HOME}" bash "${SESSION_STORE_SH}" "$@" 2>/dev/null)
+  _rc=$?
+  printf '%s\nrc=%s' "${_out}" "${_rc}"
+}
+
+st_lenient=$(_st list-sessions)
+st_strict=$(_st list-sessions-strict)
+if [[ "${st_strict}" == "${st_lenient}" && "${st_strict}" == *"${ST_A}"* && "${st_strict}" == *"${ST_B}"* ]]; then
+  pass "strict: list-sessions-strict equals list-sessions when every store is healthy"
+else
+  fail "strict: healthy list-sessions-strict differs (strict='${st_strict}' lenient='${st_lenient}')"
+fi
+
+if [[ "$(_st max-seq-strict "${ST_A}")" == $'4\nrc=0' && "$(_st max-seq-strict "${ST_B}")" == $'-1\nrc=0' ]]; then
+  pass "strict: max-seq-strict reports the max seq, and -1 for a session with no events"
+else
+  fail "strict: max-seq-strict wrong: A='$(_st max-seq-strict "${ST_A}")' B='$(_st max-seq-strict "${ST_B}")'"
+fi
+
+st_ev=$(_st session-events-seq-strict "${ST_A}" 1)
+if [[ "$(_seq_fields "${st_ev%$'\n'rc=*}")" == "4" && "${st_ev}" == *$'\nrc=0' ]]; then
+  pass "strict: session-events-seq-strict returns the rows after the cursor"
+else
+  fail "strict: session-events-seq-strict wrong: ${st_ev}"
+fi
+
+st_all=$(_st max-seq-all-strict)
+if [[ "${st_all}" == "${ST_A}"$'\x1f''4'$'\x1f''4'$'\nrc=0' ]]; then
+  pass "strict: max-seq-all-strict lists each session with events, its max seq and max readable seq"
+else
+  fail "strict: max-seq-all-strict wrong: ${st_all}"
+fi
+
+mk_compacted_event "${ST_DB_MAIN}" "${ST_A}" 9
+st_all_c=$(_st max-seq-all-strict)
+if [[ "${st_all_c}" == "${ST_A}"$'\x1f''9'$'\x1f''4'$'\nrc=0' ]]; then
+  pass "strict: max-seq-all-strict leaves compacted rows out of the readable max"
+else
+  fail "strict: max-seq-all-strict with a compacted head row wrong: ${st_all_c}"
+fi
+
+if [[ "$(_st max-seq-strict "not-a-session")" == $'\nrc=2' && "$(_st session-events-seq-strict "${ST_A}" abc)" == $'\nrc=2' ]]; then
+  pass "strict: an invalid session id or cursor exits 2 with no output"
+else
+  fail "strict: invalid argument handling wrong"
+fi
+
+# A sibling store that cannot be read: the lenient verbs keep exiting 0
+# (report.sh relies on that); the strict verbs print nothing and exit 3.
+cp "${ST_DB_DEV}" "${ST_DB_DEV}.good"
+printf 'not a sqlite database %.0s' {1..64} > "${ST_DB_DEV}"
+st_lenient_bad=$(_st list-sessions)
+if [[ "${st_lenient_bad}" == *"${ST_A}"* && "${st_lenient_bad}" == *$'\nrc=0' ]]; then
+  pass "strict: lenient list-sessions still answers from the healthy store with exit 0"
+else
+  fail "strict: lenient list-sessions behaviour changed: ${st_lenient_bad}"
+fi
+st_all_fail=1
+for st_args in "list-sessions-strict" "max-seq-strict ${ST_A}" "session-events-seq-strict ${ST_A} -1" "max-seq-all-strict"; do
+  # shellcheck disable=SC2086
+  st_got=$(_st ${st_args})
+  if [[ "${st_got}" != $'\nrc=3' ]]; then
+    st_all_fail=0
+    fail "strict: ${st_args} with an unreadable sibling store: expected no output and rc=3, got '${st_got}'"
+  fi
+done
+[[ "${st_all_fail}" -eq 1 ]] && pass "strict: every strict verb prints nothing and exits 3 when one store is unreadable"
+mv "${ST_DB_DEV}.good" "${ST_DB_DEV}"
+
+st_none=$(env -u REVENIUM_SESSION_STORE OPENCLAW_HOME="$(new_tmp)" bash "${SESSION_STORE_SH}" list-sessions-strict 2>/dev/null)
+st_none_rc=$?
+if [[ -z "${st_none}" && "${st_none_rc}" -eq 3 ]]; then
+  pass "strict: no store at all is not a complete read (exit 3)"
+else
+  fail "strict: no-store case wrong (rc=${st_none_rc} out='${st_none}')"
+fi
+
+st_missing=$(REVENIUM_SESSION_STORE="${ST_HOME}/missing.sqlite" bash "${SESSION_STORE_SH}" list-sessions-strict 2>/dev/null)
+st_missing_rc=$?
+if [[ -z "${st_missing}" && "${st_missing_rc}" -eq 3 ]]; then
+  pass "strict: an override naming a missing file exits 3"
+else
+  fail "strict: missing override wrong (rc=${st_missing_rc} out='${st_missing}')"
+fi
+
+# =============================================================================
 # GROUP: read-only connection enforcement (T-19-03)
 # =============================================================================
 echo "--- GROUP: read-only enforcement ---"
@@ -753,7 +947,7 @@ mk_store "${DB16}"
 mk_session "${DB16}" "aaaaaaaa-0000-0000-0000-000000000050" "agent:main:main" "" 100
 EVIL_ID="x'; DROP TABLE session_nodes; --"
 
-for fn in store_completions store_session_events store_max_seq store_last_completion_id store_null_event_count store_tool_calls store_parent_session_id store_session_key_for_id; do
+for fn in store_completions store_session_events store_session_events_seq store_max_seq store_last_completion_id store_null_event_count store_tool_calls store_parent_session_id store_session_key_for_id; do
   fn_out=$(REVENIUM_SESSION_STORE="${DB16}" "${fn}" "${EVIL_ID}" 2>/dev/null)
   fn_rc=$?
   survives=$(sqlite3 "${DB16}" "SELECT count(*) FROM session_nodes;")

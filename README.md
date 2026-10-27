@@ -127,6 +127,41 @@ bash ~/.openclaw/skills/revenium/scripts/install-cron.sh
 bash ~/.openclaw/skills/revenium/scripts/uninstall-cron.sh
 ```
 
+## Economics sidecar
+
+The skill includes an economics sidecar: a Python process that runs on the host on each metering cron tick. It reads new conversation turns from the OpenClaw session store, redacts them, and reports its health. Later releases build on it to infer typed jobs and their estimated value. The agent does not have to classify its own work for this.
+
+**Where it lives.** None of these paths are inside `~/.openclaw`, so the agent cannot read or change them:
+
+| What | Path |
+|------|------|
+| Runtime (shared, disposable: uv, CPython, venv) | `${REVENIUM_SIDECAR_HOME:-$HOME/.local/share/revenium-sidecar}` |
+| Per-install state (durable) | `${XDG_STATE_HOME:-$HOME/.local/state}/revenium-economics/standalone-<hash12>/`, where `<hash12>` is the first 12 hex characters of the sha256 of the resolved `~/.openclaw` path |
+| Log | `<state>/revenium-economics.log` |
+
+If you set `REVENIUM_SIDECAR_HOME`, point it at a new or empty directory. The provisioner claims the directory by writing a `.revenium-sidecar-runtime` marker and refuses to build into a non-empty directory without one. `uninstall-sidecar.sh` removes only a marked runtime, and inside it only the files the provisioner created. A runtime built before the marker existed is refused with instructions to check and remove it by hand.
+
+**Provisioning.** `post-install.sh` provisions the sidecar automatically, in its step "Provisioning the economics sidecar". It downloads a sha256-pinned [uv](https://github.com/astral-sh/uv) 0.12.19 and uses it to install a uv-managed CPython (3.13 by default; set `REVENIUM_SIDECAR_PYTHON_VERSION=3.11` or later to choose another). It then builds a venv that holds only the library wheel vendored in `sidecar/vendor/`, installed with `--no-index --require-hashes`, and runs the library's conformance kit before the venv is used. Provisioning never changes your system or Homebrew Python and never adds anything to your `PATH` (uv runs with `--no-bin`, so `~/.local/bin` is left alone).
+
+Install-time network access goes to two places only: `github.com` for the uv release tarball and `releases.astral.sh` for the CPython build. Ticks never download anything.
+
+**Optional model key.** Export `REVENIUM_ECONOMICS_MODEL_KEY` before running post-install to give the sidecar a key for your model provider:
+
+```bash
+export REVENIUM_ECONOMICS_MODEL_KEY=<MODEL_PROVIDER_KEY>
+bash ~/.openclaw/skills/revenium/scripts/post-install.sh
+```
+
+The key is written to `<state>/model.key` with mode 0600. It is never stored in `config.json`, never printed, and never passed on a command line. If you re-run post-install without the variable, the stored key is kept.
+
+**Upgrades.** Re-running post-install is the upgrade step. If the runtime already matches the pinned uv version, Python request and wheel hash, it is reused. Otherwise a new venv is built beside the old one and swapped in only after the conformance kit passes, so a failed upgrade leaves the working runtime in place.
+
+**revenium CLI.** The sidecar delivers its outcome metrics through the `revenium` CLI, which must be 1.7.0 or later. Post-install checks the version (`revenium version`) and runs `brew upgrade revenium/tap/revenium` once if it is older. If the CLI is still below 1.7.0, post-install warns and carries on. Metering is unaffected.
+
+**Status.** `/revenium` shows a **Sidecar** line. The tick writes the same health data to `~/.openclaw/skills/revenium/economics-status.json` (`state`, `reason`, `detail`, `updatedAt`). If provisioning did not finish, `<runtime>/PROVISION_STATUS` records why, for example `reason=download_failed` or `reason=unsupported_platform`. The log is at `<state>/revenium-economics.log`.
+
+**Fail-open.** If the sidecar fails (Python missing, a download fails, a model error, a crash), the install still finishes, and the agent turn, completion metering and budget enforcement all continue. If a sidecar that was working stops, the agent shows a one-time notice that job tracking stopped. Re-run post-install to retry provisioning.
+
 ## Installing from the GitHub repo (local development)
 
 Use this when you want to run or test unreleased changes (e.g. a feature branch) instead of the ClawHub release. The key constraints, both enforced by OpenClaw's sandbox:
@@ -182,6 +217,8 @@ git pull
 bash scripts/post-install.sh   # if needed
 openclaw gateway restart   # if post-install was re-run
 ```
+
+> Re-run post-install after a pull that changes the economics sidecar (`sidecar/` or `scripts/provision-sidecar.sh`). Post-install provisions or upgrades the sidecar runtime, and reuses it when nothing it pins has changed.
 
 > Runtime state files (`config.json`, `guardrail-status.json`, `*.log`, `*.lock`) are written into the skill directory at runtime. They are ignored by git, so they will not dirty the clone or block `git pull`.
 
@@ -294,8 +331,11 @@ The cron writes `~/.openclaw/skills/revenium/guardrail-status.json` with the lat
 
 ```bash
 bash ~/.openclaw/skills/revenium/scripts/uninstall-cron.sh
+bash ~/.openclaw/skills/revenium/scripts/uninstall-sidecar.sh
 rm -rf ~/.openclaw/skills/revenium
 ```
+
+`uninstall-sidecar.sh` removes the economics sidecar runtime but keeps its state (ledgers, cursors and redacted turn cache under `~/.local/state/revenium-economics/`), so a reinstall never sends anything to Revenium twice; add `--purge-cache` to also delete the turn cache.
 
 Optionally clean up your Revenium guardrail rules:
 

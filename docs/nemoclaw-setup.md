@@ -218,6 +218,51 @@ owner-id: "your-owner-id"
 
 ---
 
+## Economics sidecar (host)
+
+The economics sidecar is a Python process that the host metering cron runs on every tick. It reads new conversation turns from the sandbox's session store over the SSHFS mount, redacts them, and reports its health. Later releases use it to infer typed jobs and their estimated value. It runs on the **host**, not in the sandbox, and `post-install-nemoclaw.sh` provisions it automatically in its step "Provisioning the economics sidecar on the host" (after the host CLI step, before the metering loop).
+
+**Where it lives.**
+
+| What | Path |
+|------|------|
+| Runtime (one per host, shared by every sandbox: uv, CPython, venv) | `${REVENIUM_SIDECAR_HOME:-$HOME/.local/share/revenium-sidecar}` |
+| Per-sandbox state (durable: cursors, ledgers, redacted turn cache, model key) | `~/.nemoclaw/revenium-economics/<sandbox>/` (mode 0700) |
+| Log | `~/.nemoclaw/revenium-economics/<sandbox>/revenium-economics.log` |
+
+If you set `REVENIUM_SIDECAR_HOME`, point it at a new or empty directory. The provisioner claims the directory by writing a `.revenium-sidecar-runtime` marker and refuses to build into a non-empty directory without one. `uninstall-sidecar.sh` removes only a marked runtime, and inside it only the files the provisioner created. A runtime built before the marker existed is refused with instructions to check and remove it by hand.
+
+The state dir is on the host and **off the SSHFS mount** on purpose: the sandboxed agent cannot read the model key or the turn cache, and cannot plant files the host cron would trust. Only a scalar health file, `economics-status.json`, is written into the mounted skill dir for the agent to read.
+
+**Install-time egress (host).** Provisioning downloads a sha256-pinned [uv](https://github.com/astral-sh/uv) release from `github.com` and a uv-managed CPython build from `releases.astral.sh`. Allow both from the host if it sits behind an egress proxy. The sandbox needs no new egress policy, and ticks never download anything. The library itself comes from the wheel vendored in `sidecar/vendor/`, installed with `--no-index --require-hashes`.
+
+**revenium CLI pin and floor.** The installer delivers revenium CLI **v1.9.0** (tarball sha256 `0ad62c75bde9f7fc226687cc188a97510accabd822d4efae8ec391683fc36db3`) both into the sandbox and to the host's `~/.local/bin`. A mismatched tarball aborts the install. The sidecar needs CLI **1.7.0 or later** on the host. If a `revenium` already on the host `PATH` is older, the installer installs the pinned v1.9.0 into `~/.local/bin` beside it (your binary is not touched) and warns. **PATH-order caveat:** when Homebrew is installed, the metering cron's `PATH` puts Homebrew's `bin` before `~/.local/bin`, so an older Homebrew `revenium` still wins at tick time. Upgrade it (`brew upgrade revenium/tap/revenium`) or remove it. Until then the sidecar's capability probe reports the CLI as not capable, and metering itself is unaffected. The pinned binary is built for `linux_amd64`. The installer runs it once before it moves it into `~/.local/bin`, so on a host where it cannot run (for example arm64) nothing is installed: an existing `revenium` is kept with a warning, and a host with no `revenium` at all stops the install and asks you to install a 1.7.0 or later CLI built for your architecture.
+
+**Optional model key.** Export `REVENIUM_ECONOMICS_MODEL_KEY` before running the installer to give the sidecar a key for your model provider:
+
+```bash
+export REVENIUM_ECONOMICS_MODEL_KEY=<MODEL_PROVIDER_KEY>
+bash ~/.openclaw/skills/revenium/scripts/post-install-nemoclaw.sh
+```
+
+The key is written to `~/.nemoclaw/revenium-economics/<sandbox>/model.key` with mode 0600. It is never sent into the sandbox, never printed and never passed on a command line. Re-running without the variable keeps the stored key.
+
+**Upgrades.** Re-run `post-install-nemoclaw.sh`. The sidecar step is not ledger-gated: a runtime that already matches the pinned uv version, Python request and wheel hash is reused, and anything else is rebuilt beside the old venv and swapped in only after the library's conformance kit passes. The same re-run also redeploys the skill into the sandbox whenever `SKILL.md`, `BUDGET-GUARD.md` or `references/*.md` changed (the `skill-installed-nemoclaw` ledger value is a content hash of those files), so agent-facing changes such as the sidecar notice reach existing sandboxes.
+
+**Status.** In the agent, `/revenium` shows a **Sidecar** line. On the host, the tick writes the same scalars to `~/sbx-openclaw-<sandbox>/skills/revenium/economics-status.json` (`state`, `reason`, `updatedAt`). If provisioning did not finish, `<runtime>/PROVISION_STATUS` records why (for example `reason=download_failed`), and `<runtime>/provision.log` holds the details.
+
+**Fail-open.** A provisioning failure only warns: the install still finishes, and agent turns, completion metering and budget enforcement continue. If a sidecar that was working stops, the agent tells the user once that job tracking stopped.
+
+**Uninstall.** To remove the runtime and keep all state:
+
+```bash
+bash ~/.openclaw/skills/revenium/scripts/uninstall-sidecar.sh
+```
+
+It removes only the runtime dir, and only when it carries a sidecar runtime marker. Every `~/.nemoclaw/revenium-economics/<sandbox>/` dir is kept, because its ledgers and cursors stop a later reinstall from sending anything to Revenium twice. Add `--purge-cache` to also delete the redacted turn cache (`<state>/turns/`); cursors, ledgers and the model key stay. **The runtime is shared by every sandbox on the host**, so removing it stops job tracking for all of them; the per-sandbox uninstall steps below deliberately do not call this script.
+
+---
+
 ## Uninstalling
 
 ```bash
@@ -234,7 +279,12 @@ bash ~/.openclaw/skills/revenium/scripts/uninstall-enforcement-nemoclaw.sh \
 # 3. Remove the skill from the sandbox
 nemoclaw <your-sandbox-name> skill remove revenium
 
-# 4. Remove the skill directory from the host
+# 4. Only when no other sandbox on this host uses the skill: remove the shared
+#    economics sidecar runtime (its per-sandbox state is kept; see
+#    "Economics sidecar (host)")
+bash ~/.openclaw/skills/revenium/scripts/uninstall-sidecar.sh
+
+# 5. Remove the skill directory from the host
 rm -rf ~/.openclaw/skills/revenium
 ```
 

@@ -158,7 +158,9 @@ mk_event() {
   local db="$1" sid="$2" seq="$3" event_json="$4"
   local q_sid tmp_sql
   q_sid="$(_mk_sql_quote "${sid}")"
-  tmp_sql=$(mktemp "${TMPDIR:-/tmp}/mk-event.XXXXXX.sql")
+  # BSD mktemp randomizes only a trailing X run; a suffix after it turns the
+  # template into a fixed name, so one leftover file breaks every later call.
+  tmp_sql=$(mktemp "${TMPDIR:-/tmp}/mk-event.XXXXXX")
   SID="${q_sid}" SEQ="${seq}" EVENT_JSON="${event_json}" python3 - "${tmp_sql}" <<'PY'
 import os, sys
 sql_path = sys.argv[1]
@@ -169,6 +171,38 @@ with open(sql_path, 'w', encoding='utf-8') as f:
 PY
   "${_MK_SQLITE3_BIN}" "${db}" < "${tmp_sql}"
   rm -f "${tmp_sql}"
+}
+
+# ---------------------------------------------------------------------------
+# mk_event_hex <db> <session_id> <seq> <hex> — inserts one row whose
+# event_json is the raw bytes given as hex (CAST(X'..' AS TEXT)), so a test
+# can store byte sequences that are not valid UTF-8. <hex> must be an even
+# run of hex digits and <seq> an integer; anything else returns 1 unwritten.
+# ---------------------------------------------------------------------------
+mk_event_hex() {
+  local db="$1" sid="$2" seq="$3" hex="$4"
+  local q_sid
+  [[ "${hex}" =~ ^([0-9a-fA-F][0-9a-fA-F])+$ ]] || return 1
+  [[ "${seq}" =~ ^-?[0-9]+$ ]] || return 1
+  q_sid="$(_mk_sql_quote "${sid}")"
+  _mk_write "${db}" "INSERT INTO transcript_events (session_id, seq, event_json, created_at) VALUES ('${q_sid}', ${seq}, CAST(X'${hex}' AS TEXT), ${seq});"
+}
+
+# ---------------------------------------------------------------------------
+# mk_touch_session <db> <session_id> <updated_at> — sets updated_at on the
+# session's session_nodes row (matched by current_session_id) and on its
+# session_windows row, the way OpenClaw moves it when a session changes.
+# <updated_at> must be an integer; anything else returns 1 unwritten.
+# ---------------------------------------------------------------------------
+mk_touch_session() {
+  local db="$1" sid="$2" updated_at="$3"
+  local q_sid
+  [[ "${updated_at}" =~ ^[0-9]+$ ]] || return 1
+  q_sid="$(_mk_sql_quote "${sid}")"
+  _mk_write "${db}" "
+UPDATE session_nodes SET updated_at = ${updated_at} WHERE current_session_id = '${q_sid}';
+UPDATE session_windows SET updated_at = ${updated_at} WHERE session_id = '${q_sid}';
+"
 }
 
 # ---------------------------------------------------------------------------

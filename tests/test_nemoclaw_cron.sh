@@ -61,6 +61,9 @@ fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 #   scripts/cron.sh            = 6cdff1c49d03bdd69c10b6b6065e23e7ac1584a403da253c56d8e6d0ca635085
 # scripts/cron.sh re-pinned 2026-10-24: it now rotates the metering logs at
 # the end of each locked tick (scripts/rotate-log.sh).
+# scripts/cron.sh re-pinned 2026-10-25: it now runs the sidecar deliver stage
+# inside the metering lock and launches the detached infer stage after it
+# (scripts/economics.sh).
 # scripts/report.sh and scripts/guardrail-check.sh re-pinned 2026-09-25 by
 # Phase 19 (plan 19-07) — both files were legitimately rewritten across plans
 # 19-01/19-04 (report.sh's SQLite read path) and 19-06 (guardrail-check.sh's
@@ -76,7 +79,7 @@ fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 # and warns on an unreadable config.json, so skipped enforcement is visible.
 #   scripts/guardrail-check.sh = d984172b7b1ae7a1241167a36571ccf538d4ccda4189bc8ab1401cb2a0a099be
 # ---------------------------------------------------------------------------
-SC4_CRON_SHA="6cdff1c49d03bdd69c10b6b6065e23e7ac1584a403da253c56d8e6d0ca635085"
+SC4_CRON_SHA="bab080a9969e9519a4f44b8ff89a657dda678136a137b990dd1cc22d8561f22f"
 SC4_REPORT_SHA="0588982e13e65a55b57cb75c048f877acc9c1136679831a7d50e76a4ed71b216"
 SC4_GUARDRAIL_SHA="d984172b7b1ae7a1241167a36571ccf538d4ccda4189bc8ab1401cb2a0a099be"
 

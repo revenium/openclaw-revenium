@@ -167,3 +167,114 @@ the ledger-based ledger lookup — were exercised with real live evidence on tha
 NemoClaw / OpenShell + Nemotron pairing's read path, hook-firing behavior, and SSHFS-mounted store
 concurrency profile remain unverified against this implementation; treat any assumption of parity
 for that pairing as unconfirmed until it is independently checked (tracked for Phase 22).
+
+## NemoClaw 2026.9.1 store shape
+
+The build actually observed was **OpenClaw 2026.9.2 (3928bad)**, the 2026.9.x build pinned by
+NemoClaw v0.0.138; there was no 2026.9.1 sandbox to test. Spike date: **2026-10-26**. The spike
+ran on a macOS host (NemoClaw v0.0.138, OpenShell 0.0.116 isolated gateway) with the Nemotron
+`nvidia/nemotron-3.5-lightning-30b-a3b` model. It drove one real turn that made an `exec` tool
+call and spawned a subagent with `sessions_spawn`. Every finding below is structural: types,
+counts, booleans and timings. No transcript text was recorded. Session ids are truncated to 8
+characters.
+
+**Read path used:** `sshfs` is not installed on the macOS spike host, so the sandbox store was
+copied out with `tar` over `nemoclaw exec` into a local `OPENCLAW_HOME`, and the existing
+read-only `scripts/session-store.sh` verbs ran against that copy. The timing below is therefore a
+local-disk read, not an SSHFS read.
+
+Store contents of the root session (`69a6b543`, key `agent:main:main`, `created_via=run`), from
+the `session-events` jq projection:
+
+| Event `type` | `message.role` | `message.content` type | Content item types | Count |
+|---|---|---|---|---|
+| `message` | `user` | string | (none, plain string) | 2 |
+| `message` | `assistant` | array | `text`, `toolCall` | 1 |
+| `message` | `assistant` | array | `text` | 1 |
+| `message` | `assistant` | array | `toolCall` | 6 |
+| `message` | `toolResult` | array | `text` | 7 |
+| `message` | `custom` (`customType` `openclaw.nested-tool.v1`) | string | (none, plain string) | 2 |
+| `custom` | (no `message`) | n/a | n/a | 1 |
+| `model_change` | (no `message`) | n/a | n/a | 1 |
+| `session` | (no `message`) | n/a | n/a | 1 |
+| `thinking_level_change` | (no `message`) | n/a | n/a | 1 |
+
+The subagent session (`dc6d70e7`, key `agent:main:subagent:<uuid>`, `created_via=spawn`) has
+one row each of: `user` string, `assistant [text]`, `assistant [toolCall]` (same key set),
+`toolResult [text]`, top-level `custom`, `model_change`, `session` and `thinking_level_change`.
+
+- **Probe:** `READABLE` (exit 0). `list-sessions` returned 2 sessions: the root and its subagent.
+- **Text is present:** yes. The 2 `user` rows carried 244 and 1513 characters of text. The 2
+  assistant `text` items carried 44 and 125 characters. The `toolResult` text items ranged from
+  29 to 4790 characters. User and assistant text is persisted in `transcript_events.event_json`
+  on this build, as on standalone.
+- **String content occurs:** yes. Every `user` row and every `role: "custom"` row stores
+  `message.content` as a plain string, not an array of items. Assistant and `toolResult` rows use
+  the array form. A reader must handle both forms.
+- **toolCall key set:** exactly `{arguments, id, name, type}`, identical in the root and the
+  subagent and the same as on standalone.
+- **Tool names and nested tools:** the root's `toolCall` items named `tool_search` ×2,
+  `tool_call` ×3, `exec` ×1 and `sessions_spawn` ×1. OpenClaw 2026.9.2 uses progressive tool
+  disclosure: `tool_search` and `tool_call` are meta-tools, and a real tool can execute nested
+  inside a `tool_call` invocation. A nested execution is recorded as a `role: "custom"` message
+  with `customType: "openclaw.nested-tool.v1"`. A reader must not take `tool_call` as the name of
+  the tool that actually ran.
+  The `tool_call` item's `arguments` carry the wrapped tool as
+  `{"id": "openclaw:core:<tool>", "args": {...}}` (ids observed: `openclaw:core:sessions_spawn`,
+  `openclaw:core:agents_wait`, `openclaw:core:subagents`). The sidecar reads only that `id` and
+  keeps its last `:` segment as the tool name; it never reads `args`. Before that, the whole `id`
+  must come through the regex and host-known-value redaction passes unchanged; otherwise the call
+  is recorded as `[tool]`, so a value that contains `:` or an `api_key:<value>` assignment cannot
+  leave its tail behind as a tool name.
+- **Directive bleed:** not observable on this spike (enforcement plugin not installed). The
+  Revenium enforcement plugin was absent from the spike sandbox, so the `<revenium-guard>` and
+  `<revenium-metering>` checks were `false` on every row by construction. Plan 01-07 strips the
+  known directive blocks regardless.
+- **Standalone directive bleed:** not checked on this host. The executor host's standalone store
+  probed `UNREADABLE`.
+- **null-event-count:** `0` for the root and `0` for the subagent. No row had a NULL
+  `event_json`, so compaction had not nulled any events in these sessions.
+- **Store parentage populated:** yes. `parent-session-id` on the subagent returned the root
+  (`69a6b543`). The store's parentage columns can therefore serve subagent roll-up on this arm.
+- **Read time:** `session-events` on the root (23 events) took 0.055 s against the local copy.
+  The SSHFS read time was not measured because `sshfs` is absent on this macOS host.
+- **`session-events-seq`:** on the root it returned 23 rows with seq 0 through 22, the same row
+  count as `session-events`.
+- **Sandbox OpenClaw build:** `openclaw --version` inside the sandbox printed
+  `OpenClaw 2026.9.2 (3928bad)`.
+
+`tests/sidecar/fixtures/nemoclaw-events.jsonl` reproduces these `message` shapes with synthetic
+text and ids: a string-content `user` row, an `assistant` row with a `text` item then an `exec`
+`toolCall`, a `toolCall`-only `assistant` row naming `tool_call` whose `arguments` wrap the synthetic id
+`openclaw:core:exec`, a string-content
+`openclaw.nested-tool.v1` custom row, `toolResult` rows, and a text-only `assistant` reply. The
+spike projection did not inspect `toolResult` keys outside `content`. The fixture gives those
+rows the standalone `toolCallId` and `toolName` keys. It contains no directive-bearing user row,
+because no directive bleed was observed.
+
+## Sidecar change detection
+
+Each infer tick lists the sessions in every agent store and skips any session whose
+`session_nodes.updated_at` equals the value recorded for it in `<state>/cursors.json`. A quiet
+session is therefore never read, which keeps idle sessions off a slow SSHFS mount.
+
+- **Precondition:** OpenClaw moves `session_nodes.updated_at` whenever it appends a
+  `transcript_events` row for that session.
+- **Where it was checked:** NemoClaw sandbox on OpenClaw 2026.9.2, 2026-10-26, live. A new
+  root-session turn advanced `updated_at` and the session's max seq (22 to 24), and the untouched
+  subagent session's `updated_at` stayed the same.
+- **Where it was not:** standalone. It has not been checked on a standalone build at or above the
+  2026.8.1 floor. The hermetic fixtures set `updated_at` by hand (`mk_touch_session`), so the test
+  suites do not prove it either.
+- **Fallback:** every 10 minutes (`MAX_SEQ_RECHECK_SECONDS` in `sidecar/run.py`), infer makes one
+  `max-seq-all-strict` query per agent store and reads every session whose highest readable seq is
+  above its cursor, even when its `updated_at` did not move. A tick never makes more than one such
+  query. The time of the last complete recheck is `maxSeqCheckedAt` in `<state>/cursors.json`. A
+  recheck that fails, or that the soft deadline cuts short, leaves it unchanged, so the next tick
+  rechecks.
+- **Operator signal:** `sessionsReadOnRecheck` in `<state>/infer-status.json`. It stays `0` on a
+  build that keeps the precondition. A non-zero value means new turns reach the turn cache up to
+  10 minutes late on this build; report the OpenClaw build.
+- **Manual check:** run `bash scripts/session-store.sh list-sessions` before and after a turn.
+  Fields are separated by the 0x1F unit separator, and the fourth field of that session's line
+  (`updated_at`) must change.
