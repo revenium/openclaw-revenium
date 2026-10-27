@@ -14,6 +14,10 @@ the verbs from the host clone with OPENCLAW_HOME pointed at the arm's home:
   ``<event_json>`` per line, in seq order;
 - ``null-event-count <sid>``: one integer.
 
+Each verb ends a row with a newline character and separates fields with
+0x1F; every parser splits rows through ``_rows``, so the other Unicode line
+boundaries that turn text and session keys can hold stay inside their row.
+
 The lenient verbs report.sh uses exit 0 even when SQLite fails, printing an
 empty or partial answer. Cursors and the install baseline must never move on
 such an answer, so every read that decides a cursor uses a ``-strict`` verb,
@@ -123,7 +127,7 @@ class StoreClient:
         if out is None:
             return None
         rows: list[SessionRow] = []
-        for line in out.splitlines():
+        for line in _rows(out):
             parts = line.split(_FIELD_SEP)
             if len(parts) != 4 or not valid_session_id(parts[0]):
                 continue
@@ -148,7 +152,7 @@ class StoreClient:
         if out is None:
             return None
         tops: dict[str, tuple[int, int]] = {}
-        for line in out.splitlines():
+        for line in _rows(out):
             parts = line.split(_FIELD_SEP)
             if len(parts) != 3 or not valid_session_id(parts[0]):
                 continue
