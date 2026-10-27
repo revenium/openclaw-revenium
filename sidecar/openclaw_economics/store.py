@@ -54,6 +54,19 @@ def valid_session_id(value: object) -> bool:
     return isinstance(value, str) and SESSION_ID_RE.fullmatch(value) is not None
 
 
+def _rows(out: str) -> list[str]:
+    """Split verb output into rows on the newline character only.
+
+    The verbs replace char(10) inside event_json, so the newline character
+    is the only row separator they emit. Node's JSON.stringify writes
+    U+2028, U+2029 and U+0085 raw inside strings, and a split that also
+    breaks on every other Unicode line boundary would cut such a turn in
+    two: its head fails to parse, its tail has no seq and is dropped, and
+    the cursor still moves past the row, so the turn is lost for good.
+    """
+    return out.split("\n")
+
+
 def _parse_int(text: str) -> int | None:
     text = text.strip()
     if _INT_RE.fullmatch(text) is None:
@@ -154,7 +167,7 @@ class StoreClient:
         if out is None:
             return None
         rows: list[tuple[int, str]] = []
-        for line in out.splitlines():
+        for line in _rows(out):
             seq_text, sep, event_json = line.partition(_FIELD_SEP)
             seq = _parse_int(seq_text) if sep else None
             if seq is None:
