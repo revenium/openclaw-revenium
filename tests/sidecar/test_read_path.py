@@ -33,6 +33,12 @@ would cut such a turn in two and lose it. ``event()`` escapes them, so these
 tests insert the raw bytes through ``mk_event_hex`` and first check the
 stored row really holds the raw character.
 
+TestStoreRowSplitting feeds canned verb output to each StoreClient parser.
+The store verbs end each row with a newline and nothing else, so every
+parser must keep the other Unicode line boundaries (CR, VT, FF, U+001C to
+U+001E, U+0085, U+2028, U+2029) inside their rows, return an unterminated
+last row, and add no row for a trailing newline.
+
 TestRecheck covers the periodic max-seq recheck: change detection trusts
 the store to move ``updated_at`` with every new row, so every
 MAX_SEQ_RECHECK_SECONDS one grouped ``max-seq-all-strict`` call finds any
@@ -924,6 +930,87 @@ class TestLineSeparators(unittest.TestCase):
             ["fixture deploy key [REDACTED:anthropic]" + LS + "next line"],
         )
         self.assertNotIn(ANTHROPIC_SECRET.encode("utf-8"), self.lay.state_bytes())
+
+    def test_session_key_with_a_line_separator_is_listed_and_read(self) -> None:
+        key = "agent:main:fixture" + LS + "label"
+        fixture(
+            ("mk_session", self.lay.db, SID_B, key, "", 201),
+            ("mk_event_hex", self.lay.db, SID_B, 0, raw_event_hex(0, "user", "fixture keyed turn")),
+        )
+        conn = sqlite3.connect(f"file:{self.lay.db}?mode=ro", uri=True)
+        try:
+            stored = conn.execute(
+                "SELECT session_key FROM session_nodes WHERE current_session_id = ?", (SID_B,)
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(stored, (key,))
+
+        doc = self.lay.infer()
+        self.assertEqual(doc["counters"]["sessionsSeen"], 2)
+        records = self.lay.cached(SID_B)
+        self.assertEqual([(r["seq"], r["text"]) for r in records], [(0, "fixture keyed turn")])
+
+
+def canned_client(payload: str) -> store.StoreClient:
+    """A StoreClient whose every verb prints ``payload`` and exits 0.
+
+    The payload goes through StoreClient's own bytes decode, as real verb
+    output does.
+    """
+    def runner(argv, **_kwargs):
+        return subprocess.CompletedProcess(argv, 0, payload.encode("utf-8"), b"")
+
+    return store.StoreClient("unused-store-script", "unused-openclaw-home", runner=runner)
+
+
+class TestStoreRowSplitting(unittest.TestCase):
+    BOUNDARIES = ("\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", NEL, LS, PS)
+
+    def test_events_since_keeps_every_non_newline_boundary_inside_its_row(self) -> None:
+        rows = [(seq, '{"t": "a' + char + 'b"}') for seq, char in enumerate(self.BOUNDARIES, start=1)]
+        payload = "".join(f"{seq}\x1f{doc}\n" for seq, doc in rows)
+        got = canned_client(payload).events_since(SID_A, -1)
+        self.assertEqual(got, rows)
+        self.assertTrue(all(type(seq) is int for seq, _doc in got))
+
+    def test_list_sessions_keeps_a_key_holding_a_line_separator_whole(self) -> None:
+        key = "agent:main:fixture" + LS + "label"
+        got = canned_client(f"{SID_A}\x1f{key}\x1f\x1f100\n").list_sessions()
+        self.assertEqual(got, [store.SessionRow(SID_A, key, "", "100")])
+
+    def test_max_seq_all_reads_newline_separated_rows(self) -> None:
+        payload = f"{SID_A}\x1f5\x1f4\n{SID_A}\x1f7\x1f3\n{SID_B}\x1f2\x1f2\n"
+        self.assertEqual(canned_client(payload).max_seq_all(), {SID_A: (7, 4), SID_B: (2, 2)})
+
+    def test_empty_and_unterminated_output(self) -> None:
+        with self.subTest("empty output"):
+            client = canned_client("")
+            self.assertEqual(client.events_since(SID_A, -1), [])
+            self.assertEqual(client.list_sessions(), [])
+            self.assertEqual(client.max_seq_all(), {})
+            self.assertEqual(client.failures, 0)
+
+        cases = (
+            ("events_since", f'3\x1f{{"t": "x"}}', lambda c: c.events_since(SID_A, -1)),
+            ("list_sessions", f"{SID_A}\x1fagent:main:main\x1f\x1f100", lambda c: c.list_sessions()),
+            ("max_seq_all", f"{SID_A}\x1f5\x1f5", lambda c: c.max_seq_all()),
+        )
+        for name, row, parse in cases:
+            for ending in ("", "\n"):
+                with self.subTest(parser=name, trailing_newline=bool(ending)):
+                    client = canned_client(row + ending)
+                    self.assertEqual(len(parse(client)), 1)
+                    self.assertEqual(client.failures, 0)
+
+    def test_large_seq_beside_a_line_separator_round_trips_exactly(self) -> None:
+        big = 9007199254740993
+        doc = json.dumps(event_doc(1, "user", "fixture big" + LS + "seq"), ensure_ascii=False)
+        self.assertIn(LS, doc)
+        got = canned_client(f"{big}\x1f{doc}\n").events_since(SID_A, -1)
+        self.assertEqual(got, [(big, doc)])
+        self.assertIs(type(got[0][0]), int)
+        self.assertEqual(got[0][0], 9007199254740993)
 
 
 class TestRecheck(unittest.TestCase):
