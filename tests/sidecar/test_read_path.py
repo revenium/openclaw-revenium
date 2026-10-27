@@ -26,6 +26,13 @@ store. A failing store is a real unreadable SQLite file read through the
 real session-store.sh, never a faked exit code: the lenient verbs exit 0 on
 a SQLite error, so only the real failure shape tests the real contract.
 
+TestLineSeparators covers turns holding U+2028, U+2029 or U+0085. Node's
+JSON.stringify leaves those three characters unescaped, and Python treats
+each as a line boundary, so a reader that split rows on every line boundary
+would cut such a turn in two and lose it. ``event()`` escapes them, so these
+tests insert the raw bytes through ``mk_event_hex`` and first check the
+stored row really holds the raw character.
+
 TestRecheck covers the periodic max-seq recheck: change detection trusts
 the store to move ``updated_at`` with every new row, so every
 MAX_SEQ_RECHECK_SECONDS one grouped ``max-seq-all-strict`` call finds any
@@ -114,16 +121,47 @@ def fixture(*steps: tuple) -> None:
         raise AssertionError("fixture step failed: " + proc.stderr.decode("utf-8", "replace")[-500:])
 
 
-def event(seq: int, role: str, content, **extra) -> str:
+def event_doc(seq: int, role: str, content, **extra) -> dict:
     message = {"role": role, "content": content}
     message.update(extra)
-    return json.dumps({
+    return {
         "type": "message",
         "id": f"evt-{seq}",
         "parentId": f"evt-{seq - 1}",
         "timestamp": "2026-10-26T12:00:00.000Z",
         "message": message,
-    })
+    }
+
+
+def event(seq: int, role: str, content, **extra) -> str:
+    return json.dumps(event_doc(seq, role, content, **extra))
+
+
+def raw_event_hex(seq: int, role: str, content, **extra) -> str:
+    """UTF-8 hex of the event with non-ASCII characters left raw.
+
+    Node's JSON.stringify escapes nothing above U+001F, so U+2028, U+2029 and
+    U+0085 reach the store as raw bytes. ``event()`` escapes them; inserting
+    this hex through ``mk_event_hex`` stores exactly what Node writes, with no
+    locale or argv decoding in between.
+    """
+    doc = event_doc(seq, role, content, **extra)
+    return json.dumps(doc, ensure_ascii=False).encode("utf-8").hex()
+
+
+def stored_event_json(db: str, sid: str, seq: int) -> str:
+    """event_json of one row, read straight from the fixture store."""
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        row = conn.execute(
+            "SELECT event_json FROM transcript_events WHERE session_id = ? AND seq = ?",
+            (sid, seq),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise AssertionError(f"no stored row for seq {seq}")
+    return row[0]
 
 
 class Layout:
@@ -819,6 +857,73 @@ class TestEdges(unittest.TestCase):
         lay.infer()
         self.assertEqual(lay.cursors_doc()["sessions"][SID_C]["cursor"], 0)
         self.assertNotIn(b"dev history", lay.state_bytes())
+
+
+LS, PS, NEL = " ", " ", "\u0085"
+
+
+class TestLineSeparators(unittest.TestCase):
+    def setUp(self) -> None:
+        self.lay = Layout(self)
+        fixture(
+            ("mk_store", self.lay.db),
+            ("mk_session", self.lay.db, SID_A, "agent:main:main", "", 100),
+            ("mk_event", self.lay.db, SID_A, 0, event(0, "user", "fixture before install")),
+        )
+        self.lay.infer()
+
+    def add_raw_turns(self, sid: str, turns: list, updated_at: int) -> None:
+        steps = [("mk_event_hex", self.lay.db, sid, seq, raw_event_hex(seq, role, content))
+                 for seq, role, content in turns]
+        steps.append(("mk_touch_session", self.lay.db, sid, updated_at))
+        fixture(*steps)
+
+    def test_turns_with_unicode_line_separators_are_cached_whole(self) -> None:
+        texts = {
+            1: "fixture first line" + LS + "second line",
+            2: "fixture paragraph one" + PS + "paragraph two",
+            3: "fixture wait" + NEL + " then more",
+            4: "fixture plain reply",
+        }
+        roles = {1: "user", 2: "assistant", 3: "user", 4: "assistant"}
+        self.add_raw_turns(SID_A, [
+            (1, "user", texts[1]),
+            (2, "assistant", [{"type": "text", "text": texts[2]}]),
+            (3, "user", texts[3]),
+            (4, "assistant", [{"type": "text", "text": texts[4]}]),
+        ], 200)
+        for seq, char in ((1, LS), (2, PS), (3, NEL)):
+            self.assertIn(char, stored_event_json(self.lay.db, SID_A, seq))
+
+        doc = self.lay.infer()
+        self.assertEqual(doc["counters"]["turnsCached"], 4)
+        self.assertEqual(doc["counters"]["eventsSkipped"], 0)
+        records = self.lay.cached(SID_A)
+        self.assertEqual([r["seq"] for r in records], [1, 2, 3, 4])
+        self.assertEqual([r["role"] for r in records], [roles[s] for s in (1, 2, 3, 4)])
+        self.assertEqual([r["text"] for r in records], [texts[s] for s in (1, 2, 3, 4)])
+        self.assertEqual(self.lay.cursors_doc()["sessions"][SID_A]["cursor"], 4)
+
+        before = self.lay.snapshot()
+        doc = self.lay.infer()
+        self.assertEqual(doc["counters"]["turnsCached"], 0)
+        self.assertEqual(self.lay.snapshot(), before)
+
+    def test_line_separators_at_the_edges_of_a_turn_are_trimmed_like_whitespace(self) -> None:
+        self.add_raw_turns(SID_A, [(1, "user", LS + "fixture edge" + PS + "inner" + NEL)], 200)
+        self.assertIn(LS, stored_event_json(self.lay.db, SID_A, 1))
+        self.lay.infer()
+        self.assertEqual([r["text"] for r in self.lay.cached(SID_A)], ["fixture edge" + PS + "inner"])
+
+    def test_secret_beside_a_line_separator_is_redacted_in_the_cache(self) -> None:
+        self.add_raw_turns(SID_A, [(1, "user", "fixture deploy key " + ANTHROPIC_SECRET + LS + "next line")], 200)
+        self.assertIn(LS, stored_event_json(self.lay.db, SID_A, 1))
+        self.lay.infer()
+        self.assertEqual(
+            [r["text"] for r in self.lay.cached(SID_A)],
+            ["fixture deploy key [REDACTED:anthropic]" + LS + "next line"],
+        )
+        self.assertNotIn(ANTHROPIC_SECRET.encode("utf-8"), self.lay.state_bytes())
 
 
 class TestRecheck(unittest.TestCase):
