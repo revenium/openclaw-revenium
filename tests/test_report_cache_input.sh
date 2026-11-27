@@ -6,8 +6,9 @@
 # OpenClaw's pi-ai usage object stores `input` with the cache read (and any
 # cache write) already taken out, for every provider. Revenium takes the cache
 # read out of the input itself on OpenAI-family models (OpenAI, Azure OpenAI,
-# xAI, Groq, Gemini), so those must be sent input + cacheRead. Anthropic's
-# input already leaves the cache out and is sent as stored.
+# xAI, Groq), so those must be sent input + cacheRead. Anthropic's input
+# already leaves the cache out and is sent as stored. Gemini is sent as stored
+# until Revenium settles how bare Gemini names are priced.
 # =============================================================================
 
 set -uo pipefail
@@ -85,7 +86,7 @@ expect() {
 
 expect resp-gpt     --input-tokens      5000 "OpenAI input includes the cache read"
 expect resp-gpt     --cache-read-tokens 4000 "OpenAI cache read is still sent on its own"
-expect resp-gemini  --input-tokens      1000 "Gemini input includes the cache read"
+expect resp-gemini  --input-tokens      200  "Gemini input is sent as stored, without the cache read"
 expect resp-grok    --input-tokens      1000 "xAI input includes the cache read"
 expect resp-write   --input-tokens      700  "OpenAI input adds the read but not the cache write"
 expect resp-claude  --input-tokens      74   "Anthropic input stays without the cache"
