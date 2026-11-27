@@ -75,9 +75,12 @@ fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 # Re-pinned 2026-10-24: guardrail-check.sh now writes updatedAt/_maxAgeSeconds
 # and warns on an unreadable config.json, so skipped enforcement is visible.
 #   scripts/guardrail-check.sh = d984172b7b1ae7a1241167a36571ccf538d4ccda4189bc8ab1401cb2a0a099be
+# Re-pinned 2026-11-27: report.sh sends input plus cache read on OpenAI-family
+# models, which is what Revenium expects there. Gemini is left out of that.
+#   scripts/report.sh = 5c0360a81165955adb71fc513a109ed80664ff8bfea424008518fd3a1f1a78e3
 # ---------------------------------------------------------------------------
 SC4_CRON_SHA="6cdff1c49d03bdd69c10b6b6065e23e7ac1584a403da253c56d8e6d0ca635085"
-SC4_REPORT_SHA="0588982e13e65a55b57cb75c048f877acc9c1136679831a7d50e76a4ed71b216"
+SC4_REPORT_SHA="5c0360a81165955adb71fc513a109ed80664ff8bfea424008518fd3a1f1a78e3"
 SC4_GUARDRAIL_SHA="d984172b7b1ae7a1241167a36571ccf538d4ccda4189bc8ab1401cb2a0a099be"
 
 # ---------------------------------------------------------------------------
