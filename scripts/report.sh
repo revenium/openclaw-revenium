@@ -170,7 +170,8 @@ input_includes_cache_read() {
 
 reported_input_tokens() {
   local raw_model="$1" input="$2" cache_read="$3"
-  if input_includes_cache_read "${raw_model}"; then
+  if input_includes_cache_read "${raw_model}" \
+    && [[ "${input}" =~ ^[0-9]+$ && "${cache_read}" =~ ^[0-9]+$ ]]; then
     echo $(( input + cache_read ))
   else
     echo "${input}"

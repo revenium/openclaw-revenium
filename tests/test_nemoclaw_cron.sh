@@ -77,10 +77,10 @@ fail() { echo "FAIL: $1"; ((FAIL++)) || true; }
 #   scripts/guardrail-check.sh = d984172b7b1ae7a1241167a36571ccf538d4ccda4189bc8ab1401cb2a0a099be
 # Re-pinned 2026-11-27: report.sh sends input plus cache read on OpenAI-family
 # models, which is what Revenium expects there.
-#   scripts/report.sh = 82104361cbfcaaf47e344526c78b5410435b52ad25364c3d4f343d1d27d6ef4e
+#   scripts/report.sh = 53f8e32f069247958fe62d90aa6a2414ba8834d7192608e52b2612fd43e5eb89
 # ---------------------------------------------------------------------------
 SC4_CRON_SHA="6cdff1c49d03bdd69c10b6b6065e23e7ac1584a403da253c56d8e6d0ca635085"
-SC4_REPORT_SHA="82104361cbfcaaf47e344526c78b5410435b52ad25364c3d4f343d1d27d6ef4e"
+SC4_REPORT_SHA="53f8e32f069247958fe62d90aa6a2414ba8834d7192608e52b2612fd43e5eb89"
 SC4_GUARDRAIL_SHA="d984172b7b1ae7a1241167a36571ccf538d4ccda4189bc8ab1401cb2a0a099be"
 
 # ---------------------------------------------------------------------------
