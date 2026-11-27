@@ -213,7 +213,7 @@ A background cron job (`cron.sh`) runs **every minute by default** and performs 
 Reads OpenClaw session JSONL files, extracts token usage for each assistant completion, and ships events to Revenium via `revenium meter completion` with:
 
 - Model name and provider (derived from the model string)
-- Token counts (input, output, cache read, cache write, total from the API)
+- Token counts (input, output, cache read, cache write, total from the API). For OpenAI, Gemini and xAI models the input sent includes the cache read, as those providers count it; for Anthropic it excludes it
 - Operation type (`CHAT`, `TOOL_CALL`, or `GUARDRAIL`)
 - Trace ID linking related completions within a conversation turn
 - Request timing and duration computed from JSONL timestamps

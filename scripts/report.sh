@@ -154,6 +154,30 @@ get_provider() {
 }
 
 # ---------------------------------------------------------------------------
+# OpenClaw's usage.input has the cache read taken out for every provider.
+# Revenium takes the read out of the input itself on OpenAI-family models
+# (OpenAI, Azure OpenAI, xAI, Groq, Gemini), so those must be sent the
+# provider's own prompt count, which includes the read. Anthropic's input
+# leaves the cache out and is sent as stored.
+# ---------------------------------------------------------------------------
+input_includes_cache_read() {
+  case "$1" in
+    *claude*|*anthropic*)                        return 1 ;;
+    *gpt-*|*o1-*|*o3-*|*o4-*|*gemini-*|*grok-*)  return 0 ;;
+    *)                                           return 1 ;;
+  esac
+}
+
+reported_input_tokens() {
+  local raw_model="$1" input="$2" cache_read="$3"
+  if input_includes_cache_read "${raw_model}"; then
+    echo $(( input + cache_read ))
+  else
+    echo "${input}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Clean model name — strip routing prefixes like "global."
 # "global.anthropic.claude-sonnet-4-6" → "claude-sonnet-4-6"
 # ---------------------------------------------------------------------------
@@ -900,6 +924,7 @@ PY
     output_tokens=$(echo "${line}" | jq -r '.message.usage.output // .message.usage.output_tokens // 0')
     cache_read=$(echo "${line}" | jq -r '.message.usage.cacheRead // .message.usage.cache_read_input_tokens // 0')
     cache_create=$(echo "${line}" | jq -r '.message.usage.cacheWrite // .message.usage.cache_creation_input_tokens // 0')
+    input_tokens=$(reported_input_tokens "${raw_model}" "${input_tokens}" "${cache_read}")
     total_tokens=$(echo "${line}" | jq -r '
       .message.usage as $u
       | ($u.totalTokens
